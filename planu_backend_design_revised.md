@@ -48,6 +48,7 @@ backend/
  │   │
  │   ├─ models/
  │   │   ├─ course.py
+ │   │   ├─ input_timetable.py
  │   │   ├─ timetable.py
  │   │   └─ preference.py
  │   │
@@ -239,7 +240,36 @@ THU
 FRI
 ```
 
-### 5.5. 내부 시간 표현
+### 5.5. InputTimetable
+
+사용자가 직접 선택한 고정 전공 시간표는 추천 결과용 `Timetable`과 분리하여 검증한다.
+
+```text
+InputTimetable
+- courses
+- total_credit
+- schedule_items
+```
+
+담당 파일:
+
+```text
+models/input_timetable.py
+```
+
+검증 및 생성 규칙:
+
+```text
+- course_id 중복 금지
+- Course.conflicts_with를 이용한 입력 전공 과목 간 시간 충돌 검사
+- total_credit 미입력 시 courses의 학점 합으로 자동 계산
+- 입력된 total_credit과 실제 학점 합이 다르면 거부
+- schedule_items 미입력 시 class_times를 바탕으로 자동 생성 및 정렬
+```
+
+추천 결과용 `Timetable`은 백트래킹 생성 과정의 후보를 표현하므로 모델 자체에서 시간 충돌을 검사하지 않는다. 추천 후보의 충돌 검사는 `timetable_validator.py`가 담당한다.
+
+### 5.6. 내부 시간 표현
 
 API 응답에서는 `"09:00"` 형식을 사용한다. 서버 내부 비교에서는 분 단위 정수로 변환한다.
 
@@ -467,7 +497,7 @@ POST /major/confirm
 1. session_id 검증
 2. fixed_courses가 major_candidates에서 나온 값인지 검증
 3. 같은 과목에서 여러 분반을 선택했는지 검사
-4. 전공끼리 시간 충돌 검사
+4. InputTimetable로 course_id 중복, 전공끼리 시간 충돌, 총학점 검사
 5. 통과하면 세션에 fixed_courses 저장
 ```
 
@@ -769,7 +799,9 @@ a.start < b.end AND b.start < a.end
 ```text
 - 선택된 과목이 세션의 major_candidates 안에 존재해야 한다.
 - 같은 course_name에서 여러 division을 선택하면 안 된다.
-- 선택한 전공끼리 시간이 겹치면 안 된다.
+- InputTimetable에서 course_id가 중복되면 안 된다.
+- InputTimetable에서 선택한 전공끼리 시간이 겹치면 안 된다.
+- InputTimetable의 total_credit은 실제 선택 과목의 학점 합과 같아야 한다.
 ```
 
 ### 12.3. 연강 이동 검사
