@@ -1,59 +1,49 @@
-"""Models for generated and ranked timetable candidates."""
+"""Validation model for a user-confirmed fixed major timetable."""
 
 from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from .course import Category, Course, Day, time_to_minutes
+from .course import Course, time_to_minutes
+from .timetable import ScheduleItem
 
 
-class _Model(BaseModel):
+class InputTimetable(BaseModel):
+    """A fixed timetable entered by the user before recommendation generation.
+
+    Unlike the recommendation ``Timetable`` model, this model rejects conflicts
+    because fixed major courses must already form a valid schedule.
+    """
+
     model_config = ConfigDict(
         extra="forbid",
         str_strip_whitespace=True,
         validate_assignment=True,
     )
 
-
-class ScheduleItem(_Model):
-    day: Day
-    start: str
-    end: str
-    course_name: str = Field(min_length=1)
-    category: Category
-    division: str = Field(min_length=1)
-    professor: str = Field(min_length=1)
-    classroom: str = Field(min_length=1)
-
-    @model_validator(mode="after")
-    def validate_time_range(self) -> "ScheduleItem":
-        if time_to_minutes(self.start) >= time_to_minutes(self.end):
-            raise ValueError("schedule item end time must be later than start time")
-        return self
-
-
-class Timetable(_Model):
-    """A recommendation candidate ready to return from ``POST /recommend``."""
-
-    rank: int = Field(default=1, ge=1) # 추천순위
-    score: float = Field(default=0, ge=0, le=100)
-    total_credit: float | None = Field(default=None, gt=0)
     courses: list[Course] = Field(min_length=1)
+    total_credit: float | None = Field(default=None, gt=0)
     schedule_items: list[ScheduleItem] = Field(default_factory=list)
-    reasons: list[str] = Field(default_factory=list)
-    warnings: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
-    def populate_and_validate(self) -> "Timetable":
+    def validate_fixed_timetable(self) -> "InputTimetable":
+        course_ids = [course.course_id for course in self.courses]
+        if len(course_ids) != len(set(course_ids)):
+            raise ValueError("courses must not contain duplicate course_id values")
+
+        for index, course in enumerate(self.courses):
+            for other in self.courses[index + 1 :]:
+                if course.conflicts_with(other):
+                    raise ValueError(
+                        "time conflict between courses "
+                        f"'{course.course_id}' and '{other.course_id}'"
+                    )
+
         calculated_credit = sum(course.credit for course in self.courses)
         if self.total_credit is None:
             object.__setattr__(self, "total_credit", calculated_credit)
         elif abs(self.total_credit - calculated_credit) > 1e-9:
             raise ValueError("total_credit must equal the sum of course credits")
-
-        course_ids = [course.course_id for course in self.courses]
-        if len(course_ids) != len(set(course_ids)):
-            raise ValueError("courses must not contain duplicate course_id values")
 
         if not self.schedule_items:
             items = [
@@ -76,7 +66,3 @@ class Timetable(_Model):
             key=lambda item: (item.day.order, time_to_minutes(item.start))
         )
         return self
-
-
-# Descriptive alias used by generator/ranker services.
-TimetableCandidate = Timetable
