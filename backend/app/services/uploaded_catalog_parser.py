@@ -26,6 +26,7 @@ def validate_uploaded_catalog(path: str | Path) -> Path:
     # xlsx is a zip container. Checking the signature rejects renamed files
     # before openpyxl spends work on them.
     with source.open("rb") as stream:
+        # 엑셀 파일은 시작 4바이트가 PK\x03\x04로 시작합니다. (PK는 zip 파일의 시그니처)
         if stream.read(4) != b"PK\x03\x04":
             raise UploadedCatalogError("유효한 .xlsx 파일이 아닙니다.")
     return source
@@ -46,8 +47,12 @@ def parse_elective_catalog(path: str | Path, *, area: int | None = None) -> list
     source = validate_uploaded_catalog(path)
     # An uploaded combined elective file may not carry a 1-7 area field. The
     # current Course contract requires it, so callers can provide the known
-    # area; otherwise area 1 is used as a neutral MVP fallback.
-    selected_area = area or 1
+    if area is None:
+        raise UploadedCatalogError("교양 영역을 선택해주세요.")
+    if area < 1 or area > 7:
+        raise UploadedCatalogError("교양 영역은 1~7 사이의 정수여야 합니다.")
+    selected_area = area
+    
     try:
         courses = parse_catalog_workbook(source, Category.GENERAL_ELECTIVE, area=selected_area)
     except CatalogParseError as exc:
