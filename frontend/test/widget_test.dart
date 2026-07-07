@@ -8,6 +8,6 @@ void main() {
 
     expect(find.text('PlaNU'), findsOneWidget);
     expect(find.text('수강편람 다운로드 안내'), findsOneWidget);
-    expect(find.text('다운로드 절차'), findsOneWidget);
+    expect(find.text('수강편람 준비'), findsOneWidget);
   });
 }

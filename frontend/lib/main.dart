@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 import 'package:flutter/material.dart';
 
 import 'screens/guide_screen.dart';
@@ -30,14 +29,14 @@ class PlaNUApp extends StatelessWidget {
             fontSize: 36,
             fontWeight: FontWeight.w600,
             height: 1.15,
-            letterSpacing: -1,
+            letterSpacing: 0,
           ),
           titleLarge: TextStyle(
             color: Color(0xFF111111),
             fontSize: 22,
             fontWeight: FontWeight.w600,
             height: 1.3,
-            letterSpacing: -0.3,
+            letterSpacing: 0,
           ),
           titleMedium: TextStyle(
             color: Color(0xFF111111),
@@ -89,28 +88,3 @@ class PlaNUApp extends StatelessWidget {
     );
   }
 }
-=======
-import 'package:flutter/material.dart';
-import 'department_select_screen.dart';
-
-void main() {
-  runApp(const PlaNUApp());
-}
-
-class PlaNUApp extends StatelessWidget {
-  const PlaNUApp({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      debugShowCheckedModeBanner: false,
-      title: 'PlaNU',
-      home: DepartmentSelectScreen(
-        onDepartmentSelected: (department) {
-          debugPrint('선택한 학과: $department');
-        },
-      ),
-    );
-  }
-}
->>>>>>> bb864d39573309ebfe619e397f09f371a7b5540f

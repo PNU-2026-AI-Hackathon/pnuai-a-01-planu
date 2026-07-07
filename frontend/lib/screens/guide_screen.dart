@@ -7,12 +7,22 @@ class GuideScreen extends StatelessWidget {
   final VoidCallback? onNext;
 
   static const _downloadSteps = [
-    '부산대학교 학생지원시스템 접속',
-    '수업 메뉴 이동',
-    '수강편람 조회',
-    '학년도/학기 선택',
-    '전공 또는 교양 영역 선택',
-    '조회 후 엑셀 다운로드',
+    _DownloadStep(
+      imagePath: 'src/img/download-description-1.png',
+      description: "① 학지시에서 '수업' 메뉴를 클릭합니다.",
+    ),
+    _DownloadStep(
+      imagePath: 'src/img/download-description-2.png',
+      description: "② '수강편람' 메뉴를 클릭합니다.",
+    ),
+    _DownloadStep(
+      imagePath: 'src/img/download-description-3.png',
+      description: '③ 해당 학기의 수강편람 다운로드 버튼을 클릭합니다.',
+    ),
+    _DownloadStep(
+      imagePath: 'src/img/download-description-4.png',
+      description: '④ 다운로드한 수강편람 파일을 PlaNU에서 업로드합니다.',
+    ),
   ];
 
   @override
@@ -31,13 +41,14 @@ class GuideScreen extends StatelessWidget {
                   sliver: SliverList(
                     delegate: SliverChildListDelegate.fixed([
                       const _TopNav(),
-                      const SizedBox(height: 64),
+                      const SizedBox(height: 56),
                       _HeroBand(onPrepareFiles: onPrepareFiles, onNext: onNext),
-                      const SizedBox(height: 48),
+                      const SizedBox(height: 40),
                       const _GuideCards(),
-                      const SizedBox(height: 32),
+                      const SizedBox(height: 24),
                       Text(
-                        '전공 과목은 사용자가 직접 선택합니다. PlaNU는 확정된 전공 시간표 위에 교양 과목을 추천하며, LLM은 교양 조건 입력 해석에만 사용합니다.',
+                        '교양선택 파일을 업로드하지 않아도 수강지도를 기반으로 시간표를 생성할 수 있습니다. '
+                        '하지만, 학지시에서 수강편람을 조회하면 학과에서 실제 수강 가능한 과목만 확인할 수 있어 더 좋은 결과를 얻을 수 있습니다.',
                         style: theme.textTheme.bodyMedium?.copyWith(
                           color: const Color(0xFF6B7280),
                         ),
@@ -52,6 +63,13 @@ class GuideScreen extends StatelessWidget {
       ),
     );
   }
+}
+
+class _DownloadStep {
+  const _DownloadStep({required this.imagePath, required this.description});
+
+  final String imagePath;
+  final String description;
 }
 
 class _TopNav extends StatelessWidget {
@@ -112,21 +130,21 @@ class _HeroBand extends StatelessWidget {
       builder: (context, constraints) {
         final isCompact = constraints.maxWidth < 820;
         final copy = _HeroCopy(onPrepareFiles: onPrepareFiles, onNext: onNext);
-        const mockup = _DownloadMockup(steps: GuideScreen._downloadSteps);
+        const guide = _DownloadGuideCard(steps: GuideScreen._downloadSteps);
 
         if (isCompact) {
           return Column(
             crossAxisAlignment: CrossAxisAlignment.start,
-            children: [copy, const SizedBox(height: 32), mockup],
+            children: [copy, const SizedBox(height: 32), guide],
           );
         }
 
         return Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Expanded(flex: 7, child: copy),
+            Expanded(flex: 6, child: copy),
             const SizedBox(width: 48),
-            const Expanded(flex: 5, child: mockup),
+            const Expanded(flex: 6, child: guide),
           ],
         );
       },
@@ -155,17 +173,12 @@ class _HeroCopy extends StatelessWidget {
         ),
         const SizedBox(height: 24),
         Text(
-          'PlaNU를 사용하려면 1학년 전공기초/전공필수 수강편람 파일이 필요합니다.',
+          '1학년 전공기초 수강편람을 엑셀 파일로 다운로드해 주세요.',
           style: theme.textTheme.bodyLarge,
         ),
         const SizedBox(height: 12),
         Text(
-          '부산대학교 학생지원시스템에서 수강편람을 조회한 뒤 엑셀 파일로 다운로드해주세요.',
-          style: theme.textTheme.bodyLarge,
-        ),
-        const SizedBox(height: 12),
-        Text(
-          '교양선택 수강편람은 선택 사항입니다. 업로드하지 않으면 PlaNU가 기본으로 보유한 교양선택 데이터를 사용합니다.',
+          '교양선택 파일을 업로드하지 않으면 PlaNU가 기본으로 보유한 교양선택 데이터를 사용합니다.',
           style: theme.textTheme.bodyLarge,
         ),
         const SizedBox(height: 32),
@@ -190,10 +203,10 @@ class _HeroCopy extends StatelessWidget {
   }
 }
 
-class _DownloadMockup extends StatelessWidget {
-  const _DownloadMockup({required this.steps});
+class _DownloadGuideCard extends StatelessWidget {
+  const _DownloadGuideCard({required this.steps});
 
-  final List<String> steps;
+  final List<_DownloadStep> steps;
 
   @override
   Widget build(BuildContext context) {
@@ -229,64 +242,54 @@ class _DownloadMockup extends StatelessWidget {
               ),
               const SizedBox(width: 12),
               Expanded(
-                child: Text('다운로드 절차', style: theme.textTheme.titleMedium),
+                child: Text('수강편람 준비', style: theme.textTheme.titleMedium),
               ),
             ],
           ),
           const SizedBox(height: 20),
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: const Color(0xFFF5F5F5),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Column(
-              children: [
-                for (var index = 0; index < steps.length; index += 1) ...[
-                  _StepRow(number: index + 1, label: steps[index]),
-                  if (index != steps.length - 1) const SizedBox(height: 12),
-                ],
-              ],
-            ),
-          ),
+          for (var index = 0; index < steps.length; index += 1) ...[
+            _DownloadStepTile(step: steps[index]),
+            if (index != steps.length - 1) const SizedBox(height: 16),
+          ],
         ],
       ),
     );
   }
 }
 
-class _StepRow extends StatelessWidget {
-  const _StepRow({required this.number, required this.label});
+class _DownloadStepTile extends StatelessWidget {
+  const _DownloadStepTile({required this.step});
 
-  final int number;
-  final String label;
+  final _DownloadStep step;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Container(
-          width: 28,
-          height: 28,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: const Color(0xFFE5E7EB)),
+    return Container(
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8F9FA),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          AspectRatio(
+            aspectRatio: 16 / 9,
+            child: Image.asset(
+              step.imagePath,
+              fit: BoxFit.cover,
+              filterQuality: FilterQuality.medium,
+            ),
           ),
-          child: Text('$number', style: theme.textTheme.labelLarge),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Padding(
-            padding: const EdgeInsets.only(top: 4),
-            child: Text(label, style: theme.textTheme.bodyMedium),
+          Padding(
+            padding: const EdgeInsets.all(14),
+            child: Text(step.description, style: theme.textTheme.bodyMedium),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }
@@ -303,7 +306,7 @@ class _GuideCards extends StatelessWidget {
           _InfoCard(
             icon: Icons.assignment_outlined,
             title: '필수 파일',
-            description: '1학년 전공기초/전공필수 수강편람 파일을 준비합니다.',
+            description: '1학년 전공기초 수강편람 파일을 준비합니다.',
           ),
           _InfoCard(
             icon: Icons.tune_outlined,
@@ -312,8 +315,8 @@ class _GuideCards extends StatelessWidget {
           ),
           _InfoCard(
             icon: Icons.verified_outlined,
-            title: '검증 위치',
-            description: '전공 수강편람 업로드 여부는 파일 업로드 화면에서 검증합니다.',
+            title: '업로드 확인',
+            description: '다운로드한 엑셀 파일은 PlaNU 업로드 화면에서 확인합니다.',
           ),
         ];
 
