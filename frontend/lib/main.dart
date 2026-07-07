@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 import 'package:flutter/material.dart';
 
 import 'screens/guide_screen.dart';
@@ -88,3 +89,28 @@ class PlaNUApp extends StatelessWidget {
     );
   }
 }
+=======
+import 'package:flutter/material.dart';
+import 'department_select_screen.dart';
+
+void main() {
+  runApp(const PlaNUApp());
+}
+
+class PlaNUApp extends StatelessWidget {
+  const PlaNUApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      title: 'PlaNU',
+      home: DepartmentSelectScreen(
+        onDepartmentSelected: (department) {
+          debugPrint('선택한 학과: $department');
+        },
+      ),
+    );
+  }
+}
+>>>>>>> bb864d39573309ebfe619e397f09f371a7b5540f
