@@ -1,4 +1,4 @@
-"""Department autocomplete and validation backed by processed JSON."""
+"""Department autocomplete and validation backed by generated JSON."""
 
 from __future__ import annotations
 
@@ -35,9 +35,10 @@ class DepartmentService:
             raise DepartmentDataError("학과 목록을 읽을 수 없습니다.") from exc
         if isinstance(payload, dict):
             payload = payload.get("departments")
-        if not isinstance(payload, list) or not all(isinstance(item, str) for item in payload):
-            raise DepartmentDataError("department_list.json은 문자열 배열이어야 합니다.")
-        cleaned = {item.strip() for item in payload if item.strip()}
+        departments = _extract_departments(payload)
+        if not departments:
+            raise DepartmentDataError("학과 목록 JSON에서 학과명을 찾을 수 없습니다.")
+        cleaned = {item.strip() for item in departments if item.strip()}
         self._departments = tuple(sorted(cleaned, key=lambda item: (_search_key(item), item)))
         self._aliases = {}
         if self.aliases_file and self.aliases_file.exists():
@@ -93,3 +94,17 @@ def search_departments(departments: Iterable[str], keyword: str = "", *, limit: 
         key=lambda item: (0 if _search_key(item).startswith(key) else 1, len(item), item),
     )
     return result[:max(0, limit)]
+
+
+def _extract_departments(payload: object) -> list[str]:
+    if isinstance(payload, list) and all(isinstance(item, str) for item in payload):
+        return [item for item in payload if item.strip()]
+    if isinstance(payload, list) and all(isinstance(item, dict) for item in payload):
+        departments: list[str] = []
+        for group in payload:
+            values = group.get("departments")
+            if not isinstance(values, list) or not all(isinstance(item, str) for item in values):
+                raise DepartmentDataError("departments.json의 departments는 문자열 배열이어야 합니다.")
+            departments.extend(item for item in values if item.strip())
+        return departments
+    raise DepartmentDataError("학과 목록 JSON은 문자열 배열 또는 college/departments 배열이어야 합니다.")
