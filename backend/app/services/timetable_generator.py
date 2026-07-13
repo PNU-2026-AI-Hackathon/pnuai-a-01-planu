@@ -48,8 +48,12 @@ class TimetableGenerator:
             raise ValueError("general course counts must not be negative")
 
         fixed = list(fixed_courses)
-        required_candidates = self._dedupe_by_course_id(general_required_candidates)
-        elective_candidates = self._dedupe_by_course_id(general_elective_candidates)
+        required_candidates = self._dedupe_by_course_identity(
+            general_required_candidates
+        )
+        elective_candidates = self._dedupe_by_course_identity(
+            general_elective_candidates
+        )
         limit = self.max_candidates if max_candidates is None else max_candidates
         if limit <= 0:
             raise ValueError("max_candidates must be positive")
@@ -76,15 +80,22 @@ class TimetableGenerator:
         return candidates
 
     @staticmethod
-    def _dedupe_by_course_id(courses: Iterable[Course]) -> list[Course]:
+    def _dedupe_by_course_identity(courses: Iterable[Course]) -> list[Course]:
         deduped: list[Course] = []
-        seen: set[str] = set()
+        seen: set[tuple[str, str]] = set()
         for course in courses:
-            if course.course_id in seen:
+            key = (course.course_id, course.division)
+            if key in seen:
                 continue
             deduped.append(course)
-            seen.add(course.course_id)
+            seen.add(key)
         return deduped
+
+    @staticmethod
+    def _dedupe_by_course_id(courses: Iterable[Course]) -> list[Course]:
+        """Backward-compatible alias; division is part of candidate identity."""
+
+        return TimetableGenerator._dedupe_by_course_identity(courses)
 
 
 def generate_timetables(
