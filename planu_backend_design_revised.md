@@ -378,13 +378,13 @@ POST /recommend
 
 ### 8.1. 엔드포인트 목록
 
-| Method | Path | 역할 |
-|---|---|---|
-| GET | `/departments?keyword=` | 학과 자동완성 목록 조회 |
-| POST | `/catalog/parse` | 업로드 파일 파싱, 세션 생성 |
-| POST | `/major/confirm` | 사용자가 선택한 전공 과목 확정 |
-| POST | `/recommend` | 교양 시간표 추천 |
-| GET | `/health` | 서버 상태 확인 |
+| Method | Path                    | 역할                           |
+| ------ | ----------------------- | ------------------------------ |
+| GET    | `/departments?keyword=` | 학과 자동완성 목록 조회        |
+| POST   | `/catalog/parse`        | 업로드 파일 파싱, 세션 생성    |
+| POST   | `/major/confirm`        | 사용자가 선택한 전공 과목 확정 |
+| POST   | `/recommend`            | 교양 시간표 추천               |
+| GET    | `/health`               | 서버 상태 확인                 |
 
 기존에 논의했던 `/major/preview`는 제거한다. 전공 선택에는 LLM을 사용하지 않고 사용자가 직접 과목/분반을 선택하기 때문이다.
 
@@ -402,11 +402,7 @@ GET /departments?keyword=컴퓨터
 
 ```json
 {
-  "departments": [
-    "정보컴퓨터공학부",
-    "컴퓨터공학전공",
-    "전기컴퓨터공학부"
-  ]
+  "departments": ["정보컴퓨터공학부", "컴퓨터공학전공", "전기컴퓨터공학부"]
 }
 ```
 
@@ -770,15 +766,15 @@ LLM은 시간표를 직접 만들지 않는다. LLM은 전공 과목을 선택�
 
 ### 11.2. 주요 에러 케이스
 
-| 상황 | code | 처리 |
-|---|---|---|
-| 세션 없음/만료 | `SESSION_NOT_FOUND` | 파일 업로드 단계부터 다시 안내 |
-| 전공 파일 형식 오류 | `INVALID_MAJOR_CATALOG` | 올바른 수강편람 파일 안내 |
-| 전공 후보 0개 | `NO_MAJOR_CANDIDATE` | 파일 확인 요청 |
-| 전공 시간 충돌 | `MAJOR_TIME_CONFLICT` | 충돌 과목 표시 |
-| LLM 파싱 실패 | `LLM_PARSE_FALLBACK` | 빈 조건으로 추천 계속, warning 추가 |
-| 교양 후보 0개 | `NO_CANDIDATE_AFTER_FILTER` | 조건 완화 안내 |
-| 유효 시간표 0개 | `NO_VALID_TIMETABLE` | 조건 완화 안내 |
+| 상황                | code                        | 처리                                |
+| ------------------- | --------------------------- | ----------------------------------- |
+| 세션 없음/만료      | `SESSION_NOT_FOUND`         | 파일 업로드 단계부터 다시 안내      |
+| 전공 파일 형식 오류 | `INVALID_MAJOR_CATALOG`     | 올바른 수강편람 파일 안내           |
+| 전공 후보 0개       | `NO_MAJOR_CANDIDATE`        | 파일 확인 요청                      |
+| 전공 시간 충돌      | `MAJOR_TIME_CONFLICT`       | 충돌 과목 표시                      |
+| LLM 파싱 실패       | `LLM_PARSE_FALLBACK`        | 빈 조건으로 추천 계속, warning 추가 |
+| 교양 후보 0개       | `NO_CANDIDATE_AFTER_FILTER` | 조건 완화 안내                      |
+| 유효 시간표 0개     | `NO_VALID_TIMETABLE`        | 조건 완화 안내                      |
 
 ---
 
@@ -851,6 +847,29 @@ gap이 짧으면 campus_rule_engine으로 이동 가능 여부를 판단한다.
 
 ---
 
-## 14. 한 줄 요약
+## 14. schemas 파일 역할
+
+schemas/는 FastAPI 요청/응답 스키마를 정의하며, Pydantic을 이용해 사용자 입력의 1차 검증을 담당한다.
+
+- catalog_schema.py
+  - /catalog/parse 요청/응답 스키마
+  - department 필수 여부
+  - elective_area 1~7 범위
+  - 교양선택 파일 업로드 시 elective_area 필수 조건
+
+- major_schema.py
+  - /major/confirm 요청/응답 스키마
+  - session_id 필수 여부
+  - fixed_courses 리스트 구조
+
+- recommend_schema.py
+  - /recommend 요청/응답 스키마
+  - session_id 필수 여부
+  - 추천받을 교양 개수 범위
+  - user_prompt 최대 길이
+
+---
+
+## 15. 한 줄 요약
 
 PlaNU 백엔드는 사용자가 업로드한 전공 수강편람을 바탕으로 전공 과목/분반을 직접 선택하게 하고, 선택된 전공 시간표를 고정한 뒤, LLM이 해석한 교양 조건과 학교 공식 데이터를 기반으로 교양 시간표를 추천한다. LLM은 전공 선택이나 시간표 생성을 담당하지 않고, 교양 조건을 JSON 규칙으로 변환하는 역할만 수행한다.
