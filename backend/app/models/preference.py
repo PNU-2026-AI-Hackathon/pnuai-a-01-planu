@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from enum import Enum
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -19,6 +20,56 @@ class PreferenceTemplate(str, Enum):
     MINIMIZE_ATTENDANCE_DAYS = "minimize_attendance_days"
     MINIMIZE_CONSECUTIVE_CLASSES = "minimize_consecutive_classes"
     COMPACT_SCHEDULE = "compact_schedule"
+
+
+class PreferenceParseStatus(str, Enum):
+    """High-level outcome of a natural-language preference parse."""
+
+    SUCCESS = "success"
+    FALLBACK = "fallback"
+    SKIPPED = "skipped"
+
+
+class PreferenceToolStatus(str, Enum):
+    """Status for an observable parser tool/step."""
+
+    STARTED = "started"
+    SUCCESS = "success"
+    ERROR = "error"
+    SKIPPED = "skipped"
+
+
+class PreferenceToolUsage(BaseModel):
+    """A tool or parser capability used while interpreting preferences."""
+
+    model_config = ConfigDict(
+        extra="forbid",
+        str_strip_whitespace=True,
+        validate_assignment=True,
+    )
+
+    name: str = Field(min_length=1)
+    purpose: str = Field(min_length=1)
+    status: PreferenceToolStatus
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class PreferenceTraceEvent(BaseModel):
+    """One inspectable trace event for LLM preference parsing."""
+
+    model_config = ConfigDict(
+        extra="forbid",
+        str_strip_whitespace=True,
+        validate_assignment=True,
+    )
+
+    step: str = Field(min_length=1)
+    tool: str = Field(min_length=1)
+    status: PreferenceToolStatus
+    message: str = Field(min_length=1)
+    input: dict[str, Any] | None = None
+    output: dict[str, Any] | None = None
+    error: str | None = None
 
 
 class ExcludedTimeRange(BaseModel):
@@ -140,6 +191,25 @@ class PreferenceRules(BaseModel):
             if template in self.selected_templates and not getattr(self, field_name):
                 object.__setattr__(self, field_name, True)
         return self
+
+
+class PreferenceParseResult(BaseModel):
+    """Inspectable result of parsing free text into timetable preferences."""
+
+    model_config = ConfigDict(
+        extra="forbid",
+        str_strip_whitespace=True,
+        validate_assignment=True,
+    )
+
+    status: PreferenceParseStatus
+    llm_preferences: PreferenceRules = Field(default_factory=PreferenceRules)
+    merged_preferences: PreferenceRules = Field(default_factory=PreferenceRules)
+    used_tools: list[PreferenceToolUsage] = Field(default_factory=list)
+    trace: list[PreferenceTraceEvent] = Field(default_factory=list)
+    fallback_used: bool = False
+    warnings: list[str] = Field(default_factory=list)
+    raw_output: dict[str, Any] | str | None = None
 
 
 def merge_preference_rules(
