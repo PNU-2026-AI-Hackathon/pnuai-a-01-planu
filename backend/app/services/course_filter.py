@@ -151,10 +151,15 @@ def filter_general_courses(
     fixed_courses: Iterable[Course] = (),
     preferences: PreferenceRules | None = None,
     department: str | None = None,
+    restricted_course_ids_by_department: dict[str, set[str]] | None = None,
+    restricted_course_names_by_department: dict[str, set[str]] | None = None,
 ) -> CourseFilterResult:
     """Functional convenience API used by route handlers and tests."""
 
-    return CourseFilter().filter(
+    return CourseFilter(
+        restricted_course_ids_by_department=restricted_course_ids_by_department,
+        restricted_course_names_by_department=restricted_course_names_by_department,
+    ).filter(
         courses,
         fixed_courses=fixed_courses,
         preferences=preferences,
