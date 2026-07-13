@@ -1,4 +1,4 @@
-"""Score and rank valid timetable candidates."""
+"""Filter hard user rules, score valid candidates, and rank them."""
 
 from __future__ import annotations
 
@@ -6,12 +6,12 @@ from collections import defaultdict
 from collections.abc import Iterable
 
 from ..models.course import ClassTime, Course, Day, time_to_minutes
-from ..models.preference import PreferenceRules
-from ..models.timetable import Timetable, TimetableCandidate
+from ..models.preference import ExcludedTimeRange, PreferenceRules
+from ..models.timetable import ScoreDetail, Timetable, TimetableCandidate
 
 
 class TimetableRanker:
-    """Turn valid candidates into the top recommendations returned by the API."""
+    """Turn generated candidates into deterministic recommendations."""
 
     def __init__(self, *, top_n: int = 3) -> None:
         if top_n <= 0:
@@ -30,7 +30,8 @@ class TimetableRanker:
         if limit <= 0:
             raise ValueError("top_n must be positive")
 
-        scored = [self._score_candidate(candidate, rules) for candidate in candidates]
+        hard_filtered = self.apply_hard_filters(candidates, preferences=rules)
+        scored = [self._score_candidate(candidate, rules) for candidate in hard_filtered]
         scored.sort(
             key=lambda item: (
                 -item.score,
@@ -40,23 +41,91 @@ class TimetableRanker:
             )
         )
 
-        ranked: list[Timetable] = []
-        for index, candidate in enumerate(scored[:limit], start=1):
-            ranked.append(
-                candidate.model_copy(
-                    update={
-                        "rank": index,
-                        "score": round(candidate.score, 2),
-                    }
-                )
-            )
-        return ranked
+        return [
+            candidate.model_copy(update={"rank": index})
+            for index, candidate in enumerate(scored[:limit], start=1)
+        ]
+
+    def apply_hard_filters(
+        self,
+        candidates: Iterable[TimetableCandidate],
+        *,
+        preferences: PreferenceRules | None = None,
+    ) -> list[TimetableCandidate]:
+        rules = preferences or PreferenceRules()
+        return [
+            candidate
+            for candidate in candidates
+            if not self._violates_hard_conditions(candidate, rules)
+        ]
+
+    def _violates_hard_conditions(
+        self, candidate: TimetableCandidate, preferences: PreferenceRules
+    ) -> bool:
+        meetings = [
+            (meeting, course)
+            for course in candidate.courses
+            for meeting in course.class_times
+        ]
+
+        if preferences.excluded_days and any(
+            meeting.day in preferences.excluded_days for meeting, _ in meetings
+        ):
+            return True
+
+        occupied_days = {meeting.day for meeting, _ in meetings}
+        if any(day in occupied_days for day in preferences.required_free_days):
+            return True
+
+        if preferences.no_morning_classes:
+            morning_end = time_to_minutes(preferences.morning_end_time)
+            if any(meeting.start_minutes < morning_end for meeting, _ in meetings):
+                return True
+
+        if preferences.earliest_start_time is not None:
+            earliest = time_to_minutes(preferences.earliest_start_time)
+            if any(meeting.start_minutes < earliest for meeting, _ in meetings):
+                return True
+
+        if preferences.latest_end_time is not None:
+            latest = time_to_minutes(preferences.latest_end_time)
+            if any(meeting.end_minutes > latest for meeting, _ in meetings):
+                return True
+
+        if preferences.excluded_time_ranges and any(
+            self._overlaps_excluded_range(meeting, excluded)
+            for meeting, _ in meetings
+            for excluded in preferences.excluded_time_ranges
+        ):
+            return True
+
+        excluded_professors = {
+            professor.casefold() for professor in preferences.excluded_professors
+        }
+        if excluded_professors and any(
+            course.professor.casefold() in excluded_professors
+            for _, course in meetings
+        ):
+            return True
+
+        if preferences.max_consecutive_classes is not None:
+            longest = self._longest_consecutive_chain(candidate.courses)
+            if longest > preferences.max_consecutive_classes:
+                return True
+
+        return False
 
     def _score_candidate(
         self, candidate: TimetableCandidate, preferences: PreferenceRules
     ) -> Timetable:
-        score = 70.0
-        reasons = ["전공 수업과 시간 충돌이 없습니다.", "연강 이동 위험이 없습니다."]
+        details = [
+            ScoreDetail(
+                key="valid_candidate",
+                label="유효한 시간표 후보",
+                value=70,
+            )
+        ]
+        reasons: list[str] = []
         warnings = list(candidate.warnings)
 
         free_days = self._free_days(candidate.courses)
@@ -68,12 +137,20 @@ class TimetableRanker:
                 day for day in preferences.preferred_free_days if day not in free_days
             ]
             if satisfied:
-                score += 8 * len(satisfied)
-                reasons.append(
-                    f"{self._day_labels(satisfied)} 공강 조건을 만족합니다."
-                )
+                value = 8 * len(satisfied)
+                details.append(ScoreDetail(
+                    key="preferred_free_day",
+                    label=f"{self._day_labels(satisfied)} 공강 선호 만족",
+                    value=value,
+                ))
+                reasons.append(f"{self._day_labels(satisfied)} 공강 선호를 만족합니다.")
             if missing:
-                score -= 5 * len(missing)
+                value = -5 * len(missing)
+                details.append(ScoreDetail(
+                    key="preferred_free_day_missing",
+                    label=f"{self._day_labels(missing)} 공강 선호 미충족",
+                    value=value,
+                ))
                 warnings.append(
                     f"{self._day_labels(missing)} 공강 선호는 만족하지 못했습니다."
                 )
@@ -81,40 +158,80 @@ class TimetableRanker:
         if preferences.avoid_morning_classes:
             morning_count = self._morning_class_count(candidate.courses, preferences)
             if morning_count == 0:
-                score += 8
-                reasons.append("오전 수업 회피 조건을 만족합니다.")
+                details.append(ScoreDetail(
+                    key="morning_class",
+                    label="오전 수업 없음",
+                    value=8,
+                ))
+                reasons.append("오전 수업이 없습니다.")
             else:
-                score -= 4 * morning_count
+                details.append(ScoreDetail(
+                    key="morning_class",
+                    label=f"오전 수업 {morning_count}개 포함",
+                    value=-4 * morning_count,
+                ))
                 warnings.append(f"오전 수업이 {morning_count}개 포함되어 있습니다.")
+
+        if preferences.prefer_late_start:
+            first_start = self._first_meeting_start_minutes(candidate.courses)
+            value = self._late_start_value(first_start)
+            details.append(ScoreDetail(
+                key="late_start",
+                label=f"첫 수업 시작 {self._minutes_to_clock(first_start)}",
+                value=value,
+            ))
+
+        if preferences.minimize_attendance_days:
+            attendance_days = len(self._meetings_by_day(candidate.courses))
+            value = self._attendance_days_value(attendance_days)
+            details.append(ScoreDetail(
+                key="attendance_days",
+                label=f"등교일 {attendance_days}일",
+                value=value,
+            ))
 
         consecutive_count = self._consecutive_class_count(candidate.courses)
         if preferences.minimize_consecutive_classes:
             if consecutive_count == 0:
-                score += 5
-                reasons.append("연강이 적은 시간표입니다.")
+                details.append(ScoreDetail(
+                    key="consecutive_classes",
+                    label="연강 없음",
+                    value=5,
+                ))
+                reasons.append("연강이 없습니다.")
             else:
-                score -= 3 * consecutive_count
+                details.append(ScoreDetail(
+                    key="consecutive_classes",
+                    label=f"연강 구간 {consecutive_count}개",
+                    value=-3 * consecutive_count,
+                ))
                 warnings.append(f"연강 구간이 {consecutive_count}개 있습니다.")
 
-        if preferences.max_consecutive_classes is not None:
-            longest = self._longest_consecutive_chain(candidate.courses)
-            if longest <= preferences.max_consecutive_classes:
-                score += 4
-                reasons.append("최대 연강 개수 조건을 만족합니다.")
-            else:
-                score -= 8 * (longest - preferences.max_consecutive_classes)
-                warnings.append(
-                    f"최대 {longest}개 연강 구간이 포함되어 있습니다."
-                )
+        if preferences.compact_schedule:
+            idle_minutes = self._idle_minutes(candidate.courses)
+            value = self._compact_schedule_value(idle_minutes)
+            details.append(ScoreDetail(
+                key="compact_schedule",
+                label=f"수업 사이 총 빈 시간 {idle_minutes}분",
+                value=value,
+            ))
 
-        score += self._compactness_bonus(candidate.courses)
-        score = max(0.0, min(100.0, score))
-        return candidate.model_copy(
-            update={
-                "score": score,
-                "reasons": self._unique(reasons),
-                "warnings": self._unique(warnings),
-            }
+        data = candidate.model_dump()
+        data.update({
+            "score_details": details,
+            "reasons": self._unique(reasons),
+            "warnings": self._unique(warnings),
+        })
+        return Timetable.model_validate(data)
+
+    @staticmethod
+    def _overlaps_excluded_range(
+        meeting: ClassTime, excluded: ExcludedTimeRange
+    ) -> bool:
+        return (
+            meeting.day == excluded.day
+            and meeting.start_minutes < excluded.end_minutes
+            and excluded.start_minutes < meeting.end_minutes
         )
 
     @staticmethod
@@ -163,17 +280,37 @@ class TimetableRanker:
                     current = 1
         return longest
 
-    def _compactness_bonus(self, courses: Iterable[Course]) -> float:
-        """Small deterministic bonus for schedules with less idle time."""
-
+    def _idle_minutes(self, courses: Iterable[Course]) -> int:
         idle_minutes = 0
         for meetings in self._meetings_by_day(courses).values():
             for previous, following in zip(meetings, meetings[1:]):
                 idle_minutes += max(0, following.start_minutes - previous.end_minutes)
+        return idle_minutes
+
+    @staticmethod
+    def _compact_schedule_value(idle_minutes: int) -> float:
         if idle_minutes <= 60:
             return 4
         if idle_minutes <= 180:
             return 2
+        return -2
+
+    @staticmethod
+    def _attendance_days_value(attendance_days: int) -> float:
+        if attendance_days <= 3:
+            return 6
+        if attendance_days == 4:
+            return 2
+        return -4
+
+    @staticmethod
+    def _late_start_value(first_start: int) -> float:
+        if first_start >= time_to_minutes("11:00"):
+            return 6
+        if first_start >= time_to_minutes("10:00"):
+            return 3
+        if first_start < time_to_minutes("09:00"):
+            return -4
         return 0
 
     @staticmethod
@@ -182,8 +319,23 @@ class TimetableRanker:
         return min(starts) if starts else 24 * 60
 
     @staticmethod
-    def _course_id_key(candidate: Timetable) -> tuple[str, ...]:
-        return tuple(course.course_id for course in candidate.courses)
+    def _first_meeting_start_minutes(courses: Iterable[Course]) -> int:
+        starts = [
+            meeting.start_minutes
+            for course in courses
+            for meeting in course.class_times
+        ]
+        return min(starts) if starts else 24 * 60
+
+    @staticmethod
+    def _course_id_key(candidate: Timetable) -> tuple[tuple[str, str], ...]:
+        return tuple((course.course_id, course.division) for course in candidate.courses)
+
+    @staticmethod
+    def _minutes_to_clock(value: int) -> str:
+        if value >= 24 * 60:
+            return "미정"
+        return f"{value // 60:02d}:{value % 60:02d}"
 
     @staticmethod
     def _day_labels(days: Iterable[Day]) -> str:

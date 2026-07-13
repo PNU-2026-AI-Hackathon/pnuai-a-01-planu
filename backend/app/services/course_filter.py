@@ -6,7 +6,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 
 from ..models.course import Category, Course, time_to_minutes
-from ..models.preference import PreferenceRules
+from ..models.preference import ExcludedTimeRange, PreferenceRules
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,6 +115,16 @@ class CourseFilter:
         ):
             return True
 
+        if preferences.required_free_days and any(
+            meeting.day in preferences.required_free_days for meeting in course.class_times
+        ):
+            return True
+
+        if preferences.no_morning_classes:
+            morning_end = time_to_minutes(preferences.morning_end_time)
+            if any(meeting.start_minutes < morning_end for meeting in course.class_times):
+                return True
+
         if preferences.earliest_start_time is not None:
             earliest = time_to_minutes(preferences.earliest_start_time)
             if any(meeting.start_minutes < earliest for meeting in course.class_times):
@@ -124,6 +134,19 @@ class CourseFilter:
             latest = time_to_minutes(preferences.latest_end_time)
             if any(meeting.end_minutes > latest for meeting in course.class_times):
                 return True
+
+        if preferences.excluded_time_ranges and any(
+            CourseFilter._overlaps_excluded_range(meeting, excluded)
+            for meeting in course.class_times
+            for excluded in preferences.excluded_time_ranges
+        ):
+            return True
+
+        excluded_professors = {
+            professor.casefold() for professor in preferences.excluded_professors
+        }
+        if excluded_professors and course.professor.casefold() in excluded_professors:
+            return True
 
         if (
             course.category == Category.GENERAL_ELECTIVE
@@ -142,6 +165,16 @@ class CourseFilter:
         return any(
             keyword.casefold() in searchable
             for keyword in preferences.excluded_keywords
+        )
+
+    @staticmethod
+    def _overlaps_excluded_range(
+        meeting: object, excluded: ExcludedTimeRange
+    ) -> bool:
+        return (
+            meeting.day == excluded.day
+            and meeting.start_minutes < excluded.end_minutes
+            and excluded.start_minutes < meeting.end_minutes
         )
 
 
