@@ -71,23 +71,7 @@ backend/
  │       └─ logging.py
  │
  ├─ data/
- │   ├─ raw/
- │   │   ├─ general_required.xlsx
- │   │   ├─ general_elective_area_1.xlsx
- │   │   ├─ general_elective_area_2.xlsx
- │   │   ├─ general_elective_area_3.xlsx
- │   │   ├─ general_elective_area_4.xlsx
- │   │   ├─ general_elective_area_5.xlsx
- │   │   ├─ general_elective_area_6.xlsx
- │   │   ├─ general_elective_area_7.xlsx
- │   │   └─ course_restriction_rules.xlsx
- │   │
- │   ├─ processed/
- │   │   ├─ general_required_courses.json
- │   │   ├─ general_elective_courses.json
- │   │   ├─ course_restrictions.json
- │   │   └─ department_list.json
- │   │
+ │   ├─ course_catalog.json
  │   └─ rules/
  │       ├─ campus_rules.json
  │       └─ department_alias.json
@@ -100,43 +84,22 @@ backend/
 
 ## 3. 데이터 디렉토리 역할
 
-### 3.1. `data/raw/`
+### 3.1. `data/course_catalog.json`
 
-학교 홈페이지에서 다운로드한 원본 엑셀 파일을 저장한다.
-
-```text
-general_required.xlsx
-- 교양 필수 수강편람
-
-general_elective_area_1.xlsx ~ general_elective_area_7.xlsx
-- 교양 선택 1~7영역 수강편람
-- 사용자가 교양선택 파일을 업로드하지 않았을 때 기본 데이터로 사용
-
-course_restriction_rules.xlsx
-- 수강신청 제한 교과목 현황
-- 학과별 수강 가능/불가능 여부 판단
-- 학과 자동완성 목록 생성에 활용
-```
-
-### 3.2. `data/processed/`
-
-서버가 사용하기 쉽게 변환된 JSON 파일을 저장한다.
+스킬(`generate-pnu-catalog-json`)이 학교 수강편람 엑셀을 변환해 생성한 전체 과목 카탈로그이다.
+서버는 시작 시 엑셀 파일을 다시 읽지 않고 이 JSON을 바로 로딩한다.
 
 ```text
-general_required_courses.json
-- 정규화된 교양 필수 과목 데이터
-
-general_elective_courses.json
-- 교양 선택 1~7영역 통합 데이터
-
-course_restrictions.json
-- 수강 제한 규칙 데이터
-
-department_list.json
-- 프론트 학과 자동완성에 사용하는 학과 목록
+course_catalog.json
+- 교양 필수/교양 선택 통합 과목 데이터
+- 원본 시간/강의실, 개설학과, 수강대상학과, 사이버/원어강의 여부 보존
+- schedules가 명확히 파싱된 과목만 시간표 추천 후보 Course로 변환
 ```
 
-### 3.3. `data/rules/`
+프론트 학과 선택 UI는 같은 스킬이 생성한 `frontend/src/data/departments.json`을 사용한다.
+백엔드 학과 검증이 필요한 경우에도 이 grouped JSON을 읽어 학과명만 추출할 수 있다.
+
+### 3.2. `data/rules/`
 
 개발자가 직접 관리하는 규칙 데이터를 저장한다.
 
@@ -153,15 +116,14 @@ department_alias.json
 
 ## 4. 서버 시작 시 흐름
 
-서버 시작 시 엑셀을 매번 요청마다 읽지 않고, 필요한 데이터를 미리 준비한다.
+서버 시작 시 스킬이 미리 생성한 JSON 파일을 로딩한다.
 
 ```text
 서버 시작
-→ raw 엑셀 파일 확인
-→ 필요하면 processed JSON 생성/갱신
-→ processed JSON 로딩
+→ backend/data/course_catalog.json 로딩
+→ schedules가 있는 과목을 Course 객체로 변환
 → campus_rules.json 로딩
-→ department_list 로딩
+→ departments.json 또는 학과 목록 JSON 로딩
 → 메모리에 저장
 → API 요청 대기
 ```
@@ -173,10 +135,10 @@ startup.py
 - 서버 시작 시 전체 초기화 흐름 담당
 
 course_parser.py
-- data/raw의 학교 기본 엑셀 파일을 파싱하여 data/processed JSON 생성
+- 사용자 업로드 수강편람처럼 런타임에 엑셀 파싱이 필요한 경우 사용
 
 course_loader.py
-- data/processed와 data/rules의 JSON 파일을 메모리에 로딩
+- backend/data/course_catalog.json과 data/rules의 JSON 파일을 메모리에 로딩
 ```
 
 ---
@@ -298,7 +260,7 @@ MVP에서 사용자가 업로드하는 파일은 다음과 같다.
 - 교양선택 수강편람 파일
 ```
 
-교양선택 파일을 업로드하지 않으면 서버가 기본으로 보유한 `general_elective_courses.json`을 사용한다.
+교양선택 파일을 업로드하지 않으면 서버가 기본으로 보유한 `backend/data/course_catalog.json`에서 교양선택 과목을 로딩해 사용한다.
 
 ### 6.1. 업로드 파일 파싱
 
@@ -529,10 +491,10 @@ POST /recommend
 ```text
 1. session_id로 fixed_courses 조회
 2. user_prompt를 LLM으로 PreferenceRules 변환
-3. 교양 필수 후보 로딩
+3. `course_catalog.json`에서 교양 필수 후보 로딩
 4. 교양 선택 후보 결정
    - 사용자 업로드 교양선택 파일이 있으면 세션의 elective_candidates 사용
-   - 없으면 서버 기본 general_elective_courses 사용
+   - 없으면 `course_catalog.json`에서 로딩한 서버 기본 교양선택 후보 사용
 5. 수강 제한 규칙 적용
 6. fixed_courses와 시간 충돌하는 교양 제거
 7. 연강 이동 불가능한 조합 제거
@@ -613,20 +575,20 @@ POST /recommend
 
 ### 10.1. `course_parser.py`
 
-서버 기본 데이터를 생성한다.
+업로드된 엑셀 수강편람을 파싱한다.
 
 ```text
-data/raw/*.xlsx
-→ data/processed/*.json
+사용자 업로드 .xlsx
+→ Course 후보 목록
 ```
 
-처리 대상:
+서버 기본 데이터는 더 이상 런타임에 엑셀에서 생성하지 않는다. 기본 카탈로그 JSON은 스킬로 사전 생성한다.
+
+스킬 산출물:
 
 ```text
-- 교양 필수 수강편람
-- 교양 선택 1~7영역 수강편람
-- 수강 제한 교과목 파일
-- 학과 목록 생성
+- backend/data/course_catalog.json
+- frontend/src/data/departments.json
 ```
 
 ### 10.2. `uploaded_catalog_parser.py`
@@ -646,17 +608,19 @@ data/raw/*.xlsx
 JSON 파일을 서버 메모리에 로딩한다.
 
 ```text
-processed JSON
+backend/data/course_catalog.json
 rules JSON
 → Python 객체/list/dict
 ```
+
+`course_catalog.json`은 원본 보존용 필드를 포함한 전체 카탈로그이다. 시간표 추천 엔진에는 `schedules`가 있는 항목만 기존 `Course` 모델로 변환해 전달한다.
 
 ### 10.4. `department_service.py`
 
 학과 자동완성과 검증을 담당한다.
 
 ```text
-- department_list.json 로딩
+- departments.json 또는 문자열 배열 학과 목록 로딩
 - keyword 기반 학과 검색
 - 선택된 학과가 유효한지 검증
 ```
@@ -816,7 +780,7 @@ gap이 짧으면 campus_rule_engine으로 이동 가능 여부를 판단한다.
 
 ```text
 1. 서버 시작
-   - 기본 교양 필수/선택 데이터 로딩
+   - backend/data/course_catalog.json에서 기본 교양 필수/선택 데이터 로딩
    - 제한 교과목 데이터 로딩
    - 학과 목록 로딩
    - 캠퍼스 이동 규칙 로딩
