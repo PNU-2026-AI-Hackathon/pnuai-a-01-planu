@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import os
 import sys
+import urllib.error
+import urllib.request
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -211,6 +213,21 @@ def trace_dict_or_none(value: Any) -> dict[str, Any] | None:
     return {"value": value}
 
 
+def should_use_direct_proxy_client() -> bool:
+    """Avoid LangChain's Pydantic v1 compatibility path on Python 3.14+."""
+
+    return sys.version_info >= (3, 14)
+
+
+def chat_completions_url(base_url: str) -> str:
+    """Return the OpenAI-compatible chat completions endpoint URL."""
+
+    stripped = base_url.rstrip("/")
+    if stripped.endswith("/chat/completions"):
+        return stripped
+    return f"{stripped}/chat/completions"
+
+
 class LLMPreferenceParser:
     """Convert free text into validated ``PreferenceRules`` with trace details."""
 
@@ -341,6 +358,12 @@ class LLMPreferenceParser:
         trace: list[PreferenceTraceEvent],
     ) -> Any:
         if self.llm is None:
+            if should_use_direct_proxy_client():
+                return self._invoke_openai_compatible_tool_call(
+                    payload,
+                    used_tools,
+                    trace,
+                )
             return self._invoke_agent_tool_call(payload, used_tools, trace)
         return self._invoke_structured_output(payload, used_tools, trace)
 
@@ -397,6 +420,149 @@ class LLMPreferenceParser:
             base_url=self.base_url,
             temperature=0,
         )
+
+    def _invoke_openai_compatible_tool_call(
+        self,
+        payload: dict[str, Any],
+        used_tools: list[PreferenceToolUsage],
+        trace: list[PreferenceTraceEvent],
+    ) -> Any:
+        self._record(
+            used_tools,
+            trace,
+            name="openai_compatible_tool_call",
+            purpose=(
+                "Call the proxy chat-completions API directly with function tools "
+                "on Python 3.14+"
+            ),
+            status=PreferenceToolStatus.STARTED,
+            message="Starting direct OpenAI-compatible tool call.",
+            input={
+                "model": self.model_name,
+                "base_url": self.base_url,
+                "free_text_length": len(payload["free_text"]),
+            },
+        )
+        if not has_proxy_token(self.proxy_token):
+            raise RuntimeError("PROXY_TOKEN is not configured")
+
+        request_payload = self._tool_call_request_payload(payload)
+        request = urllib.request.Request(
+            chat_completions_url(self.base_url),
+            data=json.dumps(request_payload, ensure_ascii=False).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {self.proxy_token}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=60) as response:
+                response_payload = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            body = exc.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"proxy returned HTTP {exc.code}: {body}") from exc
+        except urllib.error.URLError as exc:
+            raise RuntimeError(f"proxy request failed: {exc.reason}") from exc
+
+        raw_output = self._rules_from_chat_completions_response(
+            response_payload,
+            used_tools,
+            trace,
+        )
+        self._record(
+            used_tools,
+            trace,
+            name="openai_compatible_tool_call",
+            purpose=(
+                "Call the proxy chat-completions API directly with function tools "
+                "on Python 3.14+"
+            ),
+            status=PreferenceToolStatus.SUCCESS,
+            message="Direct OpenAI-compatible tool call completed.",
+            output={"output_type": type(raw_output).__name__},
+        )
+        return raw_output
+
+    def _tool_call_request_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "model": self.model_name,
+            "temperature": 0,
+            "messages": [
+                {"role": "system", "content": AGENT_SYSTEM_PROMPT},
+                {
+                    "role": "user",
+                    "content": json.dumps(payload, ensure_ascii=False),
+                },
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "preference_rules_from_prompt",
+                        "description": (
+                            "Return PlaNU PreferenceRules parsed from the user's "
+                            "explicit natural-language preferences."
+                        ),
+                        "parameters": PreferenceRules.model_json_schema(),
+                    },
+                }
+            ],
+            "tool_choice": {
+                "type": "function",
+                "function": {"name": "preference_rules_from_prompt"},
+            },
+        }
+
+    def _rules_from_chat_completions_response(
+        self,
+        response_payload: dict[str, Any],
+        used_tools: list[PreferenceToolUsage],
+        trace: list[PreferenceTraceEvent],
+    ) -> dict[str, Any]:
+        choices = response_payload.get("choices") or []
+        if not choices:
+            raise ValueError("proxy response did not include choices")
+        message = choices[0].get("message") or {}
+        tool_calls = message.get("tool_calls") or []
+        if not tool_calls:
+            raise ValueError("proxy response did not include a tool call")
+
+        tool_call = tool_calls[0]
+        function = tool_call.get("function") or {}
+        arguments_text = function.get("arguments") or "{}"
+        try:
+            arguments = json.loads(arguments_text)
+        except json.JSONDecodeError as exc:
+            raise ValueError("tool call arguments were not valid JSON") from exc
+
+        self._record_agent_event(
+            used_tools,
+            trace,
+            {
+                "event": "tool_call",
+                "tool_name": function.get("name") or "preference_rules_from_prompt",
+                "arguments": arguments,
+                "id": tool_call.get("id"),
+            },
+        )
+        rules = PreferenceRules.model_validate(arguments)
+        result = {
+            "ok": True,
+            "tool_name": function.get("name") or "preference_rules_from_prompt",
+            "preference_rules": rules.model_dump(mode="json", exclude_unset=True),
+        }
+        self._record_agent_event(
+            used_tools,
+            trace,
+            {
+                "event": "tool_result",
+                "tool_name": result["tool_name"],
+                "content": result,
+                "id": tool_call.get("id"),
+            },
+        )
+        return result["preference_rules"]
 
     def _invoke_agent_tool_call(
         self,

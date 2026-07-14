@@ -1,5 +1,7 @@
 """Regression tests for traceable LLM preference parsing."""
 
+import json
+
 from backend.app.models import Day, PreferenceParseStatus, PreferenceRules
 from backend.app.services.llm_preference_parser import (
     DEFAULT_CHAT_PROXY_URL,
@@ -8,7 +10,9 @@ from backend.app.services.llm_preference_parser import (
     SYSTEM_PROMPT,
     LLMPreferenceParser,
     build_preference_parse_payload,
+    chat_completions_url,
     parse_preferences_with_trace,
+    should_use_direct_proxy_client,
 )
 
 
@@ -276,6 +280,80 @@ def test_parser_defaults_match_proxy_repo_settings(monkeypatch) -> None:
     assert parser.model_name == DEFAULT_OPENAI_MODEL
     assert parser.base_url == DEFAULT_CHAT_PROXY_URL
     assert parser.proxy_token == PROXY_TOKEN_PLACEHOLDER
+
+
+def test_python_314_uses_direct_proxy_client() -> None:
+    assert should_use_direct_proxy_client() is True
+
+
+def test_chat_completions_url_appends_endpoint_once() -> None:
+    assert chat_completions_url("https://example.test/v1") == (
+        "https://example.test/v1/chat/completions"
+    )
+    assert chat_completions_url("https://example.test/v1/chat/completions") == (
+        "https://example.test/v1/chat/completions"
+    )
+
+
+def test_direct_tool_call_request_uses_function_tool(monkeypatch) -> None:
+    monkeypatch.setenv("PROXY_TOKEN", PROXY_TOKEN_PLACEHOLDER)
+    parser = LLMPreferenceParser()
+    payload = build_preference_parse_payload(
+        free_text="가능하면 대학영어를 듣고 싶어.",
+        selected_preferences=PreferenceRules(),
+    )
+
+    request_payload = parser._tool_call_request_payload(payload)
+
+    assert request_payload["tools"][0]["type"] == "function"
+    assert request_payload["tools"][0]["function"]["name"] == (
+        "preference_rules_from_prompt"
+    )
+    assert request_payload["tool_choice"] == {
+        "type": "function",
+        "function": {"name": "preference_rules_from_prompt"},
+    }
+    assert "preferred_course_names" in request_payload["tools"][0]["function"]["parameters"]["properties"]
+
+
+def test_direct_tool_call_response_extracts_rules_and_trace(monkeypatch) -> None:
+    monkeypatch.setenv("PROXY_TOKEN", PROXY_TOKEN_PLACEHOLDER)
+    parser = LLMPreferenceParser()
+    used_tools = []
+    trace = []
+
+    output = parser._rules_from_chat_completions_response(
+        {
+            "choices": [
+                {
+                    "message": {
+                        "tool_calls": [
+                            {
+                                "id": "call_1",
+                                "type": "function",
+                                "function": {
+                                    "name": "preference_rules_from_prompt",
+                                    "arguments": json.dumps(
+                                        {"preferred_course_names": ["대학영어"]},
+                                        ensure_ascii=False,
+                                    ),
+                                },
+                            }
+                        ]
+                    }
+                }
+            ]
+        },
+        used_tools,
+        trace,
+    )
+
+    assert output == {"preferred_course_names": ["대학영어"]}
+    assert trace[0].tool == "preference_rules_from_prompt"
+    assert trace[0].input == {"preferred_course_names": ["대학영어"]}
+    assert trace[1].output["preference_rules"] == {
+        "preferred_course_names": ["대학영어"]
+    }
 
 
 def test_agent_tool_error_string_is_wrapped_for_trace() -> None:
