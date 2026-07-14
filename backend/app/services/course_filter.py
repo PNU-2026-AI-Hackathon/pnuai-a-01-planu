@@ -120,11 +120,6 @@ class CourseFilter:
         ):
             return True
 
-        if preferences.no_morning_classes:
-            morning_end = time_to_minutes(preferences.morning_end_time)
-            if any(meeting.start_minutes < morning_end for meeting in course.class_times):
-                return True
-
         if preferences.earliest_start_time is not None:
             earliest = time_to_minutes(preferences.earliest_start_time)
             if any(meeting.start_minutes < earliest for meeting in course.class_times):
@@ -155,17 +150,7 @@ class CourseFilter:
         ):
             return True
 
-        searchable = f"{course.course_name} {course.professor}".casefold()
-        if preferences.required_keywords and not all(
-            keyword.casefold() in searchable
-            for keyword in preferences.required_keywords
-        ):
-            return True
-
-        return any(
-            keyword.casefold() in searchable
-            for keyword in preferences.excluded_keywords
-        )
+        return course.course_name in preferences.excluded_course_names
 
     @staticmethod
     def _overlaps_excluded_range(

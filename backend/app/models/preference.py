@@ -13,8 +13,6 @@ from .course import Day, time_to_minutes
 class PreferenceTemplate(str, Enum):
     """User-facing preference choices mapped to deterministic backend rules."""
 
-    NO_MORNING_CLASSES = "no_morning_classes"
-    PREFER_LATE_START = "prefer_late_start"
     REQUIRED_FREE_DAY = "required_free_day"
     PREFER_FREE_DAY = "prefer_free_day"
     MINIMIZE_ATTENDANCE_DAYS = "minimize_attendance_days"
@@ -72,8 +70,8 @@ class PreferenceTraceEvent(BaseModel):
     error: str | None = None
 
 
-class ExcludedTimeRange(BaseModel):
-    """A hard time window that no meeting may overlap."""
+class TimeRange(BaseModel):
+    """A time window attached to one weekday."""
 
     model_config = ConfigDict(
         extra="forbid",
@@ -92,9 +90,9 @@ class ExcludedTimeRange(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def validate_range(self) -> "ExcludedTimeRange":
+    def validate_range(self) -> "TimeRange":
         if self.start_minutes >= self.end_minutes:
-            raise ValueError("excluded time range end must be later than start")
+            raise ValueError("time range end must be later than start")
         return self
 
     @property
@@ -104,6 +102,10 @@ class ExcludedTimeRange(BaseModel):
     @property
     def end_minutes(self) -> int:
         return time_to_minutes(self.end)
+
+
+class ExcludedTimeRange(TimeRange):
+    """Backward-compatible name for hard excluded time windows."""
 
 
 class PreferenceRules(BaseModel):
@@ -124,26 +126,48 @@ class PreferenceRules(BaseModel):
     required_free_days: list[Day] = Field(default_factory=list)
     earliest_start_time: str | None = None
     latest_end_time: str | None = None
-    no_morning_classes: bool = False
     excluded_time_ranges: list[ExcludedTimeRange] = Field(default_factory=list)
     excluded_professors: list[str] = Field(default_factory=list)
     preferred_elective_areas: list[int] = Field(default_factory=list)
-    required_keywords: list[str] = Field(default_factory=list)
-    excluded_keywords: list[str] = Field(default_factory=list)
+    required_course_names: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Concrete course names explicitly stated by the user as hard "
+            "requirements that must be included in the final timetable. "
+            "Use this field for expressions such as '대학영어는 반드시 넣어줘' "
+            "or '대학영어는 꼭 들어야 해'. Do not use this field for optional "
+            "or soft preferences."
+        ),
+    )
+    excluded_course_names: list[str] = Field(default_factory=list)
     selected_templates: list[PreferenceTemplate] = Field(default_factory=list)
+    max_consecutive_classes: int | None = Field(default=None, ge=1)
 
     # Soft ranking preferences
+    preferred_first_class_time: str | None = None
+    preferred_free_time_ranges: list[TimeRange] = Field(default_factory=list)
     preferred_free_days: list[Day] = Field(default_factory=list)
-    avoid_morning_classes: bool = False
-    morning_end_time: str = "10:00" # 아침 수업 기준을 10시로 설정
-    prefer_late_start: bool = False
+    preferred_course_names: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Concrete course names explicitly stated by the user as positive soft "
+            "preferences, not hard requirements. These courses should influence "
+            "ranking but should not remove candidates when absent. Use this field "
+            "for expressions such as '가능하면 대학영어를 듣고 싶어', "
+            "'대학영어를 선호해', '대학영어가 시간표에 있으면 좋겠어', and "
+            "'꼭 들어야 하는 것은 아니지만 대학영어를 듣고 싶어'. Do not leave "
+            "this field empty when a concrete course name and a positive soft "
+            "preference are both explicitly present. Do not include topics, "
+            "general course characteristics, or invented course names."
+        ),
+    )
+    avoided_course_names: list[str] = Field(default_factory=list)
     minimize_attendance_days: bool = False
     minimize_consecutive_classes: bool = False
     compact_schedule: bool = False
-    max_consecutive_classes: int | None = Field(default=None, ge=1)
 
     @field_validator(
-        "earliest_start_time", "latest_end_time", "morning_end_time"
+        "earliest_start_time", "latest_end_time", "preferred_first_class_time"
     )
     @classmethod
     def validate_time(cls, value: str | None) -> str | None:
@@ -162,10 +186,12 @@ class PreferenceRules(BaseModel):
         "excluded_days",
         "required_free_days",
         "preferred_free_days",
-        "required_keywords",
-        "excluded_keywords",
         "excluded_professors",
         "selected_templates",
+        "required_course_names",
+        "excluded_course_names",
+        "preferred_course_names",
+        "avoided_course_names",
     )
     @classmethod
     def remove_duplicates(cls, values: list) -> list:
@@ -181,8 +207,6 @@ class PreferenceRules(BaseModel):
         ):
             raise ValueError("latest_end_time must be later than earliest_start_time")
         template_flags = {
-            PreferenceTemplate.NO_MORNING_CLASSES: "no_morning_classes",
-            PreferenceTemplate.PREFER_LATE_START: "prefer_late_start",
             PreferenceTemplate.MINIMIZE_ATTENDANCE_DAYS: "minimize_attendance_days",
             PreferenceTemplate.MINIMIZE_CONSECUTIVE_CLASSES: "minimize_consecutive_classes",
             PreferenceTemplate.COMPACT_SCHEDULE: "compact_schedule",
@@ -190,7 +214,35 @@ class PreferenceRules(BaseModel):
         for template, field_name in template_flags.items():
             if template in self.selected_templates and not getattr(self, field_name):
                 object.__setattr__(self, field_name, True)
+        self._validate_course_name_conflicts()
         return self
+
+    def _validate_course_name_conflicts(self) -> None:
+        required = set(self.required_course_names)
+        excluded = set(self.excluded_course_names)
+        preferred = set(self.preferred_course_names)
+        avoided = set(self.avoided_course_names)
+
+        required_and_excluded = required & excluded
+        if required_and_excluded:
+            names = ", ".join(sorted(required_and_excluded))
+            raise ValueError(f"course names cannot be both required and excluded: {names}")
+
+        preferred_and_avoided = preferred & avoided
+        if preferred_and_avoided:
+            names = ", ".join(sorted(preferred_and_avoided))
+            raise ValueError(f"course names cannot be both preferred and avoided: {names}")
+
+        object.__setattr__(
+            self,
+            "preferred_course_names",
+            [name for name in self.preferred_course_names if name not in required and name not in excluded],
+        )
+        object.__setattr__(
+            self,
+            "avoided_course_names",
+            [name for name in self.avoided_course_names if name not in required and name not in excluded],
+        )
 
 
 class PreferenceParseResult(BaseModel):

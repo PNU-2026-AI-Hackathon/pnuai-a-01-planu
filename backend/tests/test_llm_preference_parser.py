@@ -5,7 +5,9 @@ from backend.app.services.llm_preference_parser import (
     DEFAULT_CHAT_PROXY_URL,
     DEFAULT_OPENAI_MODEL,
     PROXY_TOKEN_PLACEHOLDER,
+    SYSTEM_PROMPT,
     LLMPreferenceParser,
+    build_preference_parse_payload,
     parse_preferences_with_trace,
 )
 
@@ -25,15 +27,179 @@ class FakeStructuredLLM:
         return self.output
 
 
+def _parse_with_output(free_text: str, output: dict) -> PreferenceRules:
+    return parse_preferences_with_trace(
+        free_text=free_text,
+        llm=FakeStructuredLLM(output),
+    ).llm_preferences
+
+
+def _weekday_lunch_ranges() -> list[dict[str, str]]:
+    return [
+        {"day": day, "start": "12:00", "end": "13:00"}
+        for day in ["MON", "TUE", "WED", "THU", "FRI"]
+    ]
+
+
+def test_prompt_and_schema_describe_soft_course_name_preferences() -> None:
+    schema = PreferenceRules.model_json_schema()
+    preferred_description = schema["properties"]["preferred_course_names"]["description"]
+    required_description = schema["properties"]["required_course_names"]["description"]
+    payload = build_preference_parse_payload(
+        free_text="가능하면 대학영어를 듣고 싶어.",
+        selected_preferences=PreferenceRules(),
+    )
+
+    assert "preferred_course_names" in SYSTEM_PROMPT
+    assert "Soft course-name preferences are valid parser results and must not be ignored" in SYSTEM_PROMPT
+    assert "가능하면 대학영어를 듣고 싶어" in SYSTEM_PROMPT
+    assert "required_course_names" in SYSTEM_PROMPT
+    assert "positive soft preferences" in preferred_description
+    assert "가능하면 대학영어를 듣고 싶어" in preferred_description
+    assert "hard requirements" in required_description
+    assert "preferred_course_names" in payload["instruction"]
+    assert "Do not omit it merely because it is optional" in payload["instruction"]
+
+
+def test_soft_course_name_phrases_map_to_preferred_course_names() -> None:
+    cases = [
+        "가능하면 대학영어를 듣고 싶어.",
+        "대학영어를 선호해.",
+        "대학영어가 시간표에 있으면 좋겠어.",
+        "꼭 들어야 하는 건 아니지만 대학영어를 듣고 싶어.",
+    ]
+
+    for text in cases:
+        rules = _parse_with_output(
+            text,
+            {"preferred_course_names": ["대학영어"]},
+        )
+        assert rules.preferred_course_names == ["대학영어"], (
+            text,
+            rules.model_dump(mode="json"),
+        )
+        assert rules.required_course_names == []
+
+
+def test_hard_course_name_phrase_stays_required_not_preferred() -> None:
+    rules = _parse_with_output(
+        "대학영어는 반드시 넣어줘.",
+        {"required_course_names": ["대학영어"]},
+    )
+
+    assert rules.required_course_names == ["대학영어"]
+    assert rules.preferred_course_names == []
+
+
+def test_non_concrete_course_descriptions_do_not_create_preferred_names() -> None:
+    rules = _parse_with_output(
+        "재미있는 영어 관련 수업을 듣고 싶어.",
+        {},
+    )
+
+    assert rules.preferred_course_names == []
+    assert rules.required_course_names == []
+
+
+def test_morning_hard_condition_uses_earliest_start_time() -> None:
+    rules = _parse_with_output(
+        "아침 수업은 절대 안 돼.",
+        {"earliest_start_time": "10:00"},
+    )
+
+    assert rules.earliest_start_time == "10:00"
+    assert rules.preferred_first_class_time is None
+
+
+def test_morning_soft_condition_uses_preferred_first_class_time() -> None:
+    rules = _parse_with_output(
+        "가능하면 아침 수업은 피하고 싶어.",
+        {"preferred_first_class_time": "10:00"},
+    )
+
+    assert rules.preferred_first_class_time == "10:00"
+    assert rules.earliest_start_time is None
+
+
+def test_concrete_morning_time_wins_default() -> None:
+    rules = _parse_with_output(
+        "11시 이전 수업은 절대 안 돼.",
+        {"earliest_start_time": "11:00"},
+    )
+
+    assert rules.earliest_start_time == "11:00"
+
+
+def test_morning_hard_and_soft_can_be_combined_when_separate() -> None:
+    rules = _parse_with_output(
+        "10시 전 수업은 안 되고 가능하면 11시 이후에 시작하고 싶어.",
+        {
+            "earliest_start_time": "10:00",
+            "preferred_first_class_time": "11:00",
+        },
+    )
+
+    assert rules.earliest_start_time == "10:00"
+    assert rules.preferred_first_class_time == "11:00"
+
+
+def test_lunch_soft_condition_expands_to_weekdays() -> None:
+    rules = _parse_with_output(
+        "점심시간에는 수업이 없었으면 좋겠어.",
+        {"preferred_free_time_ranges": _weekday_lunch_ranges()},
+    )
+
+    assert [item.model_dump(mode="json") for item in rules.preferred_free_time_ranges] == _weekday_lunch_ranges()
+
+
+def test_lunch_hard_condition_expands_to_weekdays() -> None:
+    rules = _parse_with_output(
+        "점심시간에는 절대 수업을 넣지 마.",
+        {"excluded_time_ranges": _weekday_lunch_ranges()},
+    )
+
+    assert [item.model_dump(mode="json") for item in rules.excluded_time_ranges] == _weekday_lunch_ranges()
+
+
+def test_course_name_strength_fields() -> None:
+    rules = _parse_with_output(
+        "대학영어는 반드시 넣고 가능하면 고전읽기와토론을 듣고 싶고 "
+        "컴퓨팅사고와인공지능은 절대 넣지 말고 열린사고와표현은 가능하면 피하고 싶어.",
+        {
+            "required_course_names": ["대학영어"],
+            "preferred_course_names": ["고전읽기와토론"],
+            "excluded_course_names": ["컴퓨팅사고와인공지능"],
+            "avoided_course_names": ["열린사고와표현"],
+        },
+    )
+
+    assert rules.required_course_names == ["대학영어"]
+    assert rules.preferred_course_names == ["고전읽기와토론"]
+    assert rules.excluded_course_names == ["컴퓨팅사고와인공지능"]
+    assert rules.avoided_course_names == ["열린사고와표현"]
+
+
+def test_unsupported_conditions_do_not_create_course_names() -> None:
+    rules = _parse_with_output(
+        "발표 없고 학점 잘 주는 수업을 듣고 싶어.",
+        {},
+    )
+
+    assert rules.required_course_names == []
+    assert rules.preferred_course_names == []
+    assert rules.excluded_course_names == []
+    assert rules.avoided_course_names == []
+
+
 def test_parse_preferences_with_trace_uses_structured_output() -> None:
-    selected = PreferenceRules(prefer_late_start=True)
+    selected = PreferenceRules(preferred_first_class_time="11:00")
     result = parse_preferences_with_trace(
         free_text="금요일은 공강이면 좋고 오전 수업은 피하고 싶어요.",
         selected_preferences=selected,
         llm=FakeStructuredLLM(
             {
                 "preferred_free_days": ["FRI"],
-                "avoid_morning_classes": True,
+                "preferred_course_names": ["고전읽기와토론"],
             }
         ),
     )
@@ -41,8 +207,8 @@ def test_parse_preferences_with_trace_uses_structured_output() -> None:
     assert result.status == PreferenceParseStatus.SUCCESS
     assert result.fallback_used is False
     assert result.llm_preferences.preferred_free_days == [Day.FRI]
-    assert result.merged_preferences.prefer_late_start is True
-    assert result.merged_preferences.avoid_morning_classes is True
+    assert result.merged_preferences.preferred_first_class_time == "11:00"
+    assert result.merged_preferences.preferred_course_names == ["고전읽기와토론"]
     assert [tool.name for tool in result.used_tools] == [
         "preference_payload_builder",
         "langchain_structured_output",
@@ -79,14 +245,14 @@ def test_parse_preferences_falls_back_when_llm_is_unavailable(monkeypatch) -> No
 
 
 def test_parse_preferences_skips_empty_free_text() -> None:
-    selected = PreferenceRules(no_morning_classes=True)
+    selected = PreferenceRules(earliest_start_time="10:00")
     result = parse_preferences_with_trace(
         free_text="   ",
         selected_preferences=selected,
     )
 
     assert result.status == PreferenceParseStatus.SKIPPED
-    assert result.merged_preferences.no_morning_classes is True
+    assert result.merged_preferences.earliest_start_time == "10:00"
     assert result.llm_preferences == PreferenceRules()
     assert result.trace[-1].tool == "input_guard"
 
@@ -137,12 +303,50 @@ def test_tool_strategy_structured_response_is_used_directly() -> None:
         {
             "structured_response": PreferenceRules(
                 preferred_free_days=["FRI"],
-                avoid_morning_classes=True,
+                preferred_first_class_time="10:00",
             )
         }
     )
 
     assert output == {
         "preferred_free_days": ["FRI"],
-        "avoid_morning_classes": True,
+        "preferred_first_class_time": "10:00",
     }
+
+
+def test_ui_selected_course_name_is_removed_from_llm_preferences() -> None:
+    result = parse_preferences_with_trace(
+        free_text="대학영어는 반드시 넣고 아침 수업은 피하고 싶어.",
+        selected_preferences=PreferenceRules(required_course_names=["대학영어"]),
+        llm=FakeStructuredLLM(
+            {
+                "required_course_names": ["대학영어"],
+                "preferred_first_class_time": "10:00",
+            }
+        ),
+    )
+
+    assert result.llm_preferences.required_course_names == []
+    assert result.llm_preferences.preferred_first_class_time == "10:00"
+    assert result.merged_preferences.required_course_names == ["대학영어"]
+    assert result.merged_preferences.preferred_first_class_time == "10:00"
+
+
+def test_ui_selected_preferred_course_name_is_removed_from_llm_preferences() -> None:
+    result = parse_preferences_with_trace(
+        free_text="가능하면 대학영어를 듣고 싶고 아침 수업은 피하고 싶어.",
+        selected_preferences=PreferenceRules(preferred_course_names=["대학영어"]),
+        llm=FakeStructuredLLM(
+            {
+                "preferred_course_names": ["대학영어"],
+                "preferred_first_class_time": "10:00",
+            }
+        ),
+    )
+
+    assert result.llm_preferences.preferred_course_names == [], (
+        result.trace,
+        result.llm_preferences.model_dump(mode="json"),
+    )
+    assert result.llm_preferences.preferred_first_class_time == "10:00"
+    assert result.merged_preferences.preferred_course_names == ["대학영어"]

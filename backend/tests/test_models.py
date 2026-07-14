@@ -133,8 +133,10 @@ def test_empty_preference_rules_are_safe_fallback() -> None:
     rules = PreferenceRules()
 
     assert rules.preferred_free_days == []
-    assert rules.avoid_morning_classes is False
-    assert rules.morning_end_time == "10:00"
+    assert rules.preferred_first_class_time is None
+    assert rules.preferred_free_time_ranges == []
+    assert "no_morning_classes" not in rules.model_dump()
+    assert "avoid_morning_classes" not in rules.model_dump()
 
 
 def test_preference_rules_validate_and_deduplicate_values() -> None:
@@ -147,6 +149,26 @@ def test_preference_rules_validate_and_deduplicate_values() -> None:
 
     assert rules.preferred_free_days == [Day.FRI]
     assert rules.preferred_elective_areas == [1, 3]
+
+
+def test_preference_rules_reject_conflicting_course_names() -> None:
+    with pytest.raises(ValidationError, match="both required and excluded"):
+        PreferenceRules(
+            required_course_names=["대학영어"],
+            excluded_course_names=["대학영어"],
+        )
+
+
+def test_preference_rules_hard_course_names_win_over_soft_duplicates() -> None:
+    rules = PreferenceRules(
+        required_course_names=["대학영어"],
+        preferred_course_names=["대학영어", "고전읽기와토론"],
+        excluded_course_names=["컴퓨팅사고와인공지능"],
+        avoided_course_names=["컴퓨팅사고와인공지능", "열린사고와표현"],
+    )
+
+    assert rules.preferred_course_names == ["고전읽기와토론"]
+    assert rules.avoided_course_names == ["열린사고와표현"]
 
 
 def test_timetable_calculates_credit_and_sorts_schedule(

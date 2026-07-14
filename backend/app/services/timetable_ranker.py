@@ -77,11 +77,6 @@ class TimetableRanker:
         if any(day in occupied_days for day in preferences.required_free_days):
             return True
 
-        if preferences.no_morning_classes:
-            morning_end = time_to_minutes(preferences.morning_end_time)
-            if any(meeting.start_minutes < morning_end for meeting, _ in meetings):
-                return True
-
         if preferences.earliest_start_time is not None:
             earliest = time_to_minutes(preferences.earliest_start_time)
             if any(meeting.start_minutes < earliest for meeting, _ in meetings):
@@ -96,6 +91,16 @@ class TimetableRanker:
             self._overlaps_excluded_range(meeting, excluded)
             for meeting, _ in meetings
             for excluded in preferences.excluded_time_ranges
+        ):
+            return True
+
+        course_names = {course.course_name for _, course in meetings}
+        if preferences.required_course_names and not set(
+            preferences.required_course_names
+        ).issubset(course_names):
+            return True
+        if preferences.excluded_course_names and any(
+            name in course_names for name in preferences.excluded_course_names
         ):
             return True
 
@@ -155,31 +160,78 @@ class TimetableRanker:
                     f"{self._day_labels(missing)} 공강 선호는 만족하지 못했습니다."
                 )
 
-        if preferences.avoid_morning_classes:
-            morning_count = self._morning_class_count(candidate.courses, preferences)
-            if morning_count == 0:
-                details.append(ScoreDetail(
-                    key="morning_class",
-                    label="오전 수업 없음",
-                    value=8,
-                ))
-                reasons.append("오전 수업이 없습니다.")
-            else:
-                details.append(ScoreDetail(
-                    key="morning_class",
-                    label=f"오전 수업 {morning_count}개 포함",
-                    value=-4 * morning_count,
-                ))
-                warnings.append(f"오전 수업이 {morning_count}개 포함되어 있습니다.")
-
-        if preferences.prefer_late_start:
+        if preferences.preferred_first_class_time is not None:
             first_start = self._first_meeting_start_minutes(candidate.courses)
-            value = self._late_start_value(first_start)
+            preferred = time_to_minutes(preferences.preferred_first_class_time)
+            value = self._preferred_first_class_value(first_start, preferred)
             details.append(ScoreDetail(
-                key="late_start",
-                label=f"첫 수업 시작 {self._minutes_to_clock(first_start)}",
+                key="preferred_first_class_time",
+                label=(
+                    f"첫 수업 시작 {self._minutes_to_clock(first_start)} "
+                    f"(선호 {preferences.preferred_first_class_time} 이후)"
+                ),
                 value=value,
             ))
+            if first_start >= preferred:
+                reasons.append(
+                    f"첫 수업이 {preferences.preferred_first_class_time} 이후에 시작합니다."
+                )
+            else:
+                warnings.append(
+                    f"첫 수업이 선호 시간({preferences.preferred_first_class_time})보다 일찍 시작합니다."
+                )
+
+        if preferences.preferred_free_time_ranges:
+            satisfied = [
+                time_range
+                for time_range in preferences.preferred_free_time_ranges
+                if not self._candidate_overlaps_time_range(candidate, time_range)
+            ]
+            missing = [
+                time_range
+                for time_range in preferences.preferred_free_time_ranges
+                if time_range not in satisfied
+            ]
+            details.append(ScoreDetail(
+                key="preferred_free_time_ranges",
+                label=(
+                    f"선호 공강 시간 {len(satisfied)}/"
+                    f"{len(preferences.preferred_free_time_ranges)}개 만족"
+                ),
+                value=0,
+            ))
+            if missing:
+                warnings.append(
+                    "선호 공강 시간 일부는 만족하지 못했습니다. TODO: 점수 가중치 조정 필요."
+                )
+
+        course_names = {course.course_name for course in candidate.courses}
+        preferred_courses = [
+            name for name in preferences.preferred_course_names if name in course_names
+        ]
+        avoided_courses = [
+            name for name in preferences.avoided_course_names if name in course_names
+        ]
+        if preferences.preferred_course_names:
+            details.append(ScoreDetail(
+                key="preferred_course_names",
+                label=f"선호 과목 {len(preferred_courses)}/{len(preferences.preferred_course_names)}개 포함",
+                value=0,
+            ))
+            if preferred_courses:
+                reasons.append(
+                    f"선호 과목이 포함되었습니다: {', '.join(preferred_courses)}. TODO: 점수 가중치 조정 필요."
+                )
+        if preferences.avoided_course_names:
+            details.append(ScoreDetail(
+                key="avoided_course_names",
+                label=f"회피 선호 과목 {len(avoided_courses)}개 포함",
+                value=0,
+            ))
+            if avoided_courses:
+                warnings.append(
+                    f"가능하면 피하고 싶은 과목이 포함되었습니다: {', '.join(avoided_courses)}. TODO: 점수 가중치 조정 필요."
+                )
 
         if preferences.minimize_attendance_days:
             attendance_days = len(self._meetings_by_day(candidate.courses))
@@ -248,18 +300,6 @@ class TimetableRanker:
         occupied = set(self._meetings_by_day(courses))
         return set(Day) - occupied
 
-    @staticmethod
-    def _morning_class_count(
-        courses: Iterable[Course], preferences: PreferenceRules
-    ) -> int:
-        threshold = time_to_minutes(preferences.morning_end_time)
-        return sum(
-            1
-            for course in courses
-            for meeting in course.class_times
-            if meeting.start_minutes < threshold
-        )
-
     def _consecutive_class_count(self, courses: Iterable[Course]) -> int:
         count = 0
         for meetings in self._meetings_by_day(courses).values():
@@ -312,6 +352,21 @@ class TimetableRanker:
         if first_start < time_to_minutes("09:00"):
             return -4
         return 0
+
+    def _preferred_first_class_value(self, first_start: int, preferred: int) -> float:
+        if first_start >= preferred:
+            return self._late_start_value(first_start)
+        return self._late_start_value(first_start) - self._late_start_value(preferred)
+
+    @staticmethod
+    def _candidate_overlaps_time_range(
+        candidate: TimetableCandidate, time_range: ExcludedTimeRange
+    ) -> bool:
+        return any(
+            TimetableRanker._overlaps_excluded_range(meeting, time_range)
+            for course in candidate.courses
+            for meeting in course.class_times
+        )
 
     @staticmethod
     def _first_start_minutes(candidate: Timetable) -> int:

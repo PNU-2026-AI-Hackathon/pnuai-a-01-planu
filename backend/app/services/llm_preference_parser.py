@@ -36,12 +36,49 @@ change selected_preferences. Return only fields that fit PreferenceRules.
 Rules:
 - Use MON, TUE, WED, THU, FRI for weekdays.
 - Use HH:MM 24-hour time.
-- Hard conditions should use hard-filter fields such as required_free_days,
-  excluded_days, earliest_start_time, latest_end_time, no_morning_classes, and
-  excluded_time_ranges.
-- Soft wishes should use ranking fields such as preferred_free_days,
-  avoid_morning_classes, prefer_late_start, minimize_attendance_days,
-  minimize_consecutive_classes, and compact_schedule.
+- In PlaNU, morning classes are classes that start before 10:00.
+- If the user strongly forbids morning classes, use earliest_start_time: "10:00".
+- If the user softly prefers avoiding morning classes, use
+  preferred_first_class_time: "10:00".
+- If the user gives a concrete time, prefer the user's time over PlaNU defaults.
+- earliest_start_time is a hard filter. preferred_first_class_time is a soft
+  ranking preference.
+- Do not return both earliest_start_time and preferred_first_class_time for the
+  same morning preference unless the user separately states a hard condition and
+  a soft preference.
+- PlaNU's default lunch time is MON-FRI 12:00-13:00.
+- Strong lunch requests go to excluded_time_ranges. Soft lunch requests go to
+  preferred_free_time_ranges. Do not ask the user what lunch time means.
+- Course-name fields must contain only concrete course names explicitly written
+  by the user.
+- Do not turn requests about presentations, team projects, difficulty,
+  workload, fun, grades, or professor kindness into course names.
+- Do not invent or guess course names.
+- Use required_course_names, preferred_course_names, excluded_course_names, and
+  avoided_course_names for explicit course-name requests.
+- Course-name preference rules:
+  - Extract only concrete course names explicitly stated by the user.
+  - Use required_course_names when a concrete course is expressed as a hard
+    requirement.
+  - Use preferred_course_names when a concrete course is expressed as a positive
+    soft preference.
+  - Soft course-name preferences are valid parser results and must not be ignored.
+  - Expressions such as "가능하면", "되도록", "듣고 싶다", "선호한다",
+    "우선적으로 고려해줘", "있으면 좋겠다", and
+    "꼭 들어야 하는 것은 아니지만 듣고 싶다" indicate
+    preferred_course_names unless an explicit hard expression is also present.
+  - Do not convert soft course-name preferences into required_course_names.
+  - Do not leave preferred_course_names empty when the user explicitly names a
+    concrete course and expresses a positive soft preference for it.
+  - Do not invent, normalize, or infer course names that the user did not state.
+  - "대학영어는 반드시 넣어줘." -> required_course_names: ["대학영어"]
+  - "가능하면 대학영어를 듣고 싶어." -> preferred_course_names: ["대학영어"]
+  - "대학영어를 선호해." -> preferred_course_names: ["대학영어"]
+  - "대학영어가 시간표에 있으면 좋겠어." -> preferred_course_names: ["대학영어"]
+  - "꼭 들어야 하는 건 아니지만 대학영어를 듣고 싶어." -> preferred_course_names: ["대학영어"]
+- Do not duplicate the same meaning across multiple fields.
+- Do not return conditions already represented in selected_preferences.
+- Never delete or change existing UI-selected conditions.
 - If the text is ambiguous, prefer soft ranking fields over hard filters.
 """
 
@@ -241,6 +278,12 @@ class LLMPreferenceParser:
         try:
             raw_output = self._invoke_llm(payload, used_tools, trace)
             llm_preferences = self._validate_llm_output(raw_output, used_tools, trace)
+            llm_preferences = self._drop_selected_preferences(
+                llm_preferences,
+                selected,
+                used_tools,
+                trace,
+            )
             self._validate_domain_rules(llm_preferences, used_tools, trace)
             merged = merge_preference_rules(
                 selected_preferences=selected,
@@ -447,6 +490,47 @@ class LLMPreferenceParser:
         )
         return rules
 
+    def _drop_selected_preferences(
+        self,
+        llm_preferences: PreferenceRules,
+        selected_preferences: PreferenceRules,
+        used_tools: list[PreferenceToolUsage],
+        trace: list[PreferenceTraceEvent],
+    ) -> PreferenceRules:
+        selected_dump = selected_preferences.model_dump(mode="json")
+        llm_dump = llm_preferences.model_dump(mode="json")
+        changed: list[str] = []
+
+        for field_name, value in selected_dump.items():
+            if not value or field_name not in llm_dump:
+                continue
+            llm_value = llm_dump[field_name]
+            if isinstance(value, list) and isinstance(llm_value, list):
+                selected_values = {json.dumps(item, ensure_ascii=False, sort_keys=True) for item in value}
+                filtered = [
+                    item
+                    for item in llm_value
+                    if json.dumps(item, ensure_ascii=False, sort_keys=True) not in selected_values
+                ]
+                if len(filtered) != len(llm_value):
+                    llm_dump[field_name] = filtered
+                    changed.append(field_name)
+            elif llm_value == value and field_name in llm_preferences.model_fields_set:
+                llm_dump[field_name] = PreferenceRules.model_fields[field_name].default
+                changed.append(field_name)
+
+        if changed:
+            self._record(
+                used_tools,
+                trace,
+                name="selected_preference_deduplicator",
+                purpose="Remove LLM rules already represented by UI selections",
+                status=PreferenceToolStatus.SUCCESS,
+                message="Removed duplicate LLM preferences already selected in the UI.",
+                output={"fields": sorted(set(changed))},
+            )
+        return PreferenceRules.model_validate(llm_dump)
+
     def _validate_domain_rules(
         self,
         rules: PreferenceRules,
@@ -496,12 +580,11 @@ class LLMPreferenceParser:
             "required_free_days",
             "earliest_start_time",
             "latest_end_time",
-            "no_morning_classes",
             "excluded_time_ranges",
             "excluded_professors",
             "preferred_elective_areas",
-            "required_keywords",
-            "excluded_keywords",
+            "required_course_names",
+            "excluded_course_names",
             "max_consecutive_classes",
         )
         return sum(1 for field_name in hard_fields if getattr(rules, field_name))
@@ -509,9 +592,11 @@ class LLMPreferenceParser:
     @staticmethod
     def _soft_preference_count(rules: PreferenceRules) -> int:
         soft_fields = (
+            "preferred_first_class_time",
+            "preferred_free_time_ranges",
             "preferred_free_days",
-            "avoid_morning_classes",
-            "prefer_late_start",
+            "preferred_course_names",
+            "avoided_course_names",
             "minimize_attendance_days",
             "minimize_consecutive_classes",
             "compact_schedule",
@@ -670,8 +755,15 @@ def build_preference_parse_payload(
         "selected_preferences": selected.model_dump(mode="json", exclude_unset=True),
         "free_text": free_text.strip(),
         "instruction": (
-            "Extract only additional timetable preferences that are not already "
-            "represented in selected_preferences. Return PreferenceRules JSON."
+            "Extract all additional supported PreferenceRules that are explicitly "
+            "stated in free_text and are not already represented in "
+            "selected_preferences. Supported rules include timetable constraints, "
+            "free-day preferences, time-range preferences, concrete course-name "
+            "preferences, professor exclusions, and elective-area preferences. "
+            "A positive soft preference for a concrete course name must be "
+            "returned in preferred_course_names. Do not omit it merely because it "
+            "is optional. Keep required_course_names for hard requirements only. "
+            "Return PreferenceRules JSON."
         ),
     }
 

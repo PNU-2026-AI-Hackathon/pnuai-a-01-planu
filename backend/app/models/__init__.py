@@ -11,6 +11,7 @@ from .preference import (
     PreferenceToolStatus,
     PreferenceToolUsage,
     PreferenceTraceEvent,
+    TimeRange,
     merge_preference_rules,
 )
 from .timetable import ScheduleItem, ScoreDetail, Timetable, TimetableCandidate
@@ -31,6 +32,7 @@ __all__ = [
     "PreferenceTraceEvent",
     "ScheduleItem",
     "ScoreDetail",
+    "TimeRange",
     "Timetable",
     "TimetableCandidate",
     "merge_preference_rules",
