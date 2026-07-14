@@ -1,2 +1,30 @@
 *.xlsx
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# pytest 등 테스트/커버리지 관련 파일 (핵심)
+.pytest_cache/
+.tox/
+.coverage
+htmlcov/
+nosetests.xml
+coverage.xml
+
+# Environments (가상환경)
 .env
+.venv
+env/
+venv/
+ENV/
+
+# IDE / 에디터 / OS 설정 파일
+.vscode/
+.idea/
+.DS_Store
+
+# 패키지 배포 및 빌드 관련 파일
+build/
+dist/
+*.egg-info/

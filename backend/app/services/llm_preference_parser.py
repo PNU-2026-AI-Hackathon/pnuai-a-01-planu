@@ -48,12 +48,8 @@ Rules:
 
 AGENT_SYSTEM_PROMPT = SYSTEM_PROMPT + """
 
-You have exactly one tool for producing the parser result:
-- preference_rules_from_prompt
-
-Always call preference_rules_from_prompt with a JSON object that matches
-PreferenceRules. The tool validates and returns the same JSON. Do not answer
-without calling the tool.
+Return the final parser result through the structured-response tool. Do not add
+free-form text before or after the structured preference rules.
 """
 
 
@@ -166,6 +162,16 @@ def has_proxy_token(value: str | None) -> bool:
     if not value:
         return False
     return value.strip() not in PROXY_TOKEN_PLACEHOLDERS
+
+
+def trace_dict_or_none(value: Any) -> dict[str, Any] | None:
+    """Normalize arbitrary LangChain event payloads for PreferenceTraceEvent."""
+
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        return value
+    return {"value": value}
 
 
 class LLMPreferenceParser:
@@ -372,30 +378,14 @@ class LLMPreferenceParser:
             raise RuntimeError("PROXY_TOKEN is not configured")
         try:
             from langchain.agents import create_agent
-            from langchain.tools import tool
+            from langchain.agents.structured_output import ToolStrategy
         except ImportError as exc:
             raise RuntimeError("langchain is not installed") from exc
 
-        @tool
-        def preference_rules_from_prompt(preference_rules_json: str) -> str:
-            """Validate and return PreferenceRules JSON parsed from user text."""
-
-            rules = PreferenceRules.model_validate_json(preference_rules_json)
-            return json.dumps(
-                {
-                    "ok": True,
-                    "tool_name": "preference_rules_from_prompt",
-                    "preference_rules": rules.model_dump(
-                        mode="json",
-                        exclude_unset=True,
-                    ),
-                },
-                ensure_ascii=False,
-            )
-
         agent = create_agent(
             model=self._build_default_llm(),
-            tools=[preference_rules_from_prompt],
+            tools=[],
+            response_format=ToolStrategy(PreferenceRules),
             system_prompt=AGENT_SYSTEM_PROMPT,
         )
         result = agent.invoke({"messages": self._agent_messages(payload)})
@@ -546,6 +536,15 @@ class LLMPreferenceParser:
 
     @staticmethod
     def _rules_from_agent_result(result: Any) -> dict[str, Any]:
+        if isinstance(result, dict) and "structured_response" in result:
+            structured = result["structured_response"]
+            if isinstance(structured, PreferenceRules):
+                return structured.model_dump(mode="json", exclude_unset=True)
+            if isinstance(structured, dict):
+                return structured
+            if hasattr(structured, "model_dump"):
+                return structured.model_dump(mode="json", exclude_unset=True)
+
         events = extract_agent_events(result)
         for event in reversed(events):
             if event.get("event") != "tool_result":
@@ -643,8 +642,12 @@ class LLMPreferenceParser:
                 tool=tool_name,
                 status=status,
                 message=f"LangChain {event_name}: {tool_name}",
-                input=event.get("arguments") if event_name == "tool_call" else None,
-                output=event.get("content") if event_name == "tool_result" else None,
+                input=trace_dict_or_none(
+                    event.get("arguments") if event_name == "tool_call" else None
+                ),
+                output=trace_dict_or_none(
+                    event.get("content") if event_name == "tool_result" else None
+                ),
             )
         )
 

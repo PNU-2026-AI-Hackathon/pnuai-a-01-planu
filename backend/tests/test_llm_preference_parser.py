@@ -110,3 +110,39 @@ def test_parser_defaults_match_proxy_repo_settings(monkeypatch) -> None:
     assert parser.model_name == DEFAULT_OPENAI_MODEL
     assert parser.base_url == DEFAULT_CHAT_PROXY_URL
     assert parser.proxy_token == PROXY_TOKEN_PLACEHOLDER
+
+
+def test_agent_tool_error_string_is_wrapped_for_trace() -> None:
+    used_tools = []
+    trace = []
+
+    LLMPreferenceParser._record_agent_event(
+        used_tools,
+        trace,
+        {
+            "event": "tool_result",
+            "tool_name": "preference_rules_from_prompt",
+            "content": "Error invoking tool 'preference_rules_from_prompt'",
+            "id": "call_1",
+        },
+    )
+
+    assert trace[0].output == {
+        "value": "Error invoking tool 'preference_rules_from_prompt'"
+    }
+
+
+def test_tool_strategy_structured_response_is_used_directly() -> None:
+    output = LLMPreferenceParser._rules_from_agent_result(
+        {
+            "structured_response": PreferenceRules(
+                preferred_free_days=["FRI"],
+                avoid_morning_classes=True,
+            )
+        }
+    )
+
+    assert output == {
+        "preferred_free_days": ["FRI"],
+        "avoid_morning_classes": True,
+    }
