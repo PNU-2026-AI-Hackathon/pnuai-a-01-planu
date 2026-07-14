@@ -1,23 +1,24 @@
 import 'package:flutter/material.dart';
-import 'department_select_screen.dart';
+
+import 'screens/department_select_screen.dart';
 
 void main() {
-  runApp(const PlaNUApp());
+  runApp(const MyApp());
 }
 
-class PlaNUApp extends StatelessWidget {
-  const PlaNUApp({super.key});
+class MyApp extends StatelessWidget {
+  const MyApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'PlaNU',
-      home: DepartmentSelectScreen(
-        onDepartmentSelected: (department) {
-          debugPrint('선택한 학과: $department');
-        },
+      theme: ThemeData(
+        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF111111)),
+        useMaterial3: true,
       ),
+      home: const DepartmentSelectScreen(),
     );
   }
 }
