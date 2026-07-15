@@ -1,0 +1,333 @@
+[
+  {
+    "id": "required-course-basic",
+    "input": "대학영어는 반드시 포함해줘.",
+    "expected": {
+      "required_course_names": [
+        "대학영어"
+      ]
+    },
+    "expected_empty": [
+      "preferred_course_names",
+      "excluded_course_names",
+      "disliked_course_names"
+    ]
+  },
+  {
+    "id": "preferred-course-basic",
+    "input": "컴퓨팅사고와인공지능은 가능하면 듣고 싶어.",
+    "expected": {
+      "preferred_course_names": [
+        "컴퓨팅사고와인공지능"
+      ]
+    },
+    "expected_empty": [
+      "required_course_names",
+      "excluded_course_names",
+      "disliked_course_names"
+    ]
+  },
+  {
+    "id": "preferred-course-negated-required",
+    "input": "데이터과학입문은 꼭 들어야 하는 건 아니고 가능하면 넣어줘.",
+    "expected": {
+      "preferred_course_names": [
+        "데이터과학입문"
+      ]
+    },
+    "expected_empty": [
+      "required_course_names",
+      "excluded_course_names",
+      "disliked_course_names"
+    ]
+  },
+  {
+    "id": "excluded-course-basic",
+    "input": "고전읽기와토론은 절대 넣지 마.",
+    "expected": {
+      "excluded_course_names": [
+        "고전읽기와토론"
+      ]
+    },
+    "expected_empty": [
+      "required_course_names",
+      "preferred_course_names",
+      "disliked_course_names"
+    ]
+  },
+  {
+    "id": "disliked-course-basic",
+    "input": "고전읽기와토론은 가능하면 피하고 싶어.",
+    "expected": {
+      "disliked_course_names": [
+        "고전읽기와토론"
+      ]
+    },
+    "expected_empty": [
+      "required_course_names",
+      "preferred_course_names",
+      "excluded_course_names"
+    ]
+  },
+  {
+    "id": "disliked-not-excluded",
+    "input": "철학의기초가 별로긴 한데 절대 제외할 정도는 아니야. 다른 선택지가 있으면 피해줘.",
+    "expected": {
+      "disliked_course_names": [
+        "철학의기초"
+      ]
+    },
+    "expected_empty": [
+      "excluded_course_names",
+      "required_course_names",
+      "preferred_course_names"
+    ]
+  },
+  {
+    "id": "multiple-strengths",
+    "input": "대학영어는 반드시 넣고 컴퓨팅사고와인공지능은 가능하면 넣어줘.",
+    "expected": {
+      "required_course_names": [
+        "대학영어"
+      ],
+      "preferred_course_names": [
+        "컴퓨팅사고와인공지능"
+      ]
+    },
+    "expected_empty": [
+      "excluded_course_names",
+      "disliked_course_names"
+    ]
+  },
+  {
+    "id": "exclude-and-dislike",
+    "input": "고전읽기와토론은 절대 제외하고 철학의기초는 가능하면 피해줘.",
+    "expected": {
+      "excluded_course_names": [
+        "고전읽기와토론"
+      ],
+      "disliked_course_names": [
+        "철학의기초"
+      ]
+    },
+    "expected_empty": [
+      "required_course_names",
+      "preferred_course_names"
+    ]
+  },
+  {
+    "id": "multiple-required-courses",
+    "input": "대학영어와 열린사고와표현은 둘 다 반드시 들어야 해.",
+    "expected": {
+      "required_course_names": [
+        "대학영어",
+        "열린사고와표현"
+      ]
+    },
+    "expected_empty": [
+      "preferred_course_names",
+      "excluded_course_names",
+      "disliked_course_names"
+    ]
+  },
+  {
+    "id": "multiple-preferred-courses",
+    "input": "가능하면 데이터과학입문이나 컴퓨팅사고와인공지능을 듣고 싶어.",
+    "expected": {
+      "preferred_course_names": [
+        "데이터과학입문",
+        "컴퓨팅사고와인공지능"
+      ]
+    },
+    "expected_empty": [
+      "required_course_names",
+      "excluded_course_names",
+      "disliked_course_names"
+    ]
+  },
+  {
+    "id": "preferred-area-basic",
+    "input": "교양선택은 4영역을 선호해.",
+    "expected": {
+      "preferred_elective_areas": [
+        4
+      ]
+    }
+  },
+  {
+    "id": "preferred-areas-multiple",
+    "input": "가능하면 4영역이나 6영역 과목을 우선 추천해줘.",
+    "expected": {
+      "preferred_elective_areas": [
+        4,
+        6
+      ]
+    }
+  },
+  {
+    "id": "preferred-area-not-required",
+    "input": "4영역만 고집하는 건 아니고 가능하면 4영역에서 골라줘.",
+    "expected": {
+      "preferred_elective_areas": [
+        4
+      ]
+    }
+  },
+  {
+    "id": "earliest-start-basic",
+    "input": "오전 10시보다 이른 수업은 싫어.",
+    "expected": {
+      "earliest_start_time": "10:00"
+    }
+  },
+  {
+    "id": "earliest-start-first-class",
+    "input": "첫 수업은 10시부터 가능해.",
+    "expected": {
+      "earliest_start_time": "10:00"
+    }
+  },
+  {
+    "id": "earliest-start-afternoon",
+    "input": "오후 1시 이후에 시작하는 수업으로 구성해줘.",
+    "expected": {
+      "earliest_start_time": "13:00"
+    }
+  },
+  {
+    "id": "compound-course-area-time",
+    "input": "대학영어는 반드시 넣고 데이터과학입문은 가능하면 듣고 싶어. 4영역을 선호하고 첫 수업은 오전 10시 이후였으면 좋겠어.",
+    "expected": {
+      "required_course_names": [
+        "대학영어"
+      ],
+      "preferred_course_names": [
+        "데이터과학입문"
+      ],
+      "preferred_elective_areas": [
+        4
+      ],
+      "earliest_start_time": "10:00"
+    },
+    "expected_empty": [
+      "excluded_course_names",
+      "disliked_course_names"
+    ]
+  },
+  {
+    "id": "compound-all-course-strengths",
+    "input": "대학영어는 반드시 듣고 컴퓨팅사고와인공지능은 가능하면 넣어줘. 고전읽기와토론은 절대 제외하고 철학의기초는 다른 선택지가 있으면 피해줘.",
+    "expected": {
+      "required_course_names": [
+        "대학영어"
+      ],
+      "preferred_course_names": [
+        "컴퓨팅사고와인공지능"
+      ],
+      "excluded_course_names": [
+        "고전읽기와토론"
+      ],
+      "disliked_course_names": [
+        "철학의기초"
+      ]
+    }
+  },
+  {
+    "id": "no-course-preference",
+    "input": "아무 과목이나 괜찮고 특별히 선호하거나 피하고 싶은 과목은 없어.",
+    "expected_empty": [
+      "required_course_names",
+      "preferred_course_names",
+      "excluded_course_names",
+      "disliked_course_names"
+    ]
+  },
+  {
+    "id": "do-not-hallucinate-course",
+    "input": "오전 10시 이후 수업이면 돼.",
+    "expected": {
+      "earliest_start_time": "10:00"
+    },
+    "expected_empty": [
+      "required_course_names",
+      "preferred_course_names",
+      "excluded_course_names",
+      "disliked_course_names",
+      "preferred_elective_areas"
+    ]
+  },
+  {
+    "id": "priority-over-earlier-clause",
+    "input": "처음에는 고전읽기와토론을 꼭 들으려고 했는데 생각이 바뀌었어. 지금은 가능하면 피하고 싶어.",
+    "expected": {
+      "disliked_course_names": [
+        "고전읽기와토론"
+      ]
+    },
+    "expected_empty": [
+      "required_course_names",
+      "preferred_course_names",
+      "excluded_course_names"
+    ]
+  },
+  {
+    "id": "correction-in-same-input",
+    "input": "데이터과학입문은 반드시 넣어줘. 아니, 필수까지는 아니고 가능하면 넣어줘.",
+    "expected": {
+      "preferred_course_names": [
+        "데이터과학입문"
+      ]
+    },
+    "expected_empty": [
+      "required_course_names",
+      "excluded_course_names",
+      "disliked_course_names"
+    ]
+  },
+  {
+    "id": "excluded-over-general-like",
+    "input": "인문학 과목은 좋아하지만 고전읽기와토론만은 절대 듣고 싶지 않아.",
+    "expected": {
+      "excluded_course_names": [
+        "고전읽기와토론"
+      ]
+    },
+    "expected_empty": [
+      "required_course_names",
+      "preferred_course_names",
+      "disliked_course_names"
+    ]
+  },
+  {
+    "id": "mixed-punctuation-spacing",
+    "input": "대학영어는 꼭! 컴퓨팅사고와인공지능은 가능하면, 고전읽기와토론은 절대 제외.",
+    "expected": {
+      "required_course_names": [
+        "대학영어"
+      ],
+      "preferred_course_names": [
+        "컴퓨팅사고와인공지능"
+      ],
+      "excluded_course_names": [
+        "고전읽기와토론"
+      ]
+    },
+    "expected_empty": [
+      "disliked_course_names"
+    ]
+  },
+  {
+    "id": "duplicate-mention",
+    "input": "대학영어는 반드시 들어야 하고 대학영어는 꼭 포함해줘.",
+    "expected": {
+      "required_course_names": [
+        "대학영어"
+      ]
+    },
+    "expected_empty": [
+      "preferred_course_names",
+      "excluded_course_names",
+      "disliked_course_names"
+    ]
+  }
+]
