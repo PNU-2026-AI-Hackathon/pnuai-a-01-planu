@@ -6,20 +6,25 @@ class CatalogDownloadGuideScreen extends StatelessWidget {
   static const _steps = [
     _DownloadStep(
       imagePath: 'src/img/download-description-1.png',
+      aspectRatio: 1399 / 449,
       description: "① 학지시에서 '수업' 메뉴를 클릭합니다.",
     ),
     _DownloadStep(
       imagePath: 'src/img/download-description-2.png',
+      aspectRatio: 1370 / 961,
       description: "② '수강편람' 메뉴를 클릭합니다.",
     ),
     _DownloadStep(
       imagePath: 'src/img/download-description-3.png',
-      description:
-          "③ 로그인 후 수강편람에 들어가면 소속 학과가 자동으로 선택됩니다. 조회한 뒤 '출력' 버튼을 눌러 파일을 다운로드합니다.",
+      aspectRatio: 1080 / 2115,
+      leadingLabel: '③',
+      description: '로그인 후 수강편람에 들어가면 소속 학과가 자동으로 선택됩니다. 조회 버튼을 눌러주세요.',
     ),
     _DownloadStep(
       imagePath: 'src/img/download-description-4.png',
-      description: '④ 다운로드한 엑셀 파일을 PlaNU의 파일 업로드 화면에서 선택합니다.',
+      aspectRatio: 1080 / 2023,
+      leadingLabel: '④',
+      description: '아래 엑셀 버튼을 누르고 다운받은 엑셀 파일을 업로드 합니다.',
     ),
   ];
 
@@ -39,11 +44,7 @@ class CatalogDownloadGuideScreen extends StatelessWidget {
               constraints: const BoxConstraints(maxWidth: 1200),
               child: const Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _DownloadGuideCard(steps: _steps),
-                  SizedBox(height: 24),
-                  _GuideCards(),
-                ],
+                children: [_DownloadGuideCard(steps: _steps)],
               ),
             ),
           ),
@@ -54,10 +55,17 @@ class CatalogDownloadGuideScreen extends StatelessWidget {
 }
 
 class _DownloadStep {
-  const _DownloadStep({required this.imagePath, required this.description});
+  const _DownloadStep({
+    required this.imagePath,
+    required this.aspectRatio,
+    required this.description,
+    this.leadingLabel,
+  });
 
   final String imagePath;
+  final double aspectRatio;
   final String description;
+  final String? leadingLabel;
 }
 
 class _DownloadGuideCard extends StatelessWidget {
@@ -130,108 +138,44 @@ class _DownloadStepTile extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          AspectRatio(
-            aspectRatio: 16 / 9,
-            child: ColoredBox(
-              color: Colors.white,
-              child: Image.asset(
-                step.imagePath,
-                fit: BoxFit.contain,
-                filterQuality: FilterQuality.medium,
-              ),
-            ),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final naturalHeight = constraints.maxWidth / step.aspectRatio;
+              return SizedBox(
+                width: double.infinity,
+                height: naturalHeight.clamp(0, 720).toDouble(),
+                child: ColoredBox(
+                  color: Colors.white,
+                  child: Image.asset(
+                    step.imagePath,
+                    fit: BoxFit.contain,
+                    filterQuality: FilterQuality.medium,
+                  ),
+                ),
+              );
+            },
           ),
           Padding(
             padding: const EdgeInsets.all(14),
-            child: Text(
-              step.description,
-              style: Theme.of(context).textTheme.bodyMedium,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (step.leadingLabel != null) ...[
+                  Text(
+                    step.leadingLabel!,
+                    style: Theme.of(context).textTheme.bodyMedium,
+                  ),
+                  const SizedBox(width: 4),
+                ],
+                Expanded(
+                  child: Text(
+                    step.description,
+                    style: Theme.of(context).textTheme.bodyMedium,
+                  ),
+                ),
+              ],
             ),
           ),
-        ],
-      ),
-    );
-  }
-}
-
-class _GuideCards extends StatelessWidget {
-  const _GuideCards();
-
-  @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        const cards = [
-          _InfoCard(
-            icon: Icons.assignment_outlined,
-            title: '필수 파일',
-            description: '1학년 전공기초 수강편람 파일을 준비합니다.',
-          ),
-          _InfoCard(
-            icon: Icons.tune_outlined,
-            title: '선택 파일',
-            description: '교양선택 수강편람은 선택 사항이며 없어도 진행할 수 있습니다.',
-          ),
-          _InfoCard(
-            icon: Icons.verified_outlined,
-            title: '업로드 확인',
-            description: '다운로드한 엑셀 파일은 PlaNU 업로드 화면에서 확인합니다.',
-          ),
-        ];
-        if (constraints.maxWidth < 768) {
-          return Column(
-            children: [
-              for (var index = 0; index < cards.length; index++) ...[
-                cards[index],
-                if (index != cards.length - 1) const SizedBox(height: 16),
-              ],
-            ],
-          );
-        }
-        return Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            for (var index = 0; index < cards.length; index++) ...[
-              Expanded(child: cards[index]),
-              if (index != cards.length - 1) const SizedBox(width: 24),
-            ],
-          ],
-        );
-      },
-    );
-  }
-}
-
-class _InfoCard extends StatelessWidget {
-  const _InfoCard({
-    required this.icon,
-    required this.title,
-    required this.description,
-  });
-
-  final IconData icon;
-  final String title;
-  final String description;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      constraints: const BoxConstraints(minHeight: 180),
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFE5E7EB)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(icon, color: const Color(0xFF111111)),
-          const SizedBox(height: 20),
-          Text(title, style: Theme.of(context).textTheme.titleMedium),
-          const SizedBox(height: 8),
-          Text(description, style: Theme.of(context).textTheme.bodyMedium),
         ],
       ),
     );

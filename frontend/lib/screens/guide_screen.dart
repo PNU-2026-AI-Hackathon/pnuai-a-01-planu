@@ -23,7 +23,16 @@ class GuideScreen extends StatelessWidget {
                     delegate: SliverChildListDelegate.fixed([
                       const _TopNav(),
                       const SizedBox(height: 56),
-                      _HeroBand(onPrepareFiles: onPrepareFiles, onNext: onNext),
+                      const _HeroBand(),
+                      const SizedBox(height: 32),
+                      _GuideActions(
+                        onPrepareFiles: onPrepareFiles,
+                        onNext: onNext,
+                      ),
+                      const SizedBox(height: 32),
+                      const _FileCards(),
+                      const SizedBox(height: 24),
+                      const _UploadConfirmation(),
                       const SizedBox(height: 24),
                       const _AdditionalGuidance(),
                     ]),
@@ -85,17 +94,14 @@ class _TopNav extends StatelessWidget {
 }
 
 class _HeroBand extends StatelessWidget {
-  const _HeroBand({required this.onPrepareFiles, required this.onNext});
-
-  final VoidCallback? onPrepareFiles;
-  final VoidCallback? onNext;
+  const _HeroBand();
 
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
         final isCompact = constraints.maxWidth < 820;
-        final copy = _HeroCopy(onPrepareFiles: onPrepareFiles, onNext: onNext);
+        const copy = _HeroCopy();
 
         if (isCompact) {
           return Column(
@@ -111,10 +117,7 @@ class _HeroBand extends StatelessWidget {
 }
 
 class _HeroCopy extends StatelessWidget {
-  const _HeroCopy({this.onPrepareFiles, this.onNext});
-
-  final VoidCallback? onPrepareFiles;
-  final VoidCallback? onNext;
+  const _HeroCopy();
 
   @override
   Widget build(BuildContext context) {
@@ -139,12 +142,46 @@ class _HeroCopy extends StatelessWidget {
           '교양선택 파일을 업로드하지 않으면 PlaNU가 기본으로 보유한 교양선택 데이터를 사용합니다.',
           style: theme.textTheme.bodyLarge,
         ),
-        const SizedBox(height: 32),
-        Wrap(
-          spacing: 12,
-          runSpacing: 12,
+      ],
+    );
+  }
+}
+
+class _GuideActions extends StatelessWidget {
+  const _GuideActions({this.onPrepareFiles, this.onNext});
+
+  final VoidCallback? onPrepareFiles;
+  final VoidCallback? onNext;
+
+  @override
+  Widget build(BuildContext context) {
+    final buttonStyle = ButtonStyle(
+      minimumSize: const WidgetStatePropertyAll(Size(0, 48)),
+      padding: const WidgetStatePropertyAll(
+        EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      ),
+    );
+
+    final prepareButton = OutlinedButton.icon(
+      style: buttonStyle,
+      onPressed: onPrepareFiles ?? () {},
+      icon: const Icon(Icons.download_rounded, size: 18),
+      label: const Text('파일 준비하러 가기'),
+    );
+    final nextButton = ElevatedButton.icon(
+      style: buttonStyle,
+      onPressed: onNext ?? () {},
+      icon: const Icon(Icons.arrow_forward_rounded, size: 18),
+      label: const Text('다음'),
+    );
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             OutlinedButton.icon(
+              style: buttonStyle,
               onPressed: () {
                 Navigator.of(context).push(
                   MaterialPageRoute<void>(
@@ -155,19 +192,109 @@ class _HeroCopy extends StatelessWidget {
               icon: const Icon(Icons.menu_book_outlined, size: 18),
               label: const Text('수강편람 다운로드 방법 보기'),
             ),
-            OutlinedButton.icon(
-              onPressed: onPrepareFiles ?? () {},
-              icon: const Icon(Icons.download_rounded, size: 18),
-              label: const Text('파일 준비하러 가기'),
-            ),
-            ElevatedButton.icon(
-              onPressed: onNext ?? () {},
-              icon: const Icon(Icons.arrow_forward_rounded, size: 18),
-              label: const Text('다음'),
-            ),
+            const SizedBox(height: 12),
+            if (constraints.maxWidth < 300) ...[
+              prepareButton,
+              const SizedBox(height: 12),
+              nextButton,
+            ] else
+              Row(
+                children: [
+                  Expanded(flex: 2, child: prepareButton),
+                  const SizedBox(width: 12),
+                  Expanded(child: nextButton),
+                ],
+              ),
           ],
-        ),
-      ],
+        );
+      },
+    );
+  }
+}
+
+class _FileCards extends StatelessWidget {
+  const _FileCards();
+
+  @override
+  Widget build(BuildContext context) {
+    const cards = [
+      _InfoCard(
+        icon: Icons.assignment_outlined,
+        title: '필수 파일',
+        description: '1학년 전공기초 혹은 전공필수 수강편람 파일을 준비합니다.',
+      ),
+      _InfoCard(
+        icon: Icons.tune_outlined,
+        title: '선택 파일',
+        description: '교양선택 수강편람은 선택 사항이며 없어도 진행할 수 있습니다.',
+      ),
+    ];
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth < 768) {
+          return Column(children: [cards[0], SizedBox(height: 16), cards[1]]);
+        }
+        return IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(child: cards[0]),
+              SizedBox(width: 24),
+              Expanded(child: cards[1]),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _UploadConfirmation extends StatelessWidget {
+  const _UploadConfirmation();
+
+  @override
+  Widget build(BuildContext context) {
+    return const _InfoCard(
+      icon: Icons.verified_outlined,
+      title: '업로드 확인',
+      description: '다운로드한 엑셀 파일은 PlaNU 업로드 화면에서 확인합니다.',
+    );
+  }
+}
+
+class _InfoCard extends StatelessWidget {
+  const _InfoCard({
+    required this.icon,
+    required this.title,
+    required this.description,
+  });
+
+  final IconData icon;
+  final String title;
+  final String description;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      constraints: const BoxConstraints(minHeight: 180),
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, color: const Color(0xFF111111)),
+          const SizedBox(height: 20),
+          Text(title, style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 8),
+          Text(description, style: Theme.of(context).textTheme.bodyMedium),
+        ],
+      ),
     );
   }
 }
@@ -184,7 +311,7 @@ class _AdditionalGuidance extends StatelessWidget {
             icon: Icons.event_note_outlined,
             title: '전공 선택 안내',
             description:
-                '파일 업로드 후 전공 과목과 분반을 직접 선택해야 합니다.\n원활한 진행을 위해 신청할 전공 시간표를 미리 확인해 두는 것을 권장합니다.',
+                '파일 업로드 후 전공 과목과 분반을 직접 선택해야 합니다. PlaNU는 강의실 간의 거리와 교양 필수 과목을 중심으로 시간표를 작성하므로, 에브리타임의 수업 평가를 보고 원하는 시간표를 사용해 주세요.',
           ),
           _NoticeCard(
             icon: Icons.lock_clock_outlined,
