@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from backend.app.models.course import Category, Day
-from backend.app.services.course_loader import load_courses, load_default_catalogs
+from backend.app.services.course_loader import CourseCatalogLoadError, load_courses, load_default_catalogs
 from backend.app.services.department_service import load_departments
 
 
@@ -80,6 +82,56 @@ def test_load_default_catalogs_groups_general_courses(tmp_path) -> None:
 
     assert [course.course_id for course in catalogs["general_required"]] == ["ZE1000001-001"]
     assert [course.course_id for course in catalogs["general_elective"]] == ["ZE2000001-002"]
+
+
+def test_load_courses_normalizes_category_aliases_before_filtering(tmp_path) -> None:
+    path = tmp_path / "course_catalog.json"
+    path.write_text(json.dumps([
+        {
+            "category": " 효원 핵심 교양 ",
+            "area": None,
+            "courseName": "고전읽기와토론",
+            "courseCode": "ZE1000001",
+            "section": "001",
+            "credits": 2,
+            "professor": "김교수",
+            "schedules": [{"day": "월", "startTime": "09:00", "endTime": "10:00", "room": "401-101"}],
+        },
+        {
+            "category": "교양 선택",
+            "area": 2,
+            "courseName": "과학기술과사회",
+            "courseCode": "ZE2000001",
+            "section": "002",
+            "credits": 3,
+            "professor": "이교수",
+            "schedules": [{"day": "화", "startTime": "10:00", "endTime": "11:15", "room": "609-313"}],
+        },
+    ], ensure_ascii=False), encoding="utf-8")
+
+    courses = load_courses(path, category=Category.GENERAL_REQUIRED)
+
+    assert [course.course_id for course in courses] == ["ZE1000001-001"]
+    assert courses[0].category is Category.GENERAL_REQUIRED
+
+
+def test_load_courses_rejects_unknown_category(tmp_path) -> None:
+    path = tmp_path / "course_catalog.json"
+    path.write_text(json.dumps([
+        {
+            "category": "자유선택",
+            "area": None,
+            "courseName": "미분류",
+            "courseCode": "ZE9999999",
+            "section": "001",
+            "credits": 2,
+            "professor": "김교수",
+            "schedules": [{"day": "월", "startTime": "09:00", "endTime": "10:00", "room": "401-101"}],
+        }
+    ], ensure_ascii=False), encoding="utf-8")
+
+    with pytest.raises(CourseCatalogLoadError, match="unknown course category"):
+        load_courses(path)
 
 
 def test_load_courses_skips_unsupported_schedule_days(tmp_path) -> None:
