@@ -55,15 +55,32 @@ Rules:
   by the user.
 - Do not turn requests about presentations, team projects, difficulty,
   workload, fun, grades, or professor kindness into course names.
+- Do not turn broad subjects, academic areas, categories, or phrases ending in
+  "과목" into course names. For example, if the user says they like a broad
+  category but excludes one concrete course, return only the concrete course
+  exclusion and do not add the category to course-name fields.
 - Do not invent or guess course names.
 - Use required_course_names, preferred_course_names, excluded_course_names, and
   avoided_course_names for explicit course-name requests.
 - Course-name preference rules:
   - Extract only concrete course names explicitly stated by the user.
+  - Preserve a contiguous course-name phrase before Korean particles such as
+    은, 는, 을, 를, 만은, and 만. Do not split a course name merely because it
+    contains connectors such as 와, 과, and, or &, when they are written without
+    spaces inside the course-name phrase.
   - Use required_course_names when a concrete course is expressed as a hard
     requirement.
   - Use preferred_course_names when a concrete course is expressed as a positive
     soft preference.
+  - Use excluded_course_names when a concrete course is expressed as a hard
+    negative constraint. Expressions such as "절대", "무조건 제외",
+    "포함하지 마", "넣지 마", "듣고 싶지 않다", and "있으면 안 된다"
+    indicate excluded_course_names when they apply to a concrete course.
+  - Use avoided_course_names when a concrete course is expressed as a negative
+    soft preference. Expressions such as "가능하면 피하고 싶다",
+    "다른 선택지가 있으면 피해줘", "별로다", "우선순위를 낮춰줘", and
+    "절대 제외할 정도는 아니다" indicate avoided_course_names unless a later
+    phrase turns the same course into a hard exclusion.
   - Soft course-name preferences are valid parser results and must not be ignored.
   - Expressions such as "가능하면", "되도록", "듣고 싶다", "선호한다",
     "우선적으로 고려해줘", "있으면 좋겠다", and
@@ -72,12 +89,26 @@ Rules:
   - Do not convert soft course-name preferences into required_course_names.
   - Do not leave preferred_course_names empty when the user explicitly names a
     concrete course and expresses a positive soft preference for it.
+  - Do not convert negative soft preferences into preferred_course_names.
   - Do not invent, normalize, or infer course names that the user did not state.
+  - If the same course is mentioned with an earlier hard requirement and a later
+    correction such as "아니", "필수까지는 아니고", "꼭은 아니고", or
+    "반드시까지는 아니고", the later softened preference overrides the earlier
+    hard requirement. Return the course only in preferred_course_names.
   - "대학영어는 반드시 넣어줘." -> required_course_names: ["대학영어"]
   - "가능하면 대학영어를 듣고 싶어." -> preferred_course_names: ["대학영어"]
   - "대학영어를 선호해." -> preferred_course_names: ["대학영어"]
   - "대학영어가 시간표에 있으면 좋겠어." -> preferred_course_names: ["대학영어"]
   - "꼭 들어야 하는 건 아니지만 대학영어를 듣고 싶어." -> preferred_course_names: ["대학영어"]
+- For concrete first-class or start-time constraints, use earliest_start_time
+  when the user says classes or the first class should start at or after that
+  time. Phrases such as "첫 수업은 10시부터", "첫 수업은 10시 이후",
+  "10시보다 이른 수업은 싫다", and "10시 이후 수업" should produce
+  earliest_start_time: "10:00". Use preferred_first_class_time only for a
+  purely soft ranking preference that does not constrain allowed schedules.
+- For elective-area preferences, extract only the explicit numeric areas stated
+  by the user. "4영역" means [4], not [1, 2, 3, 4]. Do not expand a single
+  area number into a range or infer unstated areas.
 - Do not duplicate the same meaning across multiple fields.
 - Do not return conditions already represented in selected_preferences.
 - Never delete or change existing UI-selected conditions.
@@ -298,6 +329,11 @@ class LLMPreferenceParser:
             llm_preferences = self._drop_selected_preferences(
                 llm_preferences,
                 selected,
+                used_tools,
+                trace,
+            )
+            llm_preferences = self._drop_broad_course_categories(
+                llm_preferences,
                 used_tools,
                 trace,
             )
@@ -696,6 +732,64 @@ class LLMPreferenceParser:
                 output={"fields": sorted(set(changed))},
             )
         return PreferenceRules.model_validate(llm_dump)
+
+    def _drop_broad_course_categories(
+        self,
+        llm_preferences: PreferenceRules,
+        used_tools: list[PreferenceToolUsage],
+        trace: list[PreferenceTraceEvent],
+    ) -> PreferenceRules:
+        """Remove broad subject/category phrases from concrete course fields."""
+
+        course_fields = (
+            "required_course_names",
+            "preferred_course_names",
+            "excluded_course_names",
+            "avoided_course_names",
+        )
+        llm_dump = llm_preferences.model_dump(mode="json")
+        changed: dict[str, list[str]] = {}
+        for field_name in course_fields:
+            values = llm_dump.get(field_name) or []
+            filtered = [
+                value
+                for value in values
+                if not self._looks_like_broad_course_category(value)
+            ]
+            if filtered != values:
+                llm_dump[field_name] = filtered
+                changed[field_name] = [
+                    value for value in values if value not in filtered
+                ]
+
+        if changed:
+            self._record(
+                used_tools,
+                trace,
+                name="course_category_filter",
+                purpose="Remove broad categories from concrete course-name fields",
+                status=PreferenceToolStatus.SUCCESS,
+                message="Removed broad course categories from LLM course-name output.",
+                output={"removed": changed},
+            )
+        return PreferenceRules.model_validate(llm_dump)
+
+    @staticmethod
+    def _looks_like_broad_course_category(value: Any) -> bool:
+        if not isinstance(value, str):
+            return False
+        normalized = value.strip()
+        if not normalized:
+            return False
+        broad_suffixes = (
+            "과목",
+            "수업",
+            "강의",
+            "분야",
+            "계열",
+            "영역",
+        )
+        return any(normalized.endswith(suffix) for suffix in broad_suffixes)
 
     def _validate_domain_rules(
         self,

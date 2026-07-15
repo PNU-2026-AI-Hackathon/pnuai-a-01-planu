@@ -139,7 +139,16 @@ class PreferenceRules(BaseModel):
             "or soft preferences."
         ),
     )
-    excluded_course_names: list[str] = Field(default_factory=list)
+    excluded_course_names: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Concrete course names explicitly stated by the user as hard "
+            "negative constraints that must not appear in the final timetable. "
+            "Use this field for expressions such as '절대 듣고 싶지 않아', "
+            "'무조건 제외해줘', '포함하지 마', '넣지 마', or '있으면 안 돼'. "
+            "Do not use avoided_course_names for these hard exclusion requests."
+        ),
+    )
     selected_templates: list[PreferenceTemplate] = Field(default_factory=list)
     max_consecutive_classes: int | None = Field(default=None, ge=1)
 
@@ -161,7 +170,16 @@ class PreferenceRules(BaseModel):
             "general course characteristics, or invented course names."
         ),
     )
-    avoided_course_names: list[str] = Field(default_factory=list)
+    avoided_course_names: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Concrete course names explicitly stated by the user as negative soft "
+            "preferences, not hard exclusions. Use this field for expressions "
+            "such as '가능하면 피하고 싶어', '다른 선택지가 있으면 피해줘', "
+            "'별로 선호하지 않아', or '절대 제외할 정도는 아니야'. Do not use "
+            "this field when the user strongly forbids the course."
+        ),
+    )
     minimize_attendance_days: bool = False
     minimize_consecutive_classes: bool = False
     compact_schedule: bool = False
