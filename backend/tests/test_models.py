@@ -11,6 +11,7 @@ from backend.app.models import (
     InputTimetable,
     PreferenceRules,
     Timetable,
+    normalize_course_category,
     time_to_minutes,
 )
 
@@ -127,6 +128,25 @@ def test_general_elective_requires_area() -> None:
                 }
             ],
         )
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("효원핵심교양", Category.GENERAL_REQUIRED),
+        (" 효원 핵심 교양 ", Category.GENERAL_REQUIRED),
+        ("교양 필수", Category.GENERAL_REQUIRED),
+        ("교양 선택", Category.GENERAL_ELECTIVE),
+        ("GENERAL REQUIRED", Category.GENERAL_REQUIRED),
+    ],
+)
+def test_normalize_course_category_accepts_aliases_and_spacing(raw: str, expected: Category) -> None:
+    assert normalize_course_category(raw) is expected
+
+
+def test_normalize_course_category_rejects_unknown_values() -> None:
+    with pytest.raises(ValueError, match="unknown course category"):
+        normalize_course_category("자유선택")
 
 
 def test_empty_preference_rules_are_safe_fallback() -> None:

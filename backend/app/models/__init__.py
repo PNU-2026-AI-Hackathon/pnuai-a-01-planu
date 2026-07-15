@@ -1,6 +1,6 @@
 """Public domain models for the PlaNU backend."""
 
-from .course import Category, ClassTime, Course, Day, time_to_minutes
+from .course import Category, ClassTime, Course, Day, normalize_course_category, time_to_minutes
 from .input_timetable import InputTimetable
 from .preference import (
     ExcludedTimeRange,
@@ -36,5 +36,6 @@ __all__ = [
     "Timetable",
     "TimetableCandidate",
     "merge_preference_rules",
+    "normalize_course_category",
     "time_to_minutes",
 ]

@@ -20,7 +20,7 @@ from typing import Any, Callable, Mapping, Sequence
 # 엑셀 파일을 열기 위한 라이브러리
 from openpyxl import load_workbook
 # 프로젝트 내부 모델 가져옴
-from ..models.course import Category, ClassTime, Course, Day
+from ..models.course import Category, ClassTime, Course, Day, normalize_course_category
 
 # 수강편람에서 특정 정보가 어느 열에 있는지 명시
 CATALOG_POSITION = {
@@ -201,12 +201,16 @@ def _cell(row: Sequence[Any], columns: Mapping[str, int], field: str) -> Any:
 
 def parse_catalog_workbook(
     path: str | Path,
-    category: Category,
+    category: Category | str,
     *,
     area: int | None = None,
 ) -> list[Course]:
     """Parse an internal general-course catalog whose first row is its header."""
 
+    try:
+        category = normalize_course_category(category)
+    except ValueError as exc:
+        raise CatalogParseError(str(exc)) from exc
     if category not in (Category.GENERAL_REQUIRED, Category.GENERAL_ELECTIVE):
         raise CatalogParseError("내부 수강편람 파서는 교양필수/교양선택만 처리합니다.")
     if category is Category.GENERAL_ELECTIVE and area is None:
