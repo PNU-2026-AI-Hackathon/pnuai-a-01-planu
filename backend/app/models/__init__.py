@@ -1,6 +1,11 @@
 """Public domain models for the PlaNU backend."""
 
 from .course import Category, ClassTime, Course, Day, normalize_course_category, time_to_minutes
+from .course_load import (
+    CourseLoadCalculationResult,
+    CourseLoadTarget,
+    CourseLoadWarning,
+)
 from .input_timetable import InputTimetable
 from .major_selection import (
     AmbiguousMajorCourse,
@@ -28,6 +33,9 @@ __all__ = [
     "Category",
     "ClassTime",
     "Course",
+    "CourseLoadCalculationResult",
+    "CourseLoadTarget",
+    "CourseLoadWarning",
     "Day",
     "ExcludedTimeRange",
     "InputTimetable",
