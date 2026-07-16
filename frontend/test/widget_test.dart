@@ -39,12 +39,16 @@ void main() {
 
     await tester.scrollUntilVisible(find.text('전공 선택 안내'), 300);
     expect(find.text('전공 선택 안내'), findsOneWidget);
+    expect(find.text('전공 과목 직접 선택'), findsOneWidget);
+    expect(find.text('시간표 작성 기준'), findsOneWidget);
+    expect(find.text('전공 시간표 미리 준비'), findsOneWidget);
     expect(
-      find.text(
-        '파일 업로드 후 전공 과목과 분반을 직접 선택해야 합니다. PlaNU는 강의실 간의 거리와 교양 필수 과목을 중심으로 시간표를 작성하므로, 에브리타임의 수업 평가를 보고 원하는 시간표를 사용해 주세요.',
-      ),
+      find.text('에브리타임의 수업 평가와 시간표를 참고해 원하는 전공 과목과 분반을 미리 정해 주세요.'),
       findsOneWidget,
     );
     expect(find.text('개인정보 및 세션 안내'), findsOneWidget);
+    expect(find.text('개인정보 보호'), findsOneWidget);
+    expect(find.text('30분 세션'), findsOneWidget);
+    expect(find.text('파일 자동 삭제'), findsOneWidget);
   });
 }

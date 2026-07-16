@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'catalog_download_guide_screen.dart';
 
@@ -153,6 +154,24 @@ class _GuideActions extends StatelessWidget {
   final VoidCallback? onPrepareFiles;
   final VoidCallback? onNext;
 
+  Future<void> _openStudentSupportSystem(BuildContext context) async {
+    final url = Uri.parse('https://onestop.pusan.ac.kr/login');
+
+    try {
+      final launched = await launchUrl(
+        url,
+        mode: LaunchMode.externalApplication,
+      );
+      if (launched || !context.mounted) return;
+    } catch (_) {
+      if (!context.mounted) return;
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('페이지를 열 수 없습니다. 잠시 후 다시 시도해 주세요.')),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final buttonStyle = ButtonStyle(
@@ -164,7 +183,7 @@ class _GuideActions extends StatelessWidget {
 
     final prepareButton = OutlinedButton.icon(
       style: buttonStyle,
-      onPressed: onPrepareFiles ?? () {},
+      onPressed: onPrepareFiles ?? () => _openStudentSupportSystem(context),
       icon: const Icon(Icons.download_rounded, size: 18),
       label: const Text('파일 준비하러 가기'),
     );
@@ -265,31 +284,39 @@ class _UploadConfirmation extends StatelessWidget {
 
 class _InfoCard extends StatelessWidget {
   const _InfoCard({
-    required this.icon,
+    this.icon,
     required this.title,
     required this.description,
+    this.borderColor = const Color(0xFFE5E7EB),
+    this.backgroundColor = Colors.white,
+    this.minimumHeight = 180,
   });
 
-  final IconData icon;
+  final IconData? icon;
   final String title;
   final String description;
+  final Color borderColor;
+  final Color backgroundColor;
+  final double minimumHeight;
 
   @override
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      constraints: const BoxConstraints(minHeight: 180),
+      constraints: BoxConstraints(minHeight: minimumHeight),
       padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: backgroundColor,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFE5E7EB)),
+        border: Border.all(color: borderColor),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, color: const Color(0xFF111111)),
-          const SizedBox(height: 20),
+          if (icon != null) ...[
+            Icon(icon, color: const Color(0xFF111111)),
+            const SizedBox(height: 20),
+          ],
           Text(title, style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 8),
           Text(description, style: Theme.of(context).textTheme.bodyMedium),
@@ -307,17 +334,52 @@ class _AdditionalGuidance extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         const cards = [
-          _NoticeCard(
-            icon: Icons.event_note_outlined,
+          _GuidanceSection(
             title: '전공 선택 안내',
-            description:
-                '파일 업로드 후 전공 과목과 분반을 직접 선택해야 합니다. PlaNU는 강의실 간의 거리와 교양 필수 과목을 중심으로 시간표를 작성하므로, 에브리타임의 수업 평가를 보고 원하는 시간표를 사용해 주세요.',
+            cards: [
+              _InfoCard(
+                title: '전공 과목 직접 선택',
+                description: '파일 업로드 후 전공 과목과 분반을 직접 선택해야 합니다.',
+                minimumHeight: 0,
+              ),
+              _InfoCard(
+                title: '시간표 작성 기준',
+                description: 'PlaNU는 강의실 간의 거리와 교양 필수 과목을 중심으로 시간표를 작성합니다.',
+                minimumHeight: 0,
+              ),
+              _InfoCard(
+                title: '전공 시간표 미리 준비',
+                description: '에브리타임의 수업 평가와 시간표를 참고해 원하는 전공 과목과 분반을 미리 정해 주세요.',
+                minimumHeight: 0,
+              ),
+            ],
           ),
-          _NoticeCard(
-            icon: Icons.lock_clock_outlined,
+          _GuidanceSection(
             title: '개인정보 및 세션 안내',
-            description:
-                '개인정보 보호를 위해 업로드한 정보는 임시로만 보관됩니다.\n마지막 요청 이후 30분이 지나면 세션이 만료되어 파일을 다시 업로드해야 할 수 있습니다.',
+            isWarning: true,
+            cards: [
+              _InfoCard(
+                title: '개인정보 보호',
+                description: '업로드한 파일은 시간표 작성에만 사용되며 임시로 보관됩니다.',
+                borderColor: Color(0xFFFECACA),
+                backgroundColor: Color(0xFFFFFAFA),
+                minimumHeight: 0,
+              ),
+              _InfoCard(
+                title: '30분 세션',
+                description: '마지막 활동 이후 30분이 지나면 세션이 만료됩니다.',
+                borderColor: Color(0xFFFECACA),
+                backgroundColor: Color(0xFFFFFAFA),
+                minimumHeight: 0,
+              ),
+              _InfoCard(
+                title: '파일 자동 삭제',
+                description: '세션이 만료되면 업로드한 파일과 로그인 정보는 다시 사용할 수 없습니다.',
+                borderColor: Color(0xFFFECACA),
+                backgroundColor: Color(0xFFFFFAFA),
+                minimumHeight: 0,
+              ),
+            ],
           ),
         ];
 
@@ -340,59 +402,36 @@ class _AdditionalGuidance extends StatelessWidget {
   }
 }
 
-class _NoticeCard extends StatelessWidget {
-  const _NoticeCard({
-    required this.icon,
+class _GuidanceSection extends StatelessWidget {
+  const _GuidanceSection({
     required this.title,
-    required this.description,
+    required this.cards,
+    this.isWarning = false,
   });
 
-  final IconData icon;
   final String title;
-  final String description;
+  final List<_InfoCard> cards;
+  final bool isWarning;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
-    return Container(
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFE5E7EB)),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              color: const Color(0xFFF5F5F5),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Icon(icon, size: 21, color: const Color(0xFF374151)),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: theme.textTheme.titleLarge?.copyWith(
+            color: isWarning ? const Color(0xFFB91C1C) : null,
           ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(title, style: theme.textTheme.titleMedium),
-                const SizedBox(height: 8),
-                Text(
-                  description,
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    color: const Color(0xFF6B7280),
-                    height: 1.55,
-                  ),
-                ),
-              ],
-            ),
-          ),
+        ),
+        const SizedBox(height: 16),
+        for (var index = 0; index < cards.length; index++) ...[
+          cards[index],
+          if (index != cards.length - 1) const SizedBox(height: 12),
         ],
-      ),
+      ],
     );
   }
 }
