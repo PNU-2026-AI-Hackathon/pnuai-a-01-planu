@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from dataclasses import fields
+
+import pytest
+from pydantic import ValidationError
+
 from backend.app.models import (
     Category,
     ClassTime,
@@ -14,8 +19,10 @@ from backend.app.models import (
 )
 from backend.app.services.timetable_ranker import (
     RankingWeights,
+    TEMPLATE_WEIGHT_PROFILES,
     build_ranking_weights,
     rank_timetables,
+    weights_for_template,
 )
 
 
@@ -303,28 +310,67 @@ def test_prompt_soft_preferences_use_default_weights_without_template() -> None:
     assert ranked[0].timetable.courses[0].course_name == "대학영어"
 
 
-def test_template_selection_strengthens_related_weights() -> None:
-    default = build_ranking_weights(PreferenceRules())
-    templated = build_ranking_weights(
-        PreferenceRules(selected_templates=[PreferenceTemplate.PREFER_FREE_DAY])
+def test_preference_rules_accept_one_selected_template() -> None:
+    preferences = PreferenceRules(
+        selected_template=PreferenceTemplate.MINIMIZE_ATTENDANCE_DAYS
     )
 
-    assert templated.preferred_free_day > default.preferred_free_day
-    assert abs(templated.preferred_free_day_missing) > abs(default.preferred_free_day_missing)
+    assert preferences.selected_template == PreferenceTemplate.MINIMIZE_ATTENDANCE_DAYS
+    assert preferences.minimize_attendance_days is True
 
 
-def test_duplicate_templates_or_conditions_are_not_applied_twice() -> None:
-    duplicate_templates = build_ranking_weights(
-        PreferenceRules(
-            selected_templates=[
-                PreferenceTemplate.PREFER_FREE_DAY,
-                PreferenceTemplate.PREFER_FREE_DAY,
-            ]
-        )
-    )
-    single_template = build_ranking_weights(
-        PreferenceRules(selected_templates=[PreferenceTemplate.PREFER_FREE_DAY])
-    )
+def test_preference_rules_reject_template_list_input() -> None:
+    with pytest.raises(ValidationError):
+        PreferenceRules(selected_template=[PreferenceTemplate.PREFER_FREE_DAY])
+
+
+def test_build_ranking_weights_uses_default_without_template() -> None:
+    assert build_ranking_weights(PreferenceRules()) == RankingWeights()
+    assert weights_for_template(None) == RankingWeights()
+
+
+def test_each_template_has_complete_ranking_weight_profile() -> None:
+    expected_fields = {field.name for field in fields(RankingWeights)}
+
+    assert set(TEMPLATE_WEIGHT_PROFILES) == set(PreferenceTemplate)
+    for profile in TEMPLATE_WEIGHT_PROFILES.values():
+        assert {field.name for field in fields(profile)} == expected_fields
+
+
+def test_prefer_free_day_template_prioritizes_free_time_weights() -> None:
+    weights = weights_for_template(PreferenceTemplate.PREFER_FREE_DAY)
+
+    assert weights.preferred_free_day > weights.attendance_days_low
+    assert weights.preferred_free_day > weights.compact_idle_short
+    assert weights.preferred_free_time_range > weights.preferred_course
+    assert abs(weights.preferred_free_day_missing) > abs(weights.consecutive_class)
+
+
+def test_minimize_attendance_template_prioritizes_attendance_weights() -> None:
+    weights = weights_for_template(PreferenceTemplate.MINIMIZE_ATTENDANCE_DAYS)
+
+    assert weights.attendance_days_low > weights.preferred_free_day
+    assert weights.attendance_days_low > weights.compact_idle_short
+    assert abs(weights.attendance_days_high) > abs(weights.consecutive_class)
+
+
+def test_minimize_consecutive_template_prioritizes_consecutive_weights() -> None:
+    weights = weights_for_template(PreferenceTemplate.MINIMIZE_CONSECUTIVE_CLASSES)
+
+    assert weights.no_consecutive_classes > weights.attendance_days_low
+    assert weights.no_consecutive_classes > weights.preferred_free_day
+    assert abs(weights.consecutive_class) > abs(weights.compact_idle_long)
+
+
+def test_compact_schedule_template_prioritizes_idle_time_weights() -> None:
+    weights = weights_for_template(PreferenceTemplate.COMPACT_SCHEDULE)
+
+    assert weights.compact_idle_short > weights.attendance_days_low
+    assert weights.compact_idle_short > weights.no_consecutive_classes
+    assert abs(weights.compact_idle_long) > abs(weights.consecutive_class)
+
+
+def test_duplicate_conditions_are_not_applied_twice() -> None:
     preferences = PreferenceRules(preferred_course_names=["대학영어", "대학영어"])
     candidate = Timetable(courses=[_course("GEN-A", course_name="대학영어")])
 
@@ -335,7 +381,6 @@ def test_duplicate_templates_or_conditions_are_not_applied_twice() -> None:
         if item.key == "preferred_course"
     ][0]
 
-    assert duplicate_templates == single_template
     assert component.value == RankingWeights().preferred_course
 
 
@@ -366,7 +411,7 @@ def test_explicit_ranking_weights_override_template_generated_weights() -> None:
         [candidate],
         preferences=PreferenceRules(
             preferred_free_days=[Day.MON],
-            selected_templates=[PreferenceTemplate.PREFER_FREE_DAY],
+            selected_template=PreferenceTemplate.PREFER_FREE_DAY,
         ),
         weights=weights,
     )

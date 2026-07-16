@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Iterable
-from dataclasses import dataclass, fields, replace
+from dataclasses import dataclass
 
 from ..models.course import Category, ClassTime, Course, Day, time_to_minutes
 from ..models.preference import ExcludedTimeRange, PreferenceRules, PreferenceTemplate
@@ -13,11 +13,11 @@ from ..models.timetable import RankingResult, ScoreComponent, Timetable, Timetab
 
 @dataclass(frozen=True)
 class RankingWeights:
-    """Importance values used to turn soft preferences into ranking scores.
+    """A complete evaluation profile for one timetable direction.
 
-    ``PreferenceRules`` says what the user wants. ``PreferenceTemplate`` says
-    the broad timetable direction the user selected. ``RankingWeights`` says
-    how strongly each preference should affect candidate ordering.
+    ``PreferenceRules`` stores concrete user preferences. ``PreferenceTemplate``
+    selects one timetable direction. ``RankingWeights`` defines the full set of
+    relative scoring priorities for that direction.
     """
 
     valid_candidate: float = 70
@@ -44,67 +44,147 @@ class RankingWeights:
     early_start_before_9: float = -4
 
 
-def weights_for_templates(
-    templates: Iterable[PreferenceTemplate],
-    *,
-    base: RankingWeights | None = None,
-) -> RankingWeights:
-    """Build weights for selected templates by taking the strongest value.
+TEMPLATE_WEIGHT_PROFILES: dict[PreferenceTemplate, RankingWeights] = {
+    PreferenceTemplate.PREFER_FREE_DAY: RankingWeights(
+        valid_candidate=70,
+        preferred_free_day=14,
+        preferred_free_day_missing=-11,
+        preferred_free_time_range=8,
+        preferred_free_time_range_missing=-7,
+        preferred_course=2,
+        preferred_course_missing=-0.5,
+        avoided_course=-2,
+        avoided_course_absent=0.5,
+        preferred_elective_area=2,
+        preferred_elective_area_missing=-0.5,
+        no_consecutive_classes=3,
+        consecutive_class=-2,
+        compact_idle_short=5,
+        compact_idle_medium=3,
+        compact_idle_long=-3,
+        attendance_days_low=6,
+        attendance_days_medium=3,
+        attendance_days_high=-4,
+        late_start_11_or_later=2,
+        late_start_10_or_later=1,
+        early_start_before_9=-1,
+    ),
+    PreferenceTemplate.MINIMIZE_ATTENDANCE_DAYS: RankingWeights(
+        valid_candidate=70,
+        preferred_free_day=6,
+        preferred_free_day_missing=-4,
+        preferred_free_time_range=3,
+        preferred_free_time_range_missing=-2,
+        preferred_course=2,
+        preferred_course_missing=-0.5,
+        avoided_course=-2,
+        avoided_course_absent=0.5,
+        preferred_elective_area=2,
+        preferred_elective_area_missing=-0.5,
+        no_consecutive_classes=3,
+        consecutive_class=-2,
+        compact_idle_short=5,
+        compact_idle_medium=3,
+        compact_idle_long=-3,
+        attendance_days_low=14,
+        attendance_days_medium=7,
+        attendance_days_high=-11,
+        late_start_11_or_later=2,
+        late_start_10_or_later=1,
+        early_start_before_9=-1,
+    ),
+    PreferenceTemplate.MINIMIZE_CONSECUTIVE_CLASSES: RankingWeights(
+        valid_candidate=70,
+        preferred_free_day=5,
+        preferred_free_day_missing=-3,
+        preferred_free_time_range=3,
+        preferred_free_time_range_missing=-2,
+        preferred_course=2,
+        preferred_course_missing=-0.5,
+        avoided_course=-2,
+        avoided_course_absent=0.5,
+        preferred_elective_area=2,
+        preferred_elective_area_missing=-0.5,
+        no_consecutive_classes=14,
+        consecutive_class=-10,
+        compact_idle_short=4,
+        compact_idle_medium=2,
+        compact_idle_long=-3,
+        attendance_days_low=5,
+        attendance_days_medium=3,
+        attendance_days_high=-4,
+        late_start_11_or_later=2,
+        late_start_10_or_later=1,
+        early_start_before_9=-1,
+    ),
+    PreferenceTemplate.COMPACT_SCHEDULE: RankingWeights(
+        valid_candidate=70,
+        preferred_free_day=5,
+        preferred_free_day_missing=-3,
+        preferred_free_time_range=3,
+        preferred_free_time_range_missing=-2,
+        preferred_course=2,
+        preferred_course_missing=-0.5,
+        avoided_course=-2,
+        avoided_course_absent=0.5,
+        preferred_elective_area=2,
+        preferred_elective_area_missing=-0.5,
+        no_consecutive_classes=5,
+        consecutive_class=-4,
+        compact_idle_short=14,
+        compact_idle_medium=8,
+        compact_idle_long=-11,
+        attendance_days_low=6,
+        attendance_days_medium=4,
+        attendance_days_high=-5,
+        late_start_11_or_later=2,
+        late_start_10_or_later=1,
+        early_start_before_9=-1,
+    ),
+    PreferenceTemplate.REQUIRED_FREE_DAY: RankingWeights(
+        valid_candidate=70,
+        preferred_free_day=12,
+        preferred_free_day_missing=-9,
+        preferred_free_time_range=7,
+        preferred_free_time_range_missing=-6,
+        preferred_course=2,
+        preferred_course_missing=-0.5,
+        avoided_course=-2,
+        avoided_course_absent=0.5,
+        preferred_elective_area=2,
+        preferred_elective_area_missing=-0.5,
+        no_consecutive_classes=4,
+        consecutive_class=-3,
+        compact_idle_short=5,
+        compact_idle_medium=3,
+        compact_idle_long=-3,
+        attendance_days_low=7,
+        attendance_days_medium=4,
+        attendance_days_high=-5,
+        late_start_11_or_later=2,
+        late_start_10_or_later=1,
+        early_start_before_9=-1,
+    ),
+}
 
-    Multiple templates may tune the same field. To avoid duplicate template
-    selection inflating scores, templates are deduplicated and merged with a
-    max-absolute-value policy: for each field, the value whose absolute
-    magnitude is larger wins. This makes a UI-selected template strengthen the
-    ranking direction without applying the same preference twice.
-    """
 
-    weights = base or RankingWeights()
-    overrides = {
-        PreferenceTemplate.PREFER_FREE_DAY: RankingWeights(
-            preferred_free_day=12,
-            preferred_free_day_missing=-8,
-            preferred_free_time_range=5,
-            preferred_free_time_range_missing=-4,
-        ),
-        PreferenceTemplate.MINIMIZE_ATTENDANCE_DAYS: RankingWeights(
-            attendance_days_low=10,
-            attendance_days_medium=4,
-            attendance_days_high=-7,
-        ),
-        PreferenceTemplate.MINIMIZE_CONSECUTIVE_CLASSES: RankingWeights(
-            no_consecutive_classes=8,
-            consecutive_class=-6,
-        ),
-        PreferenceTemplate.COMPACT_SCHEDULE: RankingWeights(
-            compact_idle_short=8,
-            compact_idle_medium=4,
-            compact_idle_long=-5,
-        ),
-        PreferenceTemplate.REQUIRED_FREE_DAY: RankingWeights(),
-    }
+def weights_for_template(template: PreferenceTemplate | None) -> RankingWeights:
+    """Return the complete profile for one template, or defaults when absent."""
 
-    values = {field.name: getattr(weights, field.name) for field in fields(RankingWeights)}
-    for template in dict.fromkeys(templates):
-        override = overrides.get(template)
-        if override is None:
-            continue
-        for field in fields(RankingWeights):
-            current = values[field.name]
-            candidate = getattr(override, field.name)
-            if abs(candidate) > abs(current):
-                values[field.name] = candidate
-    return replace(weights, **values)
+    if template is None:
+        return RankingWeights()
+    return TEMPLATE_WEIGHT_PROFILES[template]
 
 
 def build_ranking_weights(preferences: PreferenceRules | None = None) -> RankingWeights:
-    """Create ranking weights from selected templates, or defaults if absent."""
+    """Create weights from the selected single template, or defaults if absent."""
 
     rules = preferences or PreferenceRules()
-    return weights_for_templates(rules.selected_templates)
+    return weights_for_template(rules.selected_template)
 
 
 class TimetableRanker:
-    """Filter hard conditions and sort candidates by soft preference scores."""
+    """Apply hard filters, then sort by soft-condition score components."""
 
     def __init__(
         self,
