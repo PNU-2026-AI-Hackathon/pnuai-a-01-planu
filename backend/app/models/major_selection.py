@@ -57,3 +57,4 @@ class MajorCourseMatchResult(_Model):
     matched: list[MatchedMajorCourse] = Field(default_factory=list)
     ambiguous: list[AmbiguousMajorCourse] = Field(default_factory=list)
     unmatched: list[UnmatchedMajorCourse] = Field(default_factory=list)
+    ambiguous_texts: list[str] = Field(default_factory=list)

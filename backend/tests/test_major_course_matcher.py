@@ -19,6 +19,12 @@ from backend.app.services.major_course_matcher import MajorCourseMatcher, normal
 
 @pytest.fixture
 def catalog_courses() -> list[Course]:
+    """Major courses parsed from the major course catalog.
+
+    MajorCourseMatcher's service contract is that callers pass only this major
+    course catalog subset, so the matcher does not perform category filtering.
+    """
+
     def course(course_id: str, name: str, division: str, start: str) -> Course:
         return Course(
             course_id=course_id,
@@ -107,6 +113,66 @@ def test_no_catalog_match_is_unmatched(catalog_courses: list[Course]) -> None:
     assert result.matched == []
     assert result.ambiguous == []
     assert len(result.unmatched) == 1
+
+
+def test_missing_course_name_without_section_is_unmatched(
+    catalog_courses: list[Course],
+) -> None:
+    result = MajorCourseMatcher(catalog_courses).match(
+        MajorSelectionParseResult(
+            selected_courses=[MajorCourseReference(course_name="컴파일러")]
+        )
+    )
+
+    assert result.matched == []
+    assert result.ambiguous == []
+    assert len(result.unmatched) == 1
+
+
+def test_ambiguous_texts_are_preserved_after_matching(
+    catalog_courses: list[Course],
+) -> None:
+    result = MajorCourseMatcher(catalog_courses).match(
+        MajorSelectionParseResult(
+            selected_courses=[
+                MajorCourseReference(course_name="운영체제", section="001")
+            ],
+            ambiguous_texts=["저번에 말한 그 수업"],
+        )
+    )
+
+    assert result.ambiguous_texts == ["저번에 말한 그 수업"]
+    assert len(result.matched) == 1
+
+
+def test_course_name_matching_removes_all_whitespace(
+    catalog_courses: list[Course],
+) -> None:
+    result = MajorCourseMatcher(catalog_courses).match(
+        MajorSelectionParseResult(
+            selected_courses=[
+                MajorCourseReference(course_name="자료 구조", section="001")
+            ]
+        )
+    )
+
+    assert len(result.matched) == 1
+    assert result.matched[0].course is catalog_courses[0]
+
+
+def test_duplicate_references_do_not_duplicate_matched_courses(
+    catalog_courses: list[Course],
+) -> None:
+    result = MajorCourseMatcher(catalog_courses).match(
+        MajorSelectionParseResult(
+            selected_courses=[
+                MajorCourseReference(course_name="자료구조", section="1"),
+                MajorCourseReference(course_name="자료 구조", section="001분반"),
+            ]
+        )
+    )
+
+    assert [match.course.course_id for match in result.matched] == ["MA100-001"]
 
 
 def test_result_models_are_importable_from_domain_package() -> None:

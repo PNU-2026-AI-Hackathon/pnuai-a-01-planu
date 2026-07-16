@@ -21,9 +21,13 @@ _SECTION_SUFFIX_RE = re.compile(r"\s*분반\s*$")
 
 
 def normalize_course_name(value: str) -> str:
-    """Normalize spacing without changing the literal course name."""
+    """Normalize course names for exact matching only.
 
-    return re.sub(r"\s+", " ", value.strip())
+    All whitespace is removed and English letters are compared
+    case-insensitively. No substring or fuzzy matching is performed.
+    """
+
+    return re.sub(r"\s+", "", value).casefold()
 
 
 def normalize_section(value: str | None) -> str | None:
@@ -46,7 +50,11 @@ def normalize_section(value: str | None) -> str | None:
 
 
 class MajorCourseMatcher:
-    """Resolve selected major course references to existing ``Course`` objects."""
+    """Resolve selected major course references to existing ``Course`` objects.
+
+    Service contract: callers pass only major courses parsed from the major
+    course catalog. This matcher intentionally does not filter by category.
+    """
 
     def __init__(self, courses: Iterable[Course]) -> None:
         self._by_name: dict[str, list[Course]] = defaultdict(list)
@@ -57,10 +65,20 @@ class MajorCourseMatcher:
         matched: list[MatchedMajorCourse] = []
         ambiguous: list[AmbiguousMajorCourse] = []
         unmatched: list[UnmatchedMajorCourse] = []
+        matched_course_ids: set[str] = set()
 
         for reference in parse_result.selected_courses:
             candidates = list(self._by_name.get(normalize_course_name(reference.course_name), []))
             section = normalize_section(reference.section)
+
+            if not candidates:
+                unmatched.append(
+                    UnmatchedMajorCourse(
+                        reference=reference,
+                        reason="수강편람에서 같은 과목명을 찾지 못했습니다.",
+                    )
+                )
+                continue
 
             if section is None:
                 ambiguous.append(
@@ -76,7 +94,10 @@ class MajorCourseMatcher:
                 course for course in candidates if normalize_section(course.division) == section
             ]
             if len(section_matches) == 1:
-                matched.append(MatchedMajorCourse(reference=reference, course=section_matches[0]))
+                course = section_matches[0]
+                if course.course_id not in matched_course_ids:
+                    matched.append(MatchedMajorCourse(reference=reference, course=course))
+                    matched_course_ids.add(course.course_id)
             elif len(section_matches) > 1:
                 ambiguous.append(
                     AmbiguousMajorCourse(
@@ -97,4 +118,5 @@ class MajorCourseMatcher:
             matched=matched,
             ambiguous=ambiguous,
             unmatched=unmatched,
+            ambiguous_texts=list(parse_result.ambiguous_texts),
         )
