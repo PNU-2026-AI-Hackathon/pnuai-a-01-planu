@@ -1,11 +1,13 @@
-"""Models for recommendation course-load targets and calculation results."""
+"""Models for recommendation course-load target interpretation.
+
+These models describe the credit goals and constraints that the future
+backtracking engine should use. They do not represent a concrete timetable or
+an already-selected set of general courses.
+"""
 
 from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
-
-from .course import Course
-
 
 class _Model(BaseModel):
     model_config = ConfigDict(
@@ -16,14 +18,20 @@ class _Model(BaseModel):
 
 
 class CourseLoadTarget(_Model):
-    """Optional user targets for general-course recommendation volume."""
+    """Optional user targets for backtracking-based recommendation.
+
+    ``target_total_credits`` is the total credit goal the user would like to
+    approach, not a hard ``max_credit`` validator for this calculation stage.
+    ``additional_elective_count`` is the desired number of elective general
+    courses to add after required general courses are accounted for.
+    """
 
     target_total_credits: float | None = Field(default=None, gt=0)
     additional_elective_count: int | None = Field(default=None, ge=0)
 
 
 class CourseLoadWarning(_Model):
-    """Structured warning emitted when course-load goals cannot be fully met."""
+    """Structured warning emitted when interpreted load goals conflict."""
 
     code: str = Field(min_length=1)
     message: str = Field(min_length=1)
@@ -33,21 +41,19 @@ class CourseLoadWarning(_Model):
 
 
 class CourseLoadCalculationResult(_Model):
-    """Result of applying a course-load target to available general courses."""
+    """Credit-capacity summary for the backtracking engine.
+
+    The result intentionally contains no selected ``Course`` objects. Actual
+    general-course combination generation, time-conflict checks, campus travel
+    checks, and choosing one section among duplicate course divisions belong to
+    the backtracking engine.
+    """
 
     target: CourseLoadTarget = Field(default_factory=CourseLoadTarget)
     fixed_major_credits: float = Field(ge=0)
+    required_general_credits: float = Field(ge=0)
+    base_total_credits: float = Field(ge=0)
     target_total_credits: float | None = None
-    selected_required_general_courses: list[Course] = Field(default_factory=list)
-    selected_elective_general_courses: list[Course] = Field(default_factory=list)
-    final_total_credits: float = Field(ge=0)
-    remaining_credit_capacity: float | None = Field(default=None, ge=0)
+    remaining_elective_credit_capacity: float | None = Field(default=None, ge=0)
+    additional_elective_count: int | None = Field(default=None, ge=0)
     warnings: list[CourseLoadWarning] = Field(default_factory=list)
-
-    @property
-    def selected_required_general_count(self) -> int:
-        return len(self.selected_required_general_courses)
-
-    @property
-    def selected_elective_general_count(self) -> int:
-        return len(self.selected_elective_general_courses)
