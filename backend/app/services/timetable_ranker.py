@@ -4,18 +4,33 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, fields, replace
 
-from ..models.course import ClassTime, Course, Day, time_to_minutes
-from ..models.preference import ExcludedTimeRange, PreferenceRules
+from ..models.course import Category, ClassTime, Course, Day, time_to_minutes
+from ..models.preference import ExcludedTimeRange, PreferenceRules, PreferenceTemplate
 from ..models.timetable import RankingResult, ScoreComponent, Timetable, TimetableCandidate
 
 
 @dataclass(frozen=True)
 class RankingWeights:
+    """Importance values used to turn soft preferences into ranking scores.
+
+    ``PreferenceRules`` says what the user wants. ``PreferenceTemplate`` says
+    the broad timetable direction the user selected. ``RankingWeights`` says
+    how strongly each preference should affect candidate ordering.
+    """
+
     valid_candidate: float = 70
     preferred_free_day: float = 8
     preferred_free_day_missing: float = -5
+    preferred_free_time_range: float = 3
+    preferred_free_time_range_missing: float = -2
+    preferred_course: float = 4
+    preferred_course_missing: float = -1
+    avoided_course: float = -4
+    avoided_course_absent: float = 1
+    preferred_elective_area: float = 3
+    preferred_elective_area_missing: float = -1
     no_consecutive_classes: float = 5
     consecutive_class: float = -3
     compact_idle_short: float = 4
@@ -27,11 +42,69 @@ class RankingWeights:
     late_start_11_or_later: float = 6
     late_start_10_or_later: float = 3
     early_start_before_9: float = -4
-    neutral: float = 0
+
+
+def weights_for_templates(
+    templates: Iterable[PreferenceTemplate],
+    *,
+    base: RankingWeights | None = None,
+) -> RankingWeights:
+    """Build weights for selected templates by taking the strongest value.
+
+    Multiple templates may tune the same field. To avoid duplicate template
+    selection inflating scores, templates are deduplicated and merged with a
+    max-absolute-value policy: for each field, the value whose absolute
+    magnitude is larger wins. This makes a UI-selected template strengthen the
+    ranking direction without applying the same preference twice.
+    """
+
+    weights = base or RankingWeights()
+    overrides = {
+        PreferenceTemplate.PREFER_FREE_DAY: RankingWeights(
+            preferred_free_day=12,
+            preferred_free_day_missing=-8,
+            preferred_free_time_range=5,
+            preferred_free_time_range_missing=-4,
+        ),
+        PreferenceTemplate.MINIMIZE_ATTENDANCE_DAYS: RankingWeights(
+            attendance_days_low=10,
+            attendance_days_medium=4,
+            attendance_days_high=-7,
+        ),
+        PreferenceTemplate.MINIMIZE_CONSECUTIVE_CLASSES: RankingWeights(
+            no_consecutive_classes=8,
+            consecutive_class=-6,
+        ),
+        PreferenceTemplate.COMPACT_SCHEDULE: RankingWeights(
+            compact_idle_short=8,
+            compact_idle_medium=4,
+            compact_idle_long=-5,
+        ),
+        PreferenceTemplate.REQUIRED_FREE_DAY: RankingWeights(),
+    }
+
+    values = {field.name: getattr(weights, field.name) for field in fields(RankingWeights)}
+    for template in dict.fromkeys(templates):
+        override = overrides.get(template)
+        if override is None:
+            continue
+        for field in fields(RankingWeights):
+            current = values[field.name]
+            candidate = getattr(override, field.name)
+            if abs(candidate) > abs(current):
+                values[field.name] = candidate
+    return replace(weights, **values)
+
+
+def build_ranking_weights(preferences: PreferenceRules | None = None) -> RankingWeights:
+    """Create ranking weights from selected templates, or defaults if absent."""
+
+    rules = preferences or PreferenceRules()
+    return weights_for_templates(rules.selected_templates)
 
 
 class TimetableRanker:
-    """Turn generated candidates into deterministic recommendations."""
+    """Filter hard conditions and sort candidates by soft preference scores."""
 
     def __init__(
         self,
@@ -42,6 +115,7 @@ class TimetableRanker:
         if top_n <= 0:
             raise ValueError("top_n must be positive")
         self.top_n = top_n
+        self._explicit_weights = weights
         self.weights = weights or RankingWeights()
 
     def rank(
@@ -56,6 +130,7 @@ class TimetableRanker:
         if limit <= 0:
             raise ValueError("top_n must be positive")
 
+        self.weights = self._explicit_weights or build_ranking_weights(rules)
         hard_filtered = self.apply_hard_filters(candidates, preferences=rules)
         scored = [self._score_candidate(candidate, rules) for candidate in hard_filtered]
         scored.sort(
@@ -159,15 +234,10 @@ class TimetableRanker:
         component = self._preferred_first_class_component(candidate, preferences)
         if component is not None:
             components.append(component)
-        component = self._preferred_free_time_ranges_component(candidate, preferences)
-        if component is not None:
-            components.append(component)
-        component = self._preferred_course_names_component(candidate, preferences)
-        if component is not None:
-            components.append(component)
-        component = self._avoided_course_names_component(candidate, preferences)
-        if component is not None:
-            components.append(component)
+        components.extend(self._preferred_free_time_range_components(candidate, preferences))
+        components.extend(self._preferred_course_components(candidate, preferences))
+        components.extend(self._avoided_course_components(candidate, preferences))
+        components.extend(self._preferred_elective_area_components(candidate, preferences))
 
         if preferences.minimize_attendance_days:
             components.append(self._attendance_days_component(candidate))
@@ -178,9 +248,9 @@ class TimetableRanker:
             components.append(self._compact_schedule_component(candidate))
 
         for component in components[1:]:
-            if component.value >= 0:
+            if component.value > 0:
                 reasons.append(component.reason)
-            else:
+            elif component.value < 0:
                 warnings.append(component.reason)
 
         data = candidate.model_dump()
@@ -256,70 +326,137 @@ class TimetableRanker:
             reason=reason,
         )
 
-    def _preferred_free_time_ranges_component(
+    def _preferred_free_time_range_components(
         self, candidate: TimetableCandidate, preferences: PreferenceRules
-    ) -> ScoreComponent | None:
+    ) -> list[ScoreComponent]:
         if not preferences.preferred_free_time_ranges:
-            return None
+            return []
 
         satisfied = [
             time_range
             for time_range in preferences.preferred_free_time_ranges
             if not self._candidate_overlaps_time_range(candidate, time_range)
         ]
+        missing_count = len(preferences.preferred_free_time_ranges) - len(satisfied)
         total = len(preferences.preferred_free_time_ranges)
-        if len(satisfied) == total:
-            reason = "선호 공강 시간을 모두 만족합니다."
-        else:
-            reason = "선호 공강 시간 일부는 만족하지 못했습니다."
-        return ScoreComponent(
-            key="preferred_free_time_ranges",
-            label=f"선호 공강 시간 {len(satisfied)}/{total}개 만족",
-            value=self.weights.neutral,
-            reason=reason,
-        )
+        components: list[ScoreComponent] = []
+        if satisfied:
+            components.append(ScoreComponent(
+                key="preferred_free_time_range",
+                label=f"선호 공강 시간 {len(satisfied)}/{total}개 만족",
+                value=self.weights.preferred_free_time_range * len(satisfied),
+                reason=f"선호 공강 시간 {len(satisfied)}개를 만족합니다.",
+            ))
+        if missing_count:
+            components.append(ScoreComponent(
+                key="preferred_free_time_range_missing",
+                label=f"선호 공강 시간 {missing_count}/{total}개 미충족",
+                value=self.weights.preferred_free_time_range_missing * missing_count,
+                reason=f"선호 공강 시간 {missing_count}개는 만족하지 못했습니다.",
+            ))
+        return components
 
-    def _preferred_course_names_component(
+    def _preferred_course_components(
         self, candidate: TimetableCandidate, preferences: PreferenceRules
-    ) -> ScoreComponent | None:
+    ) -> list[ScoreComponent]:
         if not preferences.preferred_course_names:
-            return None
+            return []
 
         course_names = {course.course_name for course in candidate.courses}
         preferred_courses = [
             name for name in preferences.preferred_course_names if name in course_names
         ]
+        missing_courses = [
+            name for name in preferences.preferred_course_names if name not in course_names
+        ]
+        components: list[ScoreComponent] = []
         if preferred_courses:
-            reason = f"선호 과목이 포함되었습니다: {', '.join(preferred_courses)}."
-        else:
-            reason = "선호 과목은 포함되지 않았습니다."
-        return ScoreComponent(
-            key="preferred_course_names",
-            label=f"선호 과목 {len(preferred_courses)}/{len(preferences.preferred_course_names)}개 포함",
-            value=self.weights.neutral,
-            reason=reason,
-        )
+            components.append(ScoreComponent(
+                key="preferred_course",
+                label=f"선호 과목 {len(preferred_courses)}개 포함",
+                value=self.weights.preferred_course * len(preferred_courses),
+                reason=f"선호 과목이 포함되었습니다: {', '.join(preferred_courses)}.",
+            ))
+        if missing_courses:
+            components.append(ScoreComponent(
+                key="preferred_course_missing",
+                label=f"선호 과목 {len(missing_courses)}개 미포함",
+                value=self.weights.preferred_course_missing * len(missing_courses),
+                reason=(
+                    "선호 과목이 포함되지 않아 감점되었습니다: "
+                    f"{', '.join(missing_courses)}."
+                ),
+            ))
+        return components
 
-    def _avoided_course_names_component(
+    def _avoided_course_components(
         self, candidate: TimetableCandidate, preferences: PreferenceRules
-    ) -> ScoreComponent | None:
+    ) -> list[ScoreComponent]:
         if not preferences.avoided_course_names:
-            return None
+            return []
 
         course_names = {course.course_name for course in candidate.courses}
         avoided_courses = [
             name for name in preferences.avoided_course_names if name in course_names
         ]
+        absent_courses = [
+            name for name in preferences.avoided_course_names if name not in course_names
+        ]
+        components: list[ScoreComponent] = []
         if avoided_courses:
-            reason = f"가능하면 피하고 싶은 과목이 포함되었습니다: {', '.join(avoided_courses)}."
-        else:
-            reason = "회피 선호 과목은 포함되지 않았습니다."
-        return ScoreComponent(
-            key="avoided_course_names",
-            label=f"회피 선호 과목 {len(avoided_courses)}개 포함",
-            value=self.weights.neutral,
-            reason=reason,
-        )
+            components.append(ScoreComponent(
+                key="avoided_course",
+                label=f"회피 선호 과목 {len(avoided_courses)}개 포함",
+                value=self.weights.avoided_course * len(avoided_courses),
+                reason=(
+                    "가능하면 피하고 싶은 과목이 포함되었습니다: "
+                    f"{', '.join(avoided_courses)}."
+                ),
+            ))
+        if absent_courses:
+            components.append(ScoreComponent(
+                key="avoided_course_absent",
+                label=f"회피 선호 과목 {len(absent_courses)}개 미포함",
+                value=self.weights.avoided_course_absent * len(absent_courses),
+                reason=f"회피 선호 과목이 포함되지 않았습니다: {', '.join(absent_courses)}.",
+            ))
+        return components
+
+    def _preferred_elective_area_components(
+        self, candidate: TimetableCandidate, preferences: PreferenceRules
+    ) -> list[ScoreComponent]:
+        if not preferences.preferred_elective_areas:
+            return []
+
+        candidate_areas = {
+            course.area
+            for course in candidate.courses
+            if course.category == Category.GENERAL_ELECTIVE and course.area is not None
+        }
+        preferred_areas = set(preferences.preferred_elective_areas)
+        satisfied = sorted(candidate_areas & preferred_areas)
+        missing = [
+            area for area in preferences.preferred_elective_areas if area not in candidate_areas
+        ]
+
+        components: list[ScoreComponent] = []
+        if satisfied:
+            labels = ", ".join(f"{area}영역" for area in satisfied)
+            components.append(ScoreComponent(
+                key="preferred_elective_area",
+                label=f"선호 교양 영역 {len(satisfied)}/{len(preferences.preferred_elective_areas)}개 포함",
+                value=self.weights.preferred_elective_area * len(satisfied),
+                reason=f"선호 교양 영역이 포함되었습니다: {labels}.",
+            ))
+        if missing:
+            labels = ", ".join(f"{area}영역" for area in missing)
+            components.append(ScoreComponent(
+                key="preferred_elective_area_missing",
+                label=f"선호 교양 영역 {len(missing)}개 미포함",
+                value=self.weights.preferred_elective_area_missing * len(missing),
+                reason=f"선호 교양 영역은 포함되지 않았습니다: {labels}.",
+            ))
+        return components
 
     def _attendance_days_component(
         self, candidate: TimetableCandidate
@@ -447,7 +584,7 @@ class TimetableRanker:
             return self.weights.late_start_10_or_later
         if first_start < time_to_minutes("09:00"):
             return self.weights.early_start_before_9
-        return self.weights.neutral
+        return 0
 
     def _preferred_first_class_value(self, first_start: int, preferred: int) -> float:
         if first_start >= preferred:
@@ -509,10 +646,11 @@ def rank_timetables(
     *,
     preferences: PreferenceRules | None = None,
     top_n: int = 3,
+    weights: RankingWeights | None = None,
 ) -> list[RankingResult]:
     """Functional convenience API for recommendation route handlers."""
 
-    return TimetableRanker(top_n=top_n).rank(
+    return TimetableRanker(top_n=top_n, weights=weights).rank(
         candidates,
         preferences=preferences,
         top_n=top_n,
