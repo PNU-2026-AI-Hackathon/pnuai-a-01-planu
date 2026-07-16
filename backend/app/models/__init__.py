@@ -2,6 +2,14 @@
 
 from .course import Category, ClassTime, Course, Day, normalize_course_category, time_to_minutes
 from .input_timetable import InputTimetable
+from .major_selection import (
+    AmbiguousMajorCourse,
+    MajorCourseMatchResult,
+    MajorCourseReference,
+    MajorSelectionParseResult,
+    MatchedMajorCourse,
+    UnmatchedMajorCourse,
+)
 from .preference import (
     ExcludedTimeRange,
     PreferenceParseResult,
@@ -23,6 +31,11 @@ __all__ = [
     "Day",
     "ExcludedTimeRange",
     "InputTimetable",
+    "AmbiguousMajorCourse",
+    "MajorCourseMatchResult",
+    "MajorCourseReference",
+    "MajorSelectionParseResult",
+    "MatchedMajorCourse",
     "PreferenceParseResult",
     "PreferenceParseStatus",
     "PreferenceRules",
@@ -35,6 +48,7 @@ __all__ = [
     "TimeRange",
     "Timetable",
     "TimetableCandidate",
+    "UnmatchedMajorCourse",
     "merge_preference_rules",
     "normalize_course_category",
     "time_to_minutes",
