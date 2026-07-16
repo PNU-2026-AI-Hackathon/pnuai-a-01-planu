@@ -5,7 +5,7 @@ from __future__ import annotations
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..models.preference import PreferenceRules
-from ..models.timetable import Timetable
+from ..models.timetable import RankingResult
 
 
 class RecommendRequest(BaseModel):
@@ -41,4 +41,4 @@ class RecommendResponse(BaseModel):
         validate_assignment=True,
     )
 
-    recommendations: list[Timetable]
+    recommendations: list[RankingResult]

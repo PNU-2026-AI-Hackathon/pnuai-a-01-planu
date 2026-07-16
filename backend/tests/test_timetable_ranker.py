@@ -54,8 +54,11 @@ def test_score_can_exceed_100_without_clamping() -> None:
 
     ranked = rank_timetables([candidate], preferences=preferences)
 
-    assert ranked[0].score > 100
-    assert ranked[0].score == sum(detail.value for detail in ranked[0].score_details)
+    assert ranked[0].raw_score > 100
+    assert ranked[0].raw_score == sum(
+        component.value for component in ranked[0].score_components
+    )
+    assert ranked[0].timetable.score == ranked[0].raw_score
 
 
 def test_preferred_first_class_time_penalizes_early_start_without_filtering() -> None:
@@ -72,11 +75,13 @@ def test_preferred_first_class_time_penalizes_early_start_without_filtering() ->
 
     detail = [
         item
-        for item in ranked[0].score_details
+        for item in ranked[0].score_components
         if item.key == "preferred_first_class_time"
     ][0]
     assert detail.value < 0
-    assert ranked[0].score == sum(detail.value for detail in ranked[0].score_details)
+    assert ranked[0].raw_score == sum(
+        component.value for component in ranked[0].score_components
+    )
 
 
 def test_hard_condition_filters_candidate_before_ranking() -> None:
@@ -88,7 +93,7 @@ def test_hard_condition_filters_candidate_before_ranking() -> None:
         preferences=PreferenceRules(earliest_start_time="10:00"),
     )
 
-    assert [course.course_id for course in ranked[0].courses] == ["GEN-AFTERNOON"]
+    assert [course.course_id for course in ranked[0].timetable.courses] == ["GEN-AFTERNOON"]
     assert len(ranked) == 1
 
 
@@ -102,7 +107,7 @@ def test_ui_and_llm_duplicate_conditions_are_applied_once() -> None:
     ranked = rank_timetables([candidate], preferences=preferences)
     details = [
         detail
-        for detail in ranked[0].score_details
+        for detail in ranked[0].score_components
         if detail.key == "preferred_first_class_time"
     ]
 
@@ -119,10 +124,10 @@ def test_ui_condition_wins_when_llm_condition_conflicts() -> None:
     ranked = rank_timetables([candidate], preferences=preferences)
 
     assert len(ranked) == 1
-    assert ranked[0].courses[0].course_id == "GEN-MORNING"
+    assert ranked[0].timetable.courses[0].course_id == "GEN-MORNING"
 
 
-def test_score_details_sum_matches_final_score() -> None:
+def test_score_components_sum_matches_raw_score() -> None:
     candidate = Timetable(courses=[_course("GEN-SUM", day=Day.TUE)])
     preferences = PreferenceRules(
         preferred_free_days=[Day.FRI],
@@ -132,8 +137,10 @@ def test_score_details_sum_matches_final_score() -> None:
 
     ranked = rank_timetables([candidate], preferences=preferences)
 
-    assert ranked[0].score == sum(detail.value for detail in ranked[0].score_details)
-    assert ranked[0].score_details[0].key == "valid_candidate"
+    assert ranked[0].raw_score == sum(
+        component.value for component in ranked[0].score_components
+    )
+    assert ranked[0].score_components[0].key == "valid_candidate"
 
 
 def test_required_and_excluded_course_names_are_hard_filters() -> None:
@@ -151,7 +158,7 @@ def test_required_and_excluded_course_names_are_hard_filters() -> None:
     )
 
     assert len(ranked) == 1
-    assert ranked[0].courses[0].course_name == "대학영어"
+    assert ranked[0].timetable.courses[0].course_name == "대학영어"
 
     ranked = rank_timetables(
         [required, other],
@@ -160,7 +167,7 @@ def test_required_and_excluded_course_names_are_hard_filters() -> None:
     )
 
     assert len(ranked) == 1
-    assert ranked[0].courses[0].course_name == "고전읽기와토론"
+    assert ranked[0].timetable.courses[0].course_name == "고전읽기와토론"
 
 
 def test_same_input_always_produces_same_sort_order() -> None:
@@ -171,7 +178,24 @@ def test_same_input_always_produces_same_sort_order() -> None:
     first_run = rank_timetables([first, second], preferences=preferences, top_n=2)
     second_run = rank_timetables([first, second], preferences=preferences, top_n=2)
 
-    assert [item.courses[0].course_id for item in first_run] == [
-        item.courses[0].course_id for item in second_run
+    assert [item.timetable.courses[0].course_id for item in first_run] == [
+        item.timetable.courses[0].course_id for item in second_run
     ]
-    assert [item.courses[0].course_id for item in first_run] == ["GEN-A", "GEN-B"]
+    assert [item.timetable.courses[0].course_id for item in first_run] == ["GEN-A", "GEN-B"]
+
+
+def test_score_components_include_positive_reward_negative_penalty_and_reasons() -> None:
+    candidate = Timetable(courses=[_course("GEN-MIX", day=Day.MON, start="08:00", end="09:00")])
+    preferences = PreferenceRules(
+        preferred_free_days=[Day.FRI, Day.MON],
+        preferred_first_class_time="10:00",
+    )
+
+    ranked = rank_timetables([candidate], preferences=preferences)
+    components = ranked[0].score_components
+
+    assert any(component.value > 0 for component in components)
+    assert any(component.value < 0 for component in components)
+    assert all(component.reason for component in components)
+    assert any("공강 선호를 만족합니다" in component.reason for component in components)
+    assert any("일찍 시작합니다" in component.reason for component in components)
