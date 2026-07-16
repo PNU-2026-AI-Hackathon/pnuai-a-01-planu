@@ -1,32 +1,24 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 class DepartmentSelectScreen extends StatefulWidget {
   const DepartmentSelectScreen({
     super.key,
-    this.departments = _defaultDepartments,
+    this.departments,
     this.onDepartmentSelected,
   });
 
-  final List<String> departments;
+  final List<String>? departments;
   final ValueChanged<String>? onDepartmentSelected;
-
-  static const List<String> _defaultDepartments = <String>[
-    'Computer Science and Engineering',
-    'Computer Engineering',
-    'Artificial Intelligence',
-    'Electrical and Computer Engineering',
-    'Electronic Engineering',
-    'Mechanical Engineering',
-    'Industrial Engineering',
-    'Business Administration',
-    'Economics',
-  ];
 
   @override
   State<DepartmentSelectScreen> createState() => _DepartmentSelectScreenState();
 }
 
 class _DepartmentSelectScreenState extends State<DepartmentSelectScreen> {
+  static const String _departmentsAsset = 'src/data/departments.json';
   static const Color _ink = Color(0xFF111111);
   static const Color _body = Color(0xFF374151);
   static const Color _muted = Color(0xFF6B7280);
@@ -34,9 +26,63 @@ class _DepartmentSelectScreenState extends State<DepartmentSelectScreen> {
   static const Color _surfaceSoft = Color(0xFFF8F9FA);
   static const Color _surfaceCard = Color(0xFFF5F5F5);
 
+  late List<String> _departments;
+  late bool _isLoadingDepartments;
+  String? _departmentLoadError;
   String? _selectedDepartment;
 
   bool get _canContinue => _selectedDepartment != null;
+
+  @override
+  void initState() {
+    super.initState();
+    _departments = widget.departments ?? <String>[];
+    _isLoadingDepartments = widget.departments == null;
+
+    if (_isLoadingDepartments) {
+      _loadDepartments();
+    }
+  }
+
+  Future<void> _loadDepartments() async {
+    setState(() {
+      _isLoadingDepartments = true;
+      _departmentLoadError = null;
+    });
+
+    try {
+      final source = await rootBundle.loadString(_departmentsAsset);
+      final decoded = jsonDecode(source);
+      if (decoded is! List) {
+        throw const FormatException('Department data must be a JSON list.');
+      }
+
+      final departments = decoded
+          .whereType<Map<String, dynamic>>()
+          .map((item) => item['department'])
+          .whereType<String>()
+          .map((department) => department.trim())
+          .where((department) => department.isNotEmpty)
+          .toSet()
+          .toList(growable: false);
+
+      if (departments.isEmpty) {
+        throw const FormatException('No departments found in JSON data.');
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _departments = departments;
+        _isLoadingDepartments = false;
+      });
+    } on Object catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _isLoadingDepartments = false;
+        _departmentLoadError = error.toString();
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -107,6 +153,26 @@ class _DepartmentSelectScreenState extends State<DepartmentSelectScreen> {
                           fieldViewBuilder: _buildField,
                           optionsViewBuilder: _buildOptions,
                         ),
+                        if (_isLoadingDepartments) ...<Widget>[
+                          const SizedBox(height: 12),
+                          const LinearProgressIndicator(),
+                        ],
+                        if (_departmentLoadError != null) ...<Widget>[
+                          const SizedBox(height: 12),
+                          Row(
+                            children: <Widget>[
+                              const Expanded(
+                                child: Text(
+                                  '\uD559\uACFC \uBAA9\uB85D\uC744 \uBD88\uB7EC\uC624\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4.',
+                                ),
+                              ),
+                              TextButton(
+                                onPressed: _loadDepartments,
+                                child: const Text('\uB2E4\uC2DC \uC2DC\uB3C4'),
+                              ),
+                            ],
+                          ),
+                        ],
                         const SizedBox(height: 16),
                         AnimatedSwitcher(
                           duration: const Duration(milliseconds: 180),
@@ -157,10 +223,10 @@ class _DepartmentSelectScreenState extends State<DepartmentSelectScreen> {
   Iterable<String> _buildDepartmentOptions(TextEditingValue value) {
     final keyword = value.text.trim().toLowerCase();
     if (keyword.isEmpty) {
-      return widget.departments;
+      return _departments;
     }
 
-    return widget.departments.where((department) {
+    return _departments.where((department) {
       return department.toLowerCase().contains(keyword);
     });
   }
@@ -174,6 +240,7 @@ class _DepartmentSelectScreenState extends State<DepartmentSelectScreen> {
     return TextField(
       controller: textEditingController,
       focusNode: focusNode,
+      enabled: !_isLoadingDepartments && _departmentLoadError == null,
       textInputAction: TextInputAction.search,
       decoration: InputDecoration(
         hintText: '예시: 컴퓨터',

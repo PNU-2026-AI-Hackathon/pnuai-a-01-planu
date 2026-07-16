@@ -1,10 +1,11 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:frontend/main.dart';
+import 'package:frontend/screens/guide_screen.dart';
 
 void main() {
   testWidgets('Guide screen renders', (WidgetTester tester) async {
-    await tester.pumpWidget(const PlaNUApp());
+    await tester.pumpWidget(const MaterialApp(home: GuideScreen()));
 
     expect(find.text('PlaNU'), findsOneWidget);
     expect(find.text('수강편람 다운로드 안내'), findsOneWidget);

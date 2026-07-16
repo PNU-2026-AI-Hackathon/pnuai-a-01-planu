@@ -20,7 +20,7 @@ from typing import Any, Callable, Mapping, Sequence
 # 엑셀 파일을 열기 위한 라이브러리
 from openpyxl import load_workbook
 # 프로젝트 내부 모델 가져옴
-from ..models.course import Category, ClassTime, Course, Day
+from ..models.course import Category, ClassTime, Course, Day, normalize_course_category
 
 # 수강편람에서 특정 정보가 어느 열에 있는지 명시
 CATALOG_POSITION = {
@@ -201,12 +201,16 @@ def _cell(row: Sequence[Any], columns: Mapping[str, int], field: str) -> Any:
 
 def parse_catalog_workbook(
     path: str | Path,
-    category: Category,
+    category: Category | str,
     *,
     area: int | None = None,
 ) -> list[Course]:
     """Parse an internal general-course catalog whose first row is its header."""
 
+    try:
+        category = normalize_course_category(category)
+    except ValueError as exc:
+        raise CatalogParseError(str(exc)) from exc
     if category not in (Category.GENERAL_REQUIRED, Category.GENERAL_ELECTIVE):
         raise CatalogParseError("내부 수강편람 파서는 교양필수/교양선택만 처리합니다.")
     if category is Category.GENERAL_ELECTIVE and area is None:
@@ -313,12 +317,13 @@ def _write_json(path: Path, data: Any) -> None:
     temporary.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     temporary.replace(path)
 
-# 엑셀 여러개를 읽고 최종 JSON 파일을 한번에 만드는 함수
+# 과거 raw 엑셀 여러 개를 읽어 processed JSON을 만들던 수동 변환 함수.
+# 서버 기본 데이터 로딩은 course_loader.load_default_catalogs를 사용한다.
 def build_processed_data(
     raw_dir: str | Path,
     processed_dir: str | Path,
 ) -> dict[str, int]:
-    """Build all four processed JSON files described in the backend design."""
+    """Build legacy processed JSON files from raw xlsx files."""
 
     raw, output = Path(raw_dir), Path(processed_dir)
     required = parse_catalog_workbook(raw / "general_required.xlsx", Category.GENERAL_REQUIRED)
@@ -342,6 +347,13 @@ def build_processed_data(
             "restrictions": len(restrictions), "departments": len(departments)}
 
 
-# Backwards-friendly names for startup code and focused unit tests.
+# Backwards-friendly name for focused unit tests and upload parsing.
 parse_course_file = parse_catalog_workbook
-parse_default_catalogs = build_processed_data
+
+
+def parse_default_catalogs(catalog_path: str | Path) -> dict[str, list[Course]]:
+    """Load default server catalog data from the generated JSON file."""
+
+    from .course_loader import load_default_catalogs
+
+    return load_default_catalogs(catalog_path)

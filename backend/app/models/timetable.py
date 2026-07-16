@@ -32,14 +32,21 @@ class ScheduleItem(_Model):
         return self
 
 
+class ScoreDetail(_Model):
+    key: str = Field(min_length=1)
+    label: str = Field(min_length=1)
+    value: float
+
+
 class Timetable(_Model):
     """A recommendation candidate ready to return from ``POST /recommend``."""
 
     rank: int = Field(default=1, ge=1) # 추천순위
-    score: float = Field(default=0, ge=0, le=100)
+    score: float = 0
     total_credit: float | None = Field(default=None, gt=0)
     courses: list[Course] = Field(min_length=1)
     schedule_items: list[ScheduleItem] = Field(default_factory=list)
+    score_details: list[ScoreDetail] = Field(default_factory=list)
     reasons: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
 
@@ -54,6 +61,10 @@ class Timetable(_Model):
         course_ids = [course.course_id for course in self.courses]
         if len(course_ids) != len(set(course_ids)):
             raise ValueError("courses must not contain duplicate course_id values")
+
+        if self.score_details:
+            score = sum(detail.value for detail in self.score_details)
+            object.__setattr__(self, "score", score)
 
         if not self.schedule_items:
             items = [

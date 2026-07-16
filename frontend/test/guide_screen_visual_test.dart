@@ -1,8 +1,8 @@
 import 'dart:io';
 
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/services.dart';
-import 'package:frontend/main.dart';
 import 'package:frontend/screens/guide_screen.dart';
 
 void main() {
@@ -28,7 +28,7 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
 
-    await tester.pumpWidget(const PlaNUApp());
+    await tester.pumpWidget(const MaterialApp(home: GuideScreen()));
 
     await expectLater(
       find.byType(GuideScreen),
