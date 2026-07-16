@@ -11,7 +11,11 @@ from .course import Day, time_to_minutes
 
 
 class PreferenceTemplate(str, Enum):
-    """User-facing preference choices mapped to deterministic backend rules."""
+    """The single timetable direction selected by the user.
+
+    It chooses one complete ranking profile; concrete ``PreferenceRules``
+    fields still hold the actual preference content.
+    """
 
     REQUIRED_FREE_DAY = "required_free_day"
     PREFER_FREE_DAY = "prefer_free_day"
@@ -109,7 +113,7 @@ class ExcludedTimeRange(TimeRange):
 
 
 class PreferenceRules(BaseModel):
-    """Structured, deterministic input for filtering and ranking.
+    """Concrete user preference content for filtering and ranking.
 
     Every field has a safe default so an LLM parsing failure can fall back to an
     empty ``PreferenceRules`` instance as required by the backend design.
@@ -128,7 +132,6 @@ class PreferenceRules(BaseModel):
     latest_end_time: str | None = None
     excluded_time_ranges: list[ExcludedTimeRange] = Field(default_factory=list)
     excluded_professors: list[str] = Field(default_factory=list)
-    preferred_elective_areas: list[int] = Field(default_factory=list)
     required_course_names: list[str] = Field(
         default_factory=list,
         description=(
@@ -149,13 +152,14 @@ class PreferenceRules(BaseModel):
             "Do not use avoided_course_names for these hard exclusion requests."
         ),
     )
-    selected_templates: list[PreferenceTemplate] = Field(default_factory=list)
+    selected_template: PreferenceTemplate | None = None
     max_consecutive_classes: int | None = Field(default=None, ge=1)
 
     # Soft ranking preferences
     preferred_first_class_time: str | None = None
     preferred_free_time_ranges: list[TimeRange] = Field(default_factory=list)
     preferred_free_days: list[Day] = Field(default_factory=list)
+    preferred_elective_areas: list[int] = Field(default_factory=list)
     preferred_course_names: list[str] = Field(
         default_factory=list,
         description=(
@@ -205,7 +209,6 @@ class PreferenceRules(BaseModel):
         "required_free_days",
         "preferred_free_days",
         "excluded_professors",
-        "selected_templates",
         "required_course_names",
         "excluded_course_names",
         "preferred_course_names",
@@ -230,7 +233,7 @@ class PreferenceRules(BaseModel):
             PreferenceTemplate.COMPACT_SCHEDULE: "compact_schedule",
         }
         for template, field_name in template_flags.items():
-            if template in self.selected_templates and not getattr(self, field_name):
+            if self.selected_template == template and not getattr(self, field_name):
                 object.__setattr__(self, field_name, True)
         self._validate_course_name_conflicts()
         return self

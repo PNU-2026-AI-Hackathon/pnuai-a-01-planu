@@ -143,13 +143,6 @@ class CourseFilter:
         if excluded_professors and course.professor.casefold() in excluded_professors:
             return True
 
-        if (
-            course.category == Category.GENERAL_ELECTIVE
-            and preferences.preferred_elective_areas
-            and course.area not in preferences.preferred_elective_areas
-        ):
-            return True
-
         return course.course_name in preferences.excluded_course_names
 
     @staticmethod
