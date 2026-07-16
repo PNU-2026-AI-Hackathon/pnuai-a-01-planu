@@ -12,7 +12,7 @@ from typing import Any, Iterable, Mapping
 
 from openpyxl import load_workbook
 
-from ..models.course import Category, Course
+from ..models.course import Category, Course, normalize_course_category
 from ..models.input_timetable import InputTimetable
 from .course_parser import (
     CatalogParseError,
@@ -23,34 +23,17 @@ from .course_parser import (
 )
 
 
-_CATEGORY_MAP = {
-    "전공기초": Category.MAJOR_BASIC,
-    "전기": Category.MAJOR_BASIC,
-    "MAJOR_BASIC": Category.MAJOR_BASIC,
-    "전공필수": Category.MAJOR_REQUIRED,
-    "전필": Category.MAJOR_REQUIRED,
-    "MAJOR_REQUIRED": Category.MAJOR_REQUIRED,
-    "교양필수": Category.GENERAL_REQUIRED,
-    "GENERAL_REQUIRED": Category.GENERAL_REQUIRED,
-}
-
-
 class InputTimetableParseError(ValueError):
     """Raised when fixed-course input cannot form an InputTimetable."""
 
 
 def _category(value: Any, default: Category = Category.MAJOR_BASIC) -> Category:
-    if isinstance(value, Category):
-        return value
-    text = _text(value).replace(" ", "").upper()
-    if not text:
+    if not _text(value):
         return default
-    if text in _CATEGORY_MAP:
-        return _CATEGORY_MAP[text]
-    for label, category in _CATEGORY_MAP.items():
-        if label in text:
-            return category
-    raise InputTimetableParseError(f"지원하지 않는 고정 과목 구분입니다: {value}")
+    try:
+        return normalize_course_category(value)
+    except ValueError as exc:
+        raise InputTimetableParseError(f"지원하지 않는 고정 과목 구분입니다: {value}") from exc
 
 
 def parse_fixed_course(data: Mapping[str, Any], *, index: int = 1) -> Course:
