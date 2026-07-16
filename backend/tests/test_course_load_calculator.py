@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import inspect
+
 import pytest
 from pydantic import ValidationError
 
@@ -45,16 +47,6 @@ def _required(course_id: str, *, credit: float = 2) -> Course:
     return _course(course_id, category=Category.GENERAL_REQUIRED, credit=credit)
 
 
-def _elective(course_id: str, *, credit: float = 3) -> Course:
-    return _course(
-        course_id,
-        category=Category.GENERAL_ELECTIVE,
-        area=1,
-        credit=credit,
-        day=Day.WED,
-    )
-
-
 def test_course_load_target_accepts_both_fields() -> None:
     target = CourseLoadTarget(
         target_total_credits=18,
@@ -82,11 +74,10 @@ def test_course_load_target_rejects_invalid_values(payload: dict[str, object]) -
 def test_without_target_calculates_base_major_and_required_general_credits() -> None:
     result = calculate_course_load_target(
         fixed_major_courses=[_major(credit=6)],
-        general_required_candidates=[
+        required_general_courses=[
             _required("REQ-001", credit=2),
             _required("REQ-002", credit=1),
         ],
-        general_elective_candidates=[_elective("EL-001", credit=3)],
     )
 
     assert result.fixed_major_credits == 6
@@ -101,7 +92,7 @@ def test_without_target_calculates_base_major_and_required_general_credits() -> 
 def test_required_general_credits_are_kept_when_base_exceeds_target() -> None:
     result = calculate_course_load_target(
         fixed_major_courses=[_major(credit=10)],
-        general_required_candidates=[_required("REQ-001", credit=3)],
+        required_general_courses=[_required("REQ-001", credit=3)],
         target=CourseLoadTarget(target_total_credits=12, additional_elective_count=1),
     )
 
@@ -118,7 +109,7 @@ def test_required_general_credits_are_kept_when_base_exceeds_target() -> None:
 def test_remaining_elective_credit_capacity_is_calculated_from_base_total() -> None:
     result = calculate_course_load_target(
         fixed_major_courses=[_major(credit=9)],
-        general_required_candidates=[_required("REQ-001", credit=2)],
+        required_general_courses=[_required("REQ-001", credit=2)],
         target=CourseLoadTarget(target_total_credits=17),
     )
 
@@ -129,7 +120,7 @@ def test_remaining_elective_credit_capacity_is_calculated_from_base_total() -> N
 def test_target_total_and_elective_count_are_preserved_together() -> None:
     result = calculate_course_load_target(
         fixed_major_courses=[_major(credit=9)],
-        general_required_candidates=[_required("REQ-001", credit=2)],
+        required_general_courses=[_required("REQ-001", credit=2)],
         target=CourseLoadTarget(target_total_credits=18, additional_elective_count=2),
     )
 
@@ -139,23 +130,34 @@ def test_target_total_and_elective_count_are_preserved_together() -> None:
     assert result.warnings == []
 
 
-def test_elective_candidate_order_or_list_does_not_change_calculation() -> None:
+def test_calculator_signature_has_no_elective_course_list_input() -> None:
+    signature = inspect.signature(calculate_course_load_target)
+
+    assert list(signature.parameters) == [
+        "fixed_major_courses",
+        "required_general_courses",
+        "target",
+    ]
+    assert "selected_required_general_courses" not in signature.parameters
+    assert "selected_elective_general_courses" not in signature.parameters
+
+
+def test_required_general_input_contract_is_one_course_per_requirement() -> None:
+    """Do not pass every section of the same required general course here."""
+
     first = calculate_course_load_target(
         fixed_major_courses=[_major(credit=9)],
-        general_required_candidates=[_required("REQ-001", credit=2)],
-        general_elective_candidates=[
-            _elective("EL-001", credit=3),
-            _elective("EL-002", credit=1),
+        required_general_courses=[
+            _required("REQ-001", credit=2),
+            _required("REQ-002", credit=1),
         ],
         target=CourseLoadTarget(target_total_credits=18, additional_elective_count=2),
     )
     second = calculate_course_load_target(
         fixed_major_courses=[_major(credit=9)],
-        general_required_candidates=[_required("REQ-001", credit=2)],
-        general_elective_candidates=[
-            _elective("EL-999", credit=6),
-            _elective("EL-002", credit=1),
-            _elective("EL-001", credit=3),
+        required_general_courses=[
+            _required("REQ-002", credit=1),
+            _required("REQ-001", credit=2),
         ],
         target=CourseLoadTarget(target_total_credits=18, additional_elective_count=2),
     )
@@ -166,8 +168,7 @@ def test_elective_candidate_order_or_list_does_not_change_calculation() -> None:
 def test_calculation_result_does_not_include_selected_course_lists() -> None:
     result = calculate_course_load_target(
         fixed_major_courses=[_major()],
-        general_required_candidates=[_required("REQ-001")],
-        general_elective_candidates=[_elective("EL-001")],
+        required_general_courses=[_required("REQ-001")],
     )
 
     dumped = result.model_dump()

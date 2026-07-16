@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
 
+
 class _Model(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -44,9 +45,9 @@ class CourseLoadCalculationResult(_Model):
     """Credit-capacity summary for the backtracking engine.
 
     The result intentionally contains no selected ``Course`` objects. Actual
-    general-course combination generation, time-conflict checks, campus travel
-    checks, and choosing one section among duplicate course divisions belong to
-    the backtracking engine.
+    general-course combination generation, required-general section selection,
+    time-conflict checks, campus travel checks, and choosing one section among
+    duplicate course divisions belong to the backtracking engine.
     """
 
     target: CourseLoadTarget = Field(default_factory=CourseLoadTarget)

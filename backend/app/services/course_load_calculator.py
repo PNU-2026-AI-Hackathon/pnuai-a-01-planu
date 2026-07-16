@@ -4,7 +4,7 @@ This service is deliberately limited to credit arithmetic and structured goal
 warnings. It does not generate actual general-course combinations, inspect time
 conflicts, check campus travel feasibility, or prevent multiple sections of the
 same course from being selected. Those responsibilities belong to the future
-backtracking engine, which will group candidate sections at the course level.
+backtracking engine, which will group available sections at the course level.
 """
 
 from __future__ import annotations
@@ -22,29 +22,27 @@ from ..models.course_load import (
 def calculate_course_load_target(
     *,
     fixed_major_courses: Iterable[Course],
-    general_required_candidates: Iterable[Course] = (),
-    general_elective_candidates: Iterable[Course] = (),
+    required_general_courses: Iterable[Course] = (),
     target: CourseLoadTarget | None = None,
 ) -> CourseLoadCalculationResult:
     """Return the credit goals that backtracking should optimize against.
 
-    ``general_required_candidates`` is treated as the required-general-course
-    credit set already determined by upstream logic. Candidate order is ignored.
-    ``general_elective_candidates`` is accepted for call-site compatibility but
-    is not inspected here; elective availability and section-level duplicate
-    handling are backtracking concerns.
+    ``required_general_courses`` is not a list of every available required
+    general-course section. It must contain one representative ``Course`` per
+    required general course, or an already-fixed course, as determined by
+    department rules. Passing multiple sections of the same course would count
+    credits multiple times and violates this function's input contract.
 
     When both goals are present, the policy is: stay within the target total
     credits if possible while satisfying ``additional_elective_count`` as much
     as possible. This function expresses that policy as remaining credit
-    capacity and warnings; it does not choose the actual courses.
+    capacity and warnings; it does not choose actual required or elective
+    sections.
     """
-
-    del general_elective_candidates
 
     resolved_target = target or CourseLoadTarget()
     fixed_major_credits = _sum_credits(fixed_major_courses)
-    required_general_credits = _sum_credits(general_required_candidates)
+    required_general_credits = _sum_credits(required_general_courses)
     base_total_credits = fixed_major_credits + required_general_credits
     target_total_credits = resolved_target.target_total_credits
     remaining_capacity = (
