@@ -1,9 +1,9 @@
-"""Unit tests for validating and normalizing major-selection parser output.
+"""Unit and opt-in integration tests for the major-selection parser.
 
-The Fake LLM tests below do not prove natural-language understanding accuracy.
-They verify that LLM-shaped outputs are validated, normalized, deduplicated,
-and safely rejected when malformed. Real LLM accuracy checks are marked as
-integration and skipped by default.
+Fake LLM tests do not inspect the model's natural-language understanding. They
+verify output schema validation, exception handling, normalization,
+deduplication, OpenAI-compatible tool-call parsing, and matcher handoff cases.
+Only the opt-in integration test checks real LLM parsing accuracy.
 """
 
 import json
@@ -58,6 +58,14 @@ class RaisingStructuredLLM:
 
 def _parse(prompt: str, output: dict) -> MajorSelectionParseResult:
     return parse_major_selection(prompt, llm=FakeStructuredLLM(output))
+
+
+def _normalize_ambiguous_texts(texts: list[str]) -> list[str]:
+    return [_normalize_ambiguous_text(text) for text in texts]
+
+
+def _normalize_ambiguous_text(text: str) -> str:
+    return " ".join(text.strip().rstrip(".。").split())
 
 
 def test_prompt_limits_major_parser_role() -> None:
@@ -493,6 +501,8 @@ def test_openai_tool_call_response_with_invalid_schema_arguments_raises() -> Non
 
 @pytest.mark.integration
 def test_real_llm_major_selection_accuracy_cases_are_opt_in() -> None:
+    """Validate real LLM natural-language parsing only when explicitly enabled."""
+
     if os.getenv("RUN_MAJOR_SELECTION_INTEGRATION") != "1":
         pytest.skip("set RUN_MAJOR_SELECTION_INTEGRATION=1 to call the real LLM")
     load_proxy_env()
@@ -500,16 +510,79 @@ def test_real_llm_major_selection_accuracy_cases_are_opt_in() -> None:
         pytest.skip("PROXY_TOKEN is not configured")
 
     cases = [
-        "자료구조 001분반과 컴퓨터구조 003분반",
-        "자료구조를 들을 거야",
-        "자료구조는 안 듣고 컴퓨터구조 003분반만",
-        "자료구조 001분반 대신 003분반으로 할게",
-        "자료구조나 알고리즘 중 하나 들을 예정",
-        "자료구조 001분반은 고민 중이고 컴퓨터구조는 들을 거야",
-        "김교수님 자료구조를 들을 거야",
-        "자료구조, 컴퓨터구조 003분반",
+        {
+            "prompt": "자료구조 001분반과 컴퓨터구조 003분반",
+            "expected_courses": [
+                ("자료구조", "1"),
+                ("컴퓨터구조", "3"),
+            ],
+            "expected_ambiguous": [],
+        },
+        {
+            "prompt": "자료구조를 들을 거야",
+            "expected_courses": [
+                ("자료구조", None),
+            ],
+            "expected_ambiguous": [],
+        },
+        {
+            "prompt": "자료구조는 안 듣고 컴퓨터구조 003분반만",
+            "expected_courses": [
+                ("컴퓨터구조", "3"),
+            ],
+            "expected_ambiguous": [],
+        },
+        {
+            "prompt": "자료구조 001분반 대신 003분반으로 할게",
+            "expected_courses": [
+                ("자료구조", "3"),
+            ],
+            "expected_ambiguous": [],
+        },
+        {
+            "prompt": "자료구조나 알고리즘 중 하나 들을 예정",
+            "expected_courses": [],
+            "expected_ambiguous": [
+                "자료구조나 알고리즘 중 하나 들을 예정",
+            ],
+        },
+        {
+            "prompt": "자료구조 001분반은 고민 중이고 컴퓨터구조는 들을 거야",
+            "expected_courses": [
+                ("컴퓨터구조", None),
+            ],
+            "expected_ambiguous": [
+                "자료구조 001분반은 고민 중이고 컴퓨터구조는 들을 거야",
+            ],
+        },
+        {
+            "prompt": "김교수님 자료구조를 들을 거야",
+            "expected_courses": [
+                ("자료구조", None),
+            ],
+            "expected_ambiguous": [],
+        },
     ]
 
-    for prompt in cases:
-        result = parse_major_selection(prompt)
-        assert result.selected_courses or result.ambiguous_texts, prompt
+    for case in cases:
+        result = parse_major_selection(case["prompt"])
+        actual_courses = [
+            (course.course_name, course.section)
+            for course in result.selected_courses
+        ]
+        actual_ambiguous = _normalize_ambiguous_texts(result.ambiguous_texts)
+        expected_ambiguous = _normalize_ambiguous_texts(case["expected_ambiguous"])
+        message = json.dumps(
+            {
+                "prompt": case["prompt"],
+                "expected_courses": case["expected_courses"],
+                "actual_courses": actual_courses,
+                "expected_ambiguous": expected_ambiguous,
+                "actual_ambiguous": actual_ambiguous,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+
+        assert actual_courses == case["expected_courses"], message
+        assert actual_ambiguous == expected_ambiguous, message
