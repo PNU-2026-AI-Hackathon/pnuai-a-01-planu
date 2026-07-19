@@ -31,6 +31,7 @@ from .major_selection_parser import (
     MajorSelectionParser,
 )
 from .session_store import SessionNotFoundError, SessionStore, session_store
+from .session_store import SessionStage
 from .timetable_validator import TimetableValidator
 
 
@@ -158,7 +159,9 @@ class MajorPreviewService:
         try:
             self.store.update(
                 session.session_id,
+                session_stage=SessionStage.MAJOR_PREVIEW_CREATED,
                 latest_major_preview={
+                    "session_id": session.session_id,
                     "preview_id": preview_id,
                     "matched_course_ids": [course.course_id for course in matched_courses],
                     "ambiguous_courses": [

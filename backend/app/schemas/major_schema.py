@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from ..models.course import Category, Day
 from ..models.major_selection import MajorCourseReference
+from ..services.session_store import SessionStage
 
 
 MAJOR_PREVIEW_PROMPT_MAX_LENGTH = 1000
@@ -24,6 +25,18 @@ class MajorPreviewRequest(_Model):
     prompt: str = Field(min_length=1, max_length=MAJOR_PREVIEW_PROMPT_MAX_LENGTH)
 
     @field_validator("session_id", "prompt")
+    @classmethod
+    def reject_blank_text(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("must not be blank")
+        return value
+
+
+class MajorConfirmRequest(_Model):
+    session_id: str = Field(min_length=1)
+    preview_id: str = Field(min_length=1)
+
+    @field_validator("session_id", "preview_id")
     @classmethod
     def reject_blank_text(cls, value: str) -> str:
         if not value.strip():
@@ -99,3 +112,12 @@ class MajorPreviewResponse(_Model):
     has_time_conflict: bool
     conflicts: list[MajorPreviewConflict] = Field(default_factory=list)
     can_confirm: bool
+
+
+class MajorConfirmResponse(_Model):
+    session_id: str
+    preview_id: str
+    confirmed_courses: list[MajorPreviewCourse] = Field(default_factory=list)
+    confirmed_course_count: int
+    confirmed_major_credits: float
+    session_stage: SessionStage
