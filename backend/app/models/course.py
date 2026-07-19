@@ -70,10 +70,8 @@ class Day(str, Enum):
     WED = "WED"
     THU = "THU"
     FRI = "FRI"
-
-    @property
-    def order(self) -> int:
-        return list(Day).index(self)
+    SAT = "SAT"
+    SUN = "SUN"
 
 
 def time_to_minutes(value: str) -> int:
