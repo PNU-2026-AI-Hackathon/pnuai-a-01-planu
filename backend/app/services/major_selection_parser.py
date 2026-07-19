@@ -18,7 +18,7 @@ from .llm_preference_parser import (
     has_proxy_token,
     load_proxy_env,
 )
-from .major_course_matcher import normalize_section
+from .major_course_matcher import normalize_course_name, normalize_section
 
 
 SYSTEM_PROMPT = """당신은 사용자가 이미 선택한 전공 과목명과 분반을 구조화하는 파서입니다.
@@ -34,6 +34,7 @@ SYSTEM_PROMPT = """당신은 사용자가 이미 선택한 전공 과목명과 �
 - 사용자가 듣지 않겠다고 한 과목은 selected_courses에 넣지 마세요.
 - 이전 선택을 취소하거나 변경한 경우 최종적으로 확정한 선택만 반환하세요.
 - "A 또는 B", "둘 중 하나", "고민 중", "들을 수도 있다"처럼 선택이 확정되지 않은 문장은 selected_courses에 넣지 말고 원문을 ambiguous_texts에 넣으세요.
+- 한 문장 안에 미확정 선택과 확정 선택이 함께 있으면, 확정 선택은 selected_courses에 넣고 ambiguous_texts에는 사용자의 전체 원문 문장을 그대로 넣으세요.
 - 하나의 분반 표현을 여러 과목에 임의로 연결하지 마세요.
 - 사용자가 말하지 않은 과목이나 분반을 자동 보완하지 마세요.
 - 설명 문장을 출력하지 말고 지정된 구조화 형식만 반환하세요.
@@ -42,6 +43,7 @@ SYSTEM_PROMPT = """당신은 사용자가 이미 선택한 전공 과목명과 �
 - "자료구조는 안 듣고 컴퓨터구조 003분반만 들을 거야" -> selected_courses: [{"course_name": "컴퓨터구조", "section": "003"}]
 - "자료구조 001분반 대신 003분반으로 할게" -> selected_courses: [{"course_name": "자료구조", "section": "003"}]
 - "자료구조나 알고리즘 중 하나 들을 예정이야" -> selected_courses: [], ambiguous_texts: ["자료구조나 알고리즘 중 하나 들을 예정이야"]
+- "자료구조 001분반은 고민 중이고 컴퓨터구조는 들을 거야" -> selected_courses: [{"course_name": "컴퓨터구조", "section": null}], ambiguous_texts: ["자료구조 001분반은 고민 중이고 컴퓨터구조는 들을 거야"]
 - "자료구조, 컴퓨터구조 003분반" -> 003분반을 자료구조에 임의로 연결하지 마세요.
 
 출력 형식:
@@ -251,24 +253,30 @@ def build_major_selection_parse_payload(*, prompt: str) -> dict[str, str]:
 
     return {
         "prompt": prompt.strip(),
-            "instruction": (
-                "Extract only course_name and section values explicitly stated in "
-                "prompt. Return section as null when the user did not explicitly "
-                "write a section. Do not infer a section from professor, time, "
-                "course existence, or context. Put uncertain or non-final selection "
-                "phrases into ambiguous_texts. Do not include courses the user says "
-                "they will not take. If the user cancels or changes a previous "
-                "selection, return only the final confirmed selection. Treat phrases "
-                "like 'A 또는 B', '둘 중 하나', '고민 중', and '들을 수도 있다' "
-                "as ambiguous_texts, not selected_courses. Do not attach one section "
-                "expression to multiple courses. Do not automatically fill in "
-                "unstated courses or sections. Examples: '자료구조는 안 듣고 "
-                "컴퓨터구조 003분반만 들을 거야' returns only 컴퓨터구조 003; "
-                "'자료구조 001분반 대신 003분반으로 할게' returns only 자료구조 "
-                "003; '자료구조나 알고리즘 중 하나 들을 예정이야' returns no "
-                "selected courses and adds the sentence to ambiguous_texts; "
-                "'자료구조, 컴퓨터구조 003분반' must not attach 003 to 자료구조."
-            ),
+        "instruction": (
+            "Extract only course_name and section values explicitly stated in "
+            "prompt. Return section as null when the user did not explicitly "
+            "write a section. Do not infer a section from professor, time, "
+            "course existence, or context. Put uncertain or non-final selection "
+            "phrases into ambiguous_texts. Do not include courses the user says "
+            "they will not take. If the user cancels or changes a previous "
+            "selection, return only the final confirmed selection. Treat phrases "
+            "like 'A 또는 B', '둘 중 하나', '고민 중', and '들을 수도 있다' "
+            "as ambiguous_texts, not selected_courses. Do not attach one section "
+            "expression to multiple courses. Do not automatically fill in "
+            "unstated courses or sections. If one sentence includes both an "
+            "uncertain course and a confirmed course, extract the confirmed "
+            "course and put the whole original sentence into ambiguous_texts. "
+            "Examples: '자료구조는 안 듣고 "
+            "컴퓨터구조 003분반만 들을 거야' returns only 컴퓨터구조 003; "
+            "'자료구조 001분반 대신 003분반으로 할게' returns only 자료구조 "
+            "003; '자료구조나 알고리즘 중 하나 들을 예정이야' returns no "
+            "selected courses and adds the sentence to ambiguous_texts; "
+            "'자료구조 001분반은 고민 중이고 컴퓨터구조는 들을 거야' returns "
+            "컴퓨터구조 with null section and adds the whole sentence to "
+            "ambiguous_texts; "
+            "'자료구조, 컴퓨터구조 003분반' must not attach 003 to 자료구조."
+        ),
     }
 
 
@@ -276,8 +284,6 @@ def deduplicate_major_course_references(
     references: list[MajorCourseReference],
 ) -> list[MajorCourseReference]:
     """Remove duplicate selected courses while preserving LLM output order."""
-
-    from .major_course_matcher import normalize_course_name
 
     seen: set[tuple[str, str | None]] = set()
     deduplicated: list[MajorCourseReference] = []
