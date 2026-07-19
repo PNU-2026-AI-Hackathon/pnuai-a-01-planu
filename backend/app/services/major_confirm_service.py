@@ -13,7 +13,18 @@ from ..models.course import Course
 from ..models.input_timetable import InputTimetable
 from ..schemas.major_schema import MajorConfirmResponse
 from .major_preview_service import _preview_course, _time_conflicts
-from .session_store import SessionNotFoundError, SessionStage, SessionStore, session_store
+from .session_store import (
+    InvalidMajorConfirmStageError,
+    InvalidPreviewSessionError,
+    MajorAlreadyConfirmedError,
+    MajorCourseReferenceMismatchError,
+    MajorPreviewNotFoundError,
+    SessionNotFoundError,
+    SessionStage,
+    SessionStore,
+    StaleMajorPreviewError,
+    session_store,
+)
 from .timetable_validator import TimetableValidator
 
 
@@ -122,15 +133,56 @@ class MajorConfirmService:
         confirmed_preview["is_confirmed"] = True
 
         try:
-            updated = self.store.update(
+            updated = self.store.confirm_major_preview(
                 session.session_id,
+                preview_id=preview_id,
                 fixed_courses=courses,
                 confirmed_major_credits=confirmed_credits,
-                session_stage=SessionStage.MAJOR_CONFIRMED,
-                confirmed_major_preview_id=preview_id,
-                latest_major_preview=confirmed_preview,
+                confirmed_preview=confirmed_preview,
             )
-        except Exception as exc:
+        except SessionNotFoundError as exc:
+            raise AppError(
+                "SESSION_NOT_FOUND",
+                "세션을 찾을 수 없거나 만료되었습니다.",
+                status_code=404,
+            ) from exc
+        except MajorAlreadyConfirmedError as exc:
+            raise AppError(
+                "INVALID_SESSION_STAGE",
+                "이미 다른 전공 미리보기로 확정된 세션입니다.",
+                status_code=409,
+            ) from exc
+        except InvalidMajorConfirmStageError as exc:
+            raise AppError(
+                "INVALID_SESSION_STAGE",
+                "전공 미리보기 생성 이후에만 전공 시간표를 확정할 수 있습니다.",
+                status_code=409,
+            ) from exc
+        except MajorPreviewNotFoundError as exc:
+            raise AppError(
+                "MAJOR_PREVIEW_NOT_FOUND",
+                "확정할 전공 미리보기를 찾을 수 없습니다.",
+                status_code=404,
+            ) from exc
+        except InvalidPreviewSessionError as exc:
+            raise AppError(
+                "INVALID_PREVIEW_SESSION",
+                "현재 세션에서 생성된 전공 미리보기가 아닙니다.",
+                status_code=403,
+            ) from exc
+        except StaleMajorPreviewError as exc:
+            raise AppError(
+                "STALE_MAJOR_PREVIEW",
+                "최신 전공 미리보기만 확정할 수 있습니다.",
+                status_code=409,
+            ) from exc
+        except MajorCourseReferenceMismatchError as exc:
+            raise AppError(
+                "MAJOR_COURSE_REFERENCE_INVALID",
+                "전공 미리보기의 과목 참조가 수강편람 데이터와 일치하지 않습니다.",
+                status_code=409,
+            ) from exc
+        except (TypeError, ValueError) as exc:
             raise AppError(
                 "MAJOR_CONFIRM_SAVE_FAILED",
                 "전공 시간표 확정 결과를 저장하지 못했습니다.",

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 
 import pytest
 
@@ -10,6 +12,15 @@ from backend.app.core.errors import AppError
 from backend.app.models import Category, ClassTime, Course, Day
 from backend.app.services.major_confirm_service import MajorConfirmService
 from backend.app.services.session_store import SessionStage, SessionStore
+
+
+class BarrierValidator:
+    def __init__(self, parties: int) -> None:
+        self.barrier = Barrier(parties)
+
+    def has_time_conflict(self, _: list[Course]) -> bool:
+        self.barrier.wait(timeout=5)
+        return False
 
 
 def _course(
@@ -198,3 +209,27 @@ def test_confirm_is_idempotent_for_same_preview_and_rejects_different_preview() 
     with pytest.raises(AppError) as exc_info:
         asyncio.run(service.confirm(session.session_id, "preview-2"))
     assert exc_info.value.code == "INVALID_SESSION_STAGE"
+
+
+def test_concurrent_same_preview_confirm_keeps_session_consistent() -> None:
+    course = _course("MA100-001", "자료구조", "001")
+    store = SessionStore()
+    session = store.create("컴퓨터공학과", major_candidates=[course])
+    _save_preview(store, session.session_id, preview_id="preview-1")
+    service = MajorConfirmService(store=store, validator=BarrierValidator(parties=2))
+
+    def confirm_once():
+        return asyncio.run(service.confirm(session.session_id, "preview-1"))
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first_future = executor.submit(confirm_once)
+        second_future = executor.submit(confirm_once)
+        first = first_future.result(timeout=10)
+        second = second_future.result(timeout=10)
+
+    saved = store.get(session.session_id)
+    assert first == second
+    assert saved.session_stage is SessionStage.MAJOR_CONFIRMED
+    assert saved.confirmed_major_preview_id == "preview-1"
+    assert [course.course_id for course in saved.fixed_courses] == ["MA100-001"]
+    assert saved.confirmed_major_credits == 3

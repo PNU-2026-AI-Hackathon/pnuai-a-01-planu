@@ -24,6 +24,34 @@ class SessionNotFoundError(KeyError):
         self.session_id = session_id
 
 
+class MajorConfirmStoreError(RuntimeError):
+    """Base class for expected major preview confirmation failures."""
+
+
+class MajorPreviewNotFoundError(MajorConfirmStoreError):
+    pass
+
+
+class InvalidPreviewSessionError(MajorConfirmStoreError):
+    pass
+
+
+class StaleMajorPreviewError(MajorConfirmStoreError):
+    pass
+
+
+class InvalidMajorConfirmStageError(MajorConfirmStoreError):
+    pass
+
+
+class MajorAlreadyConfirmedError(MajorConfirmStoreError):
+    pass
+
+
+class MajorCourseReferenceMismatchError(MajorConfirmStoreError):
+    pass
+
+
 class SessionStage(str, Enum):
     CATALOG_PARSED = "catalog_parsed"
     MAJOR_PREVIEW_CREATED = "major_preview_created"
@@ -107,16 +135,57 @@ class SessionStore:
 
     def get(self, session_id: str, *, touch: bool = True) -> SessionData:
         with self._lock:
-            now = self._clock()
-            data = self._sessions.get(session_id)
-            if data is None or self._is_expired(data, now):
-                self._sessions.pop(session_id, None)
-                raise SessionNotFoundError(session_id)
-            if touch:
-                data.updated_at = now
+            data = self._get_live_locked(session_id, touch=touch)
             return self._copy(data)
 
     get_session = get
+
+    def confirm_major_preview(
+        self,
+        session_id: str,
+        *,
+        preview_id: str,
+        fixed_courses: Iterable[Course],
+        confirmed_major_credits: float,
+        confirmed_preview: dict[str, Any],
+    ) -> SessionData:
+        """Atomically confirm the latest major preview for one in-memory session."""
+
+        with self._lock:
+            data = self._get_live_locked(session_id, touch=False)
+
+            if data.fixed_courses:
+                if data.confirmed_major_preview_id == preview_id:
+                    data.updated_at = self._clock()
+                    return self._copy(data)
+                raise MajorAlreadyConfirmedError("session already confirmed with another preview")
+
+            if data.session_stage is not SessionStage.MAJOR_PREVIEW_CREATED:
+                raise InvalidMajorConfirmStageError("major preview stage is required")
+
+            preview = data.latest_major_preview
+            if preview is None:
+                raise MajorPreviewNotFoundError("major preview not found")
+            if preview.get("session_id") not in (None, data.session_id):
+                raise InvalidPreviewSessionError("preview belongs to another session")
+            if preview.get("preview_id") != preview_id:
+                raise StaleMajorPreviewError("latest preview id does not match")
+
+            courses = list(fixed_courses)
+            preview_course_ids = list(preview.get("matched_course_ids") or [])
+            fixed_course_ids = [course.course_id for course in courses]
+            if preview_course_ids != fixed_course_ids:
+                raise MajorCourseReferenceMismatchError(
+                    "fixed courses do not match latest preview references"
+                )
+
+            data.fixed_courses = courses
+            data.confirmed_major_credits = confirmed_major_credits
+            data.session_stage = SessionStage.MAJOR_CONFIRMED
+            data.confirmed_major_preview_id = preview_id
+            data.latest_major_preview = dict(confirmed_preview)
+            data.updated_at = self._clock()
+            return self._copy(data)
 
     def update(
         self,
@@ -133,8 +202,7 @@ class SessionStore:
     ) -> SessionData:
         with self._lock:
             # get() performs expiry handling; the stored instance is then updated.
-            self.get(session_id, touch=False)
-            data = self._sessions[session_id]
+            data = self._get_live_locked(session_id, touch=False)
             if department is not None:
                 if not department.strip():
                     raise ValueError("department must not be empty")
@@ -186,6 +254,16 @@ class SessionStore:
 
     def _is_expired(self, data: SessionData, now: datetime) -> bool:
         return now - data.updated_at >= self.ttl
+
+    def _get_live_locked(self, session_id: str, *, touch: bool) -> SessionData:
+        now = self._clock()
+        data = self._sessions.get(session_id)
+        if data is None or self._is_expired(data, now):
+            self._sessions.pop(session_id, None)
+            raise SessionNotFoundError(session_id)
+        if touch:
+            data.updated_at = now
+        return data
 
     @staticmethod
     def _copy(data: SessionData) -> SessionData:
