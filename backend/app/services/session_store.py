@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from threading import RLock
-from typing import Callable, Iterable
+from typing import Any, Callable, Iterable
 from uuid import uuid4
 
 from ..models.course import Course
@@ -30,6 +30,7 @@ class SessionData:
     major_candidates: list[Course] = field(default_factory=list)
     elective_candidates: list[Course] = field(default_factory=list)
     fixed_courses: list[Course] = field(default_factory=list)
+    latest_major_preview: dict[str, Any] | None = None
     created_at: datetime = field(default_factory=_utcnow)
     updated_at: datetime = field(default_factory=_utcnow)
 
@@ -42,6 +43,8 @@ class SessionData:
         self.major_candidates = list(self.major_candidates)
         self.elective_candidates = list(self.elective_candidates)
         self.fixed_courses = list(self.fixed_courses)
+        if self.latest_major_preview is not None:
+            self.latest_major_preview = dict(self.latest_major_preview)
 
 
 class SessionStore:
@@ -111,6 +114,7 @@ class SessionStore:
         major_candidates: Iterable[Course] | None = None,
         elective_candidates: Iterable[Course] | None = None,
         fixed_courses: Iterable[Course] | None = None,
+        latest_major_preview: dict[str, Any] | None = None,
     ) -> SessionData:
         with self._lock:
             # get() performs expiry handling; the stored instance is then updated.
@@ -126,6 +130,8 @@ class SessionStore:
                 data.elective_candidates = list(elective_candidates)
             if fixed_courses is not None:
                 data.fixed_courses = list(fixed_courses)
+            if latest_major_preview is not None:
+                data.latest_major_preview = dict(latest_major_preview)
             data.updated_at = self._clock()
             return self._copy(data)
 
@@ -163,6 +169,11 @@ class SessionStore:
             major_candidates=list(data.major_candidates),
             elective_candidates=list(data.elective_candidates),
             fixed_courses=list(data.fixed_courses),
+            latest_major_preview=(
+                dict(data.latest_major_preview)
+                if data.latest_major_preview is not None
+                else None
+            ),
         )
 
 
