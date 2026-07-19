@@ -73,10 +73,6 @@ class Day(str, Enum):
     SAT = "SAT"
     SUN = "SUN"
 
-    @property
-    def order(self) -> int:
-        return list(Day).index(self)
-
 
 def time_to_minutes(value: str) -> int:
     """Convert an API time (``HH:MM``) to minutes after midnight."""

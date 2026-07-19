@@ -714,7 +714,7 @@ class TimetableRanker:
             Day.THU: "목요일",
             Day.FRI: "금요일",
         }
-        return ", ".join(labels[day] for day in sorted(days, key=lambda day: day.order))
+        return ", ".join(labels[day] for day in sorted(days, key=lambda day: list(Day).index(day)))
 
     @staticmethod
     def _unique(values: Iterable[str]) -> list[str]:

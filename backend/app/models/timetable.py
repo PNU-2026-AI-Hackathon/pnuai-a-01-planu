@@ -89,7 +89,7 @@ class Timetable(_Model):
             object.__setattr__(self, "schedule_items", items)
 
         self.schedule_items.sort(
-            key=lambda item: (item.day.order, time_to_minutes(item.start))
+            key=lambda item: (list(Day).index(item.day), time_to_minutes(item.start))
         )
         return self
 

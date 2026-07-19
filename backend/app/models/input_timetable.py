@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from .course import Course, time_to_minutes
+from .course import Course, Day, time_to_minutes
 from .timetable import ScheduleItem
 
 
@@ -63,6 +63,6 @@ class InputTimetable(BaseModel):
             object.__setattr__(self, "schedule_items", items)
 
         self.schedule_items.sort(
-            key=lambda item: (item.day.order, time_to_minutes(item.start))
+            key=lambda item: (list(Day).index(item.day), time_to_minutes(item.start))
         )
         return self
