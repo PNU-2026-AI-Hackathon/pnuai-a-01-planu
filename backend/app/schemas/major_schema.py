@@ -50,6 +50,20 @@ class MajorPreviewCourse(_Model):
     class_times: list[MajorPreviewClassTime]
 
 
+class MajorPreviewTimetableEntry(_Model):
+    course_id: str
+    course_name: str
+    category: Category
+    credit: float
+    division: str
+    professor: str
+    day: Day
+    start: str
+    end: str
+    classroom: str
+    building_code: str
+
+
 class MatchedMajorPreviewCourse(_Model):
     reference: MajorCourseReference
     course: MajorPreviewCourse
@@ -81,7 +95,7 @@ class MajorPreviewResponse(_Model):
     ambiguous_courses: list[AmbiguousMajorPreviewCourse] = Field(default_factory=list)
     unmatched_courses: list[UnmatchedMajorPreviewCourse] = Field(default_factory=list)
     ambiguous_texts: list[str] = Field(default_factory=list)
+    timetable_entries: list[MajorPreviewTimetableEntry] = Field(default_factory=list)
     has_time_conflict: bool
     conflicts: list[MajorPreviewConflict] = Field(default_factory=list)
     can_confirm: bool
-

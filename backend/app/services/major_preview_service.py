@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 from hashlib import sha256
 from itertools import combinations
@@ -17,6 +18,7 @@ from ..schemas.major_schema import (
     MajorPreviewConflict,
     MajorPreviewCourse,
     MajorPreviewResponse,
+    MajorPreviewTimetableEntry,
     MatchedMajorPreviewCourse,
     UnmatchedMajorPreviewCourse,
 )
@@ -30,6 +32,17 @@ from .major_selection_parser import (
 )
 from .session_store import SessionNotFoundError, SessionStore, session_store
 from .timetable_validator import TimetableValidator
+
+
+DAY_ORDER = {
+    "MON": 0,
+    "TUE": 1,
+    "WED": 2,
+    "THU": 3,
+    "FRI": 4,
+    "SAT": 5,
+    "SUN": 6,
+}
 
 
 class MajorSelectionParserProtocol(Protocol):
@@ -80,7 +93,7 @@ class MajorPreviewService:
             )
 
         try:
-            parse_result = self.parser.parse(prompt)
+            parse_result = await asyncio.to_thread(self.parser.parse, prompt)
         except EmptyMajorSelectionPromptError as exc:
             raise AppError(
                 "EMPTY_MAJOR_PROMPT",
@@ -130,6 +143,7 @@ class MajorPreviewService:
                 for item in match_result.unmatched
             ],
             ambiguous_texts=list(match_result.ambiguous_texts),
+            timetable_entries=_timetable_entries(matched_courses),
             has_time_conflict=has_time_conflict,
             conflicts=conflicts,
             can_confirm=(
@@ -190,6 +204,37 @@ def _preview_course(course: Course) -> MajorPreviewCourse:
             for item in course.class_times
         ],
     )
+
+
+def _timetable_entries(courses: list[Course]) -> list[MajorPreviewTimetableEntry]:
+    entries = [
+        MajorPreviewTimetableEntry(
+            course_id=course.course_id,
+            course_name=course.course_name,
+            category=course.category,
+            credit=course.credit,
+            division=course.division,
+            professor=course.professor,
+            day=item.day,
+            start=item.start,
+            end=item.end,
+            classroom=item.classroom,
+            building_code=item.building_code,
+        )
+        for course in courses
+        for item in course.class_times
+    ]
+    entries.sort(
+        key=lambda item: (
+            DAY_ORDER[item.day.value],
+            item.start,
+            item.end,
+            item.course_name,
+            item.division,
+            item.course_id,
+        )
+    )
+    return entries
 
 
 def _time_conflicts(courses: list[Course]) -> list[MajorPreviewConflict]:

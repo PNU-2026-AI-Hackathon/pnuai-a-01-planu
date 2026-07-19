@@ -42,6 +42,7 @@ def _course(
     start: str = "09:00",
     end: str = "10:15",
     professor: str = "김교수",
+    class_times: list[ClassTime] | None = None,
 ) -> Course:
     return Course(
         course_id=course_id,
@@ -50,7 +51,7 @@ def _course(
         credit=3,
         division=division,
         professor=professor,
-        class_times=[
+        class_times=class_times or [
             ClassTime(
                 day=day,
                 start=start,
@@ -118,6 +119,180 @@ def test_unmatched_courses_are_returned_with_partial_success() -> None:
     assert [item.course.course_id for item in response.matched_courses] == ["MA100-001"]
     assert response.unmatched_courses[0].reference.course_name == "컴퓨터구조"
     assert response.can_confirm is False
+
+
+def test_timetable_entries_flatten_multiple_courses_and_class_times() -> None:
+    first = _course(
+        "MA100-001",
+        "자료구조",
+        "001",
+        class_times=[
+            ClassTime(
+                day=Day.MON,
+                start="09:00",
+                end="10:15",
+                classroom="제6공학관 6201",
+                building_code="6201",
+            ),
+            ClassTime(
+                day=Day.WED,
+                start="09:00",
+                end="10:15",
+                classroom="제6공학관 6202",
+                building_code="6202",
+            ),
+        ],
+    )
+    second = _course(
+        "MA200-001",
+        "운영체제",
+        "001",
+        day=Day.TUE,
+        start="13:30",
+        end="14:45",
+    )
+    store = SessionStore()
+    session = store.create("컴퓨터공학과", major_candidates=[first, second])
+    service = _service(
+        store,
+        MajorSelectionParseResult(
+            selected_courses=[
+                MajorCourseReference(course_name="자료구조", section="001"),
+                MajorCourseReference(course_name="운영체제", section="001"),
+            ]
+        ),
+    )
+
+    response = asyncio.run(service.create_preview(session.session_id, "자료구조 운영체제"))
+
+    assert [
+        (entry.course_id, entry.day, entry.start, entry.classroom)
+        for entry in response.timetable_entries
+    ] == [
+        ("MA100-001", Day.MON, "09:00", "제6공학관 6201"),
+        ("MA200-001", Day.TUE, "13:30", "제6공학관 6201"),
+        ("MA100-001", Day.WED, "09:00", "제6공학관 6202"),
+    ]
+
+
+def test_timetable_entries_sort_by_day_and_start_time() -> None:
+    monday_late = _course("MA300-001", "알고리즘", "001", start="11:00", end="12:15")
+    monday_early = _course("MA100-001", "자료구조", "001", start="09:00", end="10:15")
+    tuesday = _course("MA200-001", "운영체제", "001", day=Day.TUE, start="09:00")
+    store = SessionStore()
+    session = store.create(
+        "컴퓨터공학과",
+        major_candidates=[tuesday, monday_late, monday_early],
+    )
+    service = _service(
+        store,
+        MajorSelectionParseResult(
+            selected_courses=[
+                MajorCourseReference(course_name="운영체제", section="001"),
+                MajorCourseReference(course_name="알고리즘", section="001"),
+                MajorCourseReference(course_name="자료구조", section="001"),
+            ]
+        ),
+    )
+
+    response = asyncio.run(service.create_preview(session.session_id, "전공"))
+
+    assert [
+        (entry.day, entry.start, entry.course_id)
+        for entry in response.timetable_entries
+    ] == [
+        (Day.MON, "09:00", "MA100-001"),
+        (Day.MON, "11:00", "MA300-001"),
+        (Day.TUE, "09:00", "MA200-001"),
+    ]
+
+
+def test_timetable_entries_have_deterministic_tie_break_order() -> None:
+    by_name_later = _course("MA300-001", "컴퓨터구조", "001", start="09:00")
+    by_division_later = _course("MA200-002", "자료구조", "002", start="09:00")
+    by_name_middle = _course("MA200-003", "자료구조심화", "001", start="09:00")
+    first = _course("MA100-001", "자료구조", "001", start="09:00")
+    store = SessionStore()
+    session = store.create(
+        "컴퓨터공학과",
+        major_candidates=[by_name_middle, by_name_later, by_division_later, first],
+    )
+    service = _service(
+        store,
+        MajorSelectionParseResult(
+            selected_courses=[
+                MajorCourseReference(course_name="자료구조", section="001"),
+                MajorCourseReference(course_name="컴퓨터구조", section="001"),
+                MajorCourseReference(course_name="자료구조", section="002"),
+                MajorCourseReference(course_name="자료구조심화", section="001"),
+            ]
+        ),
+    )
+
+    response = asyncio.run(service.create_preview(session.session_id, "전공"))
+
+    assert [
+        (entry.course_name, entry.division, entry.course_id)
+        for entry in response.timetable_entries
+    ] == [
+        ("자료구조", "001", "MA100-001"),
+        ("자료구조", "002", "MA200-002"),
+        ("자료구조심화", "001", "MA200-003"),
+        ("컴퓨터구조", "001", "MA300-001"),
+    ]
+
+
+def test_parser_is_called_through_asyncio_to_thread(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[object, tuple[object, ...]]] = []
+
+    async def fake_to_thread(func, *args):
+        calls.append((func, args))
+        return func(*args)
+
+    monkeypatch.setattr(
+        "backend.app.services.major_preview_service.asyncio.to_thread",
+        fake_to_thread,
+    )
+    store = SessionStore()
+    session = store.create(
+        "컴퓨터공학과",
+        major_candidates=[_course("MA100-001", "자료구조", "001")],
+    )
+    parser = FakeMajorSelectionParser(
+        MajorSelectionParseResult(
+            selected_courses=[MajorCourseReference(course_name="자료구조", section="001")]
+        )
+    )
+    service = MajorPreviewService(store=store, parser=parser)
+
+    response = asyncio.run(service.create_preview(session.session_id, "자료구조 001분반"))
+
+    assert response.can_confirm is True
+    assert calls == [(parser.parse, ("자료구조 001분반",))]
+    assert parser.prompts == ["자료구조 001분반"]
+
+
+def test_parser_exception_from_to_thread_keeps_app_error_mapping(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_to_thread(func, *args):
+        return func(*args)
+
+    monkeypatch.setattr(
+        "backend.app.services.major_preview_service.asyncio.to_thread",
+        fake_to_thread,
+    )
+    store = SessionStore()
+    session = store.create(
+        "컴퓨터공학과",
+        major_candidates=[_course("MA100-001", "자료구조", "001")],
+    )
+    service = _service(store, InvalidMajorSelectionOutputError("bad raw output"))
+
+    with pytest.raises(AppError) as exc_info:
+        asyncio.run(service.create_preview(session.session_id, "자료구조 001분반"))
+
+    assert exc_info.value.code == "MAJOR_SELECTION_PARSE_FAILED"
 
 
 def test_missing_section_becomes_ambiguous() -> None:
