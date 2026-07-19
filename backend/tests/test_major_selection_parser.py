@@ -1,10 +1,23 @@
-"""Tests for parsing user-selected major courses from natural language."""
+"""Unit tests for validating and normalizing major-selection parser output.
+
+The Fake LLM tests below do not prove natural-language understanding accuracy.
+They verify that LLM-shaped outputs are validated, normalized, deduplicated,
+and safely rejected when malformed. Real LLM accuracy checks are marked as
+integration and skipped by default.
+"""
 
 import json
+import os
 
 import pytest
+from pydantic import ValidationError
 
-from backend.app.models import MajorSelectionParseResult
+from backend.app.models import Category, ClassTime, Course, Day, MajorSelectionParseResult
+from backend.app.services.llm_preference_parser import has_proxy_token, load_proxy_env
+from backend.app.services.major_course_matcher import (
+    INVALID_ZERO_SECTION_REASON,
+    MajorCourseMatcher,
+)
 from backend.app.services.major_selection_parser import (
     EmptyMajorSelectionPromptError,
     InvalidMajorSelectionOutputError,
@@ -247,3 +260,256 @@ def test_callable_llm_and_json_output_are_supported() -> None:
 
     assert result.selected_courses[0].course_name == "자료구조"
     assert result.selected_courses[0].section == "1"
+
+
+def test_duplicate_same_course_and_same_section_is_removed() -> None:
+    result = _parse(
+        "자료구조 001분반 자료구조 001분반",
+        {
+            "selected_courses": [
+                {"course_name": "자료구조", "section": "001"},
+                {"course_name": "자료구조", "section": "001"},
+            ],
+            "ambiguous_texts": [],
+        },
+    )
+
+    assert [(c.course_name, c.section) for c in result.selected_courses] == [
+        ("자료구조", "1")
+    ]
+
+
+def test_equivalent_numeric_sections_are_deduplicated() -> None:
+    result = _parse(
+        "자료구조 001분반 자료구조 01분반 자료구조 1분반 자료구조 001 분반",
+        {
+            "selected_courses": [
+                {"course_name": "자료구조", "section": "001"},
+                {"course_name": "자료구조", "section": "01"},
+                {"course_name": "자료구조", "section": "1"},
+                {"course_name": "자료구조", "section": "001분반"},
+            ],
+            "ambiguous_texts": [],
+        },
+    )
+
+    assert [(c.course_name, c.section) for c in result.selected_courses] == [
+        ("자료구조", "1")
+    ]
+
+
+def test_duplicate_course_without_section_is_removed() -> None:
+    result = _parse(
+        "자료구조를 들을 거야. 자료구조는 분반 아직 몰라.",
+        {
+            "selected_courses": [
+                {"course_name": "자료구조", "section": None},
+                {"course_name": "자료 구조", "section": None},
+            ],
+            "ambiguous_texts": [],
+        },
+    )
+
+    assert [(c.course_name, c.section) for c in result.selected_courses] == [
+        ("자료구조", None)
+    ]
+
+
+def test_negative_course_example_keeps_only_confirmed_selection() -> None:
+    result = _parse(
+        "자료구조는 안 듣고 컴퓨터구조 003분반만 들을 거야",
+        {
+            "selected_courses": [
+                {"course_name": "컴퓨터구조", "section": "003"},
+            ],
+            "ambiguous_texts": [],
+        },
+    )
+
+    assert [(c.course_name, c.section) for c in result.selected_courses] == [
+        ("컴퓨터구조", "3")
+    ]
+
+
+def test_changed_selection_example_keeps_only_final_selection() -> None:
+    result = _parse(
+        "자료구조 001분반 대신 003분반으로 할게",
+        {
+            "selected_courses": [
+                {"course_name": "자료구조", "section": "003"},
+            ],
+            "ambiguous_texts": [],
+        },
+    )
+
+    assert [(c.course_name, c.section) for c in result.selected_courses] == [
+        ("자료구조", "3")
+    ]
+
+
+def test_unconfirmed_expression_example_is_preserved_as_ambiguous_text() -> None:
+    result = _parse(
+        "자료구조나 알고리즘 중 하나 들을 예정이야",
+        {
+            "selected_courses": [],
+            "ambiguous_texts": ["자료구조나 알고리즘 중 하나 들을 예정이야"],
+        },
+    )
+
+    assert result.selected_courses == []
+    assert result.ambiguous_texts == ["자료구조나 알고리즘 중 하나 들을 예정이야"]
+
+
+def test_zero_section_is_reported_with_distinct_invalid_reason() -> None:
+    course = Course(
+        course_id="MA100-001",
+        course_name="자료구조",
+        category=Category.MAJOR_REQUIRED,
+        credit=3,
+        division="001",
+        professor="김교수",
+        class_times=[
+            ClassTime(
+                day=Day.MON,
+                start="09:00",
+                end="10:15",
+                classroom="제6공학관 6201",
+                building_code="6201",
+            )
+        ],
+    )
+    parse_result = _parse(
+        "자료구조 000분반",
+        {
+            "selected_courses": [
+                {"course_name": "자료구조", "section": "000분반"},
+            ],
+            "ambiguous_texts": [],
+        },
+    )
+
+    match_result = MajorCourseMatcher([course]).match(parse_result)
+
+    assert match_result.matched == []
+    assert match_result.ambiguous == []
+    assert len(match_result.unmatched) == 1
+    assert match_result.unmatched[0].reason == INVALID_ZERO_SECTION_REASON
+
+
+def test_openai_tool_call_response_extracts_major_selection_arguments() -> None:
+    output = MajorSelectionParser._result_from_chat_completions_response(
+        {
+            "choices": [
+                {
+                    "message": {
+                        "tool_calls": [
+                            {
+                                "function": {
+                                    "name": "major_selection_from_prompt",
+                                    "arguments": json.dumps(
+                                        {
+                                            "selected_courses": [
+                                                {
+                                                    "course_name": "자료구조",
+                                                    "section": "001",
+                                                }
+                                            ],
+                                            "ambiguous_texts": [],
+                                        },
+                                        ensure_ascii=False,
+                                    ),
+                                }
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+    )
+
+    assert output == {
+        "selected_courses": [{"course_name": "자료구조", "section": "001"}],
+        "ambiguous_texts": [],
+    }
+
+
+def test_openai_tool_call_response_without_choices_raises() -> None:
+    with pytest.raises(ValueError, match="choices"):
+        MajorSelectionParser._result_from_chat_completions_response({})
+
+
+def test_openai_tool_call_response_without_tool_calls_raises() -> None:
+    with pytest.raises(ValueError, match="tool call"):
+        MajorSelectionParser._result_from_chat_completions_response(
+            {"choices": [{"message": {}}]}
+        )
+
+
+def test_openai_tool_call_response_with_invalid_json_arguments_raises() -> None:
+    with pytest.raises(json.JSONDecodeError):
+        MajorSelectionParser._result_from_chat_completions_response(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "tool_calls": [
+                                {"function": {"arguments": "{not-json"}}
+                            ]
+                        }
+                    }
+                ]
+            }
+        )
+
+
+def test_openai_tool_call_response_with_invalid_schema_arguments_raises() -> None:
+    with pytest.raises(ValidationError):
+        MajorSelectionParser._result_from_chat_completions_response(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "tool_calls": [
+                                {
+                                    "function": {
+                                        "arguments": json.dumps(
+                                            {
+                                                "selected_courses": [
+                                                    {"section": "001"}
+                                                ],
+                                                "ambiguous_texts": [],
+                                            },
+                                            ensure_ascii=False,
+                                        )
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        )
+
+
+@pytest.mark.integration
+def test_real_llm_major_selection_accuracy_cases_are_opt_in() -> None:
+    if os.getenv("RUN_MAJOR_SELECTION_INTEGRATION") != "1":
+        pytest.skip("set RUN_MAJOR_SELECTION_INTEGRATION=1 to call the real LLM")
+    load_proxy_env()
+    if not has_proxy_token(os.getenv("PROXY_TOKEN")):
+        pytest.skip("PROXY_TOKEN is not configured")
+
+    cases = [
+        "자료구조 001분반과 컴퓨터구조 003분반",
+        "자료구조를 들을 거야",
+        "자료구조는 안 듣고 컴퓨터구조 003분반만",
+        "자료구조 001분반 대신 003분반으로 할게",
+        "자료구조나 알고리즘 중 하나 들을 예정",
+        "자료구조 001분반은 고민 중이고 컴퓨터구조는 들을 거야",
+        "김교수님 자료구조를 들을 거야",
+        "자료구조, 컴퓨터구조 003분반",
+    ]
+
+    for prompt in cases:
+        result = parse_major_selection(prompt)
+        assert result.selected_courses or result.ambiguous_texts, prompt
