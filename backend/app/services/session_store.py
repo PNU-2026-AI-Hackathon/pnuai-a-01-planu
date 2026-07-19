@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
+from enum import Enum
 from threading import RLock
 from typing import Any, Callable, Iterable
 from uuid import uuid4
@@ -23,6 +24,12 @@ class SessionNotFoundError(KeyError):
         self.session_id = session_id
 
 
+class SessionStage(str, Enum):
+    CATALOG_PARSED = "catalog_parsed"
+    MAJOR_PREVIEW_CREATED = "major_preview_created"
+    MAJOR_CONFIRMED = "major_confirmed"
+
+
 @dataclass(slots=True)
 class SessionData:
     session_id: str
@@ -30,6 +37,9 @@ class SessionData:
     major_candidates: list[Course] = field(default_factory=list)
     elective_candidates: list[Course] = field(default_factory=list)
     fixed_courses: list[Course] = field(default_factory=list)
+    confirmed_major_credits: float = 0
+    session_stage: SessionStage = SessionStage.CATALOG_PARSED
+    confirmed_major_preview_id: str | None = None
     latest_major_preview: dict[str, Any] | None = None
     created_at: datetime = field(default_factory=_utcnow)
     updated_at: datetime = field(default_factory=_utcnow)
@@ -43,6 +53,8 @@ class SessionData:
         self.major_candidates = list(self.major_candidates)
         self.elective_candidates = list(self.elective_candidates)
         self.fixed_courses = list(self.fixed_courses)
+        if not isinstance(self.session_stage, SessionStage):
+            self.session_stage = SessionStage(self.session_stage)
         if self.latest_major_preview is not None:
             self.latest_major_preview = dict(self.latest_major_preview)
 
@@ -114,6 +126,9 @@ class SessionStore:
         major_candidates: Iterable[Course] | None = None,
         elective_candidates: Iterable[Course] | None = None,
         fixed_courses: Iterable[Course] | None = None,
+        confirmed_major_credits: float | None = None,
+        session_stage: SessionStage | str | None = None,
+        confirmed_major_preview_id: str | None = None,
         latest_major_preview: dict[str, Any] | None = None,
     ) -> SessionData:
         with self._lock:
@@ -130,6 +145,16 @@ class SessionStore:
                 data.elective_candidates = list(elective_candidates)
             if fixed_courses is not None:
                 data.fixed_courses = list(fixed_courses)
+            if confirmed_major_credits is not None:
+                data.confirmed_major_credits = confirmed_major_credits
+            if session_stage is not None:
+                data.session_stage = (
+                    session_stage
+                    if isinstance(session_stage, SessionStage)
+                    else SessionStage(session_stage)
+                )
+            if confirmed_major_preview_id is not None:
+                data.confirmed_major_preview_id = confirmed_major_preview_id
             if latest_major_preview is not None:
                 data.latest_major_preview = dict(latest_major_preview)
             data.updated_at = self._clock()
@@ -169,6 +194,7 @@ class SessionStore:
             major_candidates=list(data.major_candidates),
             elective_candidates=list(data.elective_candidates),
             fixed_courses=list(data.fixed_courses),
+            session_stage=data.session_stage,
             latest_major_preview=(
                 dict(data.latest_major_preview)
                 if data.latest_major_preview is not None
