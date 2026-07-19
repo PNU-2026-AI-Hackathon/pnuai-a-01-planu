@@ -18,6 +18,7 @@ from ..models.major_selection import (
 
 
 _SECTION_SUFFIX_RE = re.compile(r"\s*분반\s*$")
+INVALID_ZERO_SECTION_REASON = "000분반은 유효한 분반이 아닙니다."
 
 
 def normalize_course_name(value: str) -> str:
@@ -70,6 +71,15 @@ class MajorCourseMatcher:
         for reference in parse_result.selected_courses:
             candidates = list(self._by_name.get(normalize_course_name(reference.course_name), []))
             section = normalize_section(reference.section)
+
+            if section == "0":
+                unmatched.append(
+                    UnmatchedMajorCourse(
+                        reference=reference,
+                        reason=INVALID_ZERO_SECTION_REASON,
+                    )
+                )
+                continue
 
             if not candidates:
                 unmatched.append(
