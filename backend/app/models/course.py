@@ -70,6 +70,8 @@ class Day(str, Enum):
     WED = "WED"
     THU = "THU"
     FRI = "FRI"
+    SAT = "SAT"
+    SUN = "SUN"
 
     @property
     def order(self) -> int:

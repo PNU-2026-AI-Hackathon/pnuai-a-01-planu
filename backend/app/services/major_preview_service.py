@@ -10,7 +10,7 @@ from typing import Protocol
 from uuid import uuid4
 
 from ..core.errors import AppError
-from ..models.course import ClassTime, Course
+from ..models.course import ClassTime, Course, Day
 from ..models.major_selection import MajorSelectionParseResult
 from ..schemas.major_schema import (
     AmbiguousMajorPreviewCourse,
@@ -34,14 +34,14 @@ from .session_store import SessionNotFoundError, SessionStore, session_store
 from .timetable_validator import TimetableValidator
 
 
-DAY_ORDER = {
-    "MON": 0,
-    "TUE": 1,
-    "WED": 2,
-    "THU": 3,
-    "FRI": 4,
-    "SAT": 5,
-    "SUN": 6,
+DAY_ORDER: dict[Day, int] = {
+    Day.MON: 0,
+    Day.TUE: 1,
+    Day.WED: 2,
+    Day.THU: 3,
+    Day.FRI: 4,
+    Day.SAT: 5,
+    Day.SUN: 6,
 }
 
 
@@ -226,7 +226,7 @@ def _timetable_entries(courses: list[Course]) -> list[MajorPreviewTimetableEntry
     ]
     entries.sort(
         key=lambda item: (
-            DAY_ORDER[item.day.value],
+            DAY_ORDER[item.day],
             item.start,
             item.end,
             item.course_name,
