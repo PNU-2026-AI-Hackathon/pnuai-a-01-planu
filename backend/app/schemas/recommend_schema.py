@@ -5,7 +5,7 @@ from __future__ import annotations
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..models.course_load import CourseLoadTarget
-from ..models.preference import PreferenceRules
+from ..models.preference import PreferenceRules, PreferenceWarning, UnsupportedCondition
 from ..models.timetable import RankingResult, TimetableGenerationResult
 
 
@@ -58,6 +58,7 @@ class TimetableGenerationRequest(BaseModel):
     target_total_credits: float | None = Field(default=None, gt=0)
     additional_elective_count: int | None = Field(default=None, ge=0)
     hard_conditions: PreferenceRules = Field(default_factory=PreferenceRules)
+    preference_prompt: str = Field(default="", max_length=2000)
     max_candidates: int | None = Field(default=None, gt=0)
 
     def course_load_target(self) -> CourseLoadTarget:
@@ -74,3 +75,8 @@ class TimetableGenerationRequest(BaseModel):
 
 class TimetableGenerationResponse(TimetableGenerationResult):
     """Response returned by ``POST /recommend/generate``."""
+
+    hard_conditions: PreferenceRules = Field(default_factory=PreferenceRules)
+    soft_conditions: PreferenceRules = Field(default_factory=PreferenceRules)
+    unsupported_conditions: list[UnsupportedCondition] = Field(default_factory=list)
+    warnings: list[PreferenceWarning] = Field(default_factory=list)

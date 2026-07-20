@@ -131,6 +131,33 @@ def test_hard_soft_duplicate_target_keeps_hard_only() -> None:
     assert any(warning.code == "HARD_SOFT_DUPLICATE_REMOVED" for warning in result.warnings)
 
 
+def test_hard_soft_duplicate_course_keeps_hard_only() -> None:
+    result = parse_general_preferences(
+        "대학영어는 꼭 듣고 가능하면 대학영어도 우선해줘.",
+        llm=FakeStructuredLLM(
+            {
+                "hard_conditions": {"required_course_names": ["대학영어"]},
+                "soft_conditions": {"preferred_course_names": ["대학영어"]},
+            }
+        ),
+    )
+
+    assert result.hard_conditions.required_course_names == ["대학영어"]
+    assert result.soft_conditions.preferred_course_names == []
+    assert any(warning.code == "HARD_SOFT_DUPLICATE_REMOVED" for warning in result.warnings)
+
+
+def test_excluded_professors_are_supported_hard_conditions() -> None:
+    result = parse_general_preferences(
+        "김교수 수업은 절대 넣지 마.",
+        llm=FakeStructuredLLM(
+            {"hard_conditions": {"excluded_professors": ["김교수"]}}
+        ),
+    )
+
+    assert result.hard_conditions.excluded_professors == ["김교수"]
+
+
 def test_conflicting_course_conditions_raise_standard_error() -> None:
     with pytest.raises(AppError) as exc_info:
         parse_general_preferences(
@@ -165,7 +192,7 @@ def test_blank_prompt_does_not_call_llm() -> None:
 
     result = parse_general_preferences("   ", llm=llm)
 
-    assert result == GeneralPreferenceParser(llm=llm).parse_sync("")
+    assert result == GeneralPreferenceParser(llm=llm).parse("")
     assert llm.calls == 0
 
 
@@ -179,11 +206,24 @@ def test_unknown_structured_field_is_rejected() -> None:
     assert exc_info.value.code == "INVALID_PREFERENCE_OUTPUT"
 
 
+def test_wrong_scope_field_is_rejected_by_structured_schema() -> None:
+    with pytest.raises(AppError) as exc_info:
+        parse_general_preferences(
+            "금요일은 가능하면 쉬고 싶어.",
+            llm=FakeStructuredLLM(
+                {"hard_conditions": {"preferred_free_days": ["FRI"]}}
+            ),
+        )
+
+    assert exc_info.value.code == "INVALID_PREFERENCE_OUTPUT"
+
+
 def test_supported_fields_match_generator_and_ranker_boundaries() -> None:
     fields = supported_general_preference_fields()
 
     assert "earliest_start_time" in fields["hard_conditions"]
     assert "excluded_time_ranges" in fields["hard_conditions"]
+    assert "excluded_professors" in fields["hard_conditions"]
     assert "preferred_free_days" in fields["soft_conditions"]
     assert "compact_schedule" in fields["soft_conditions"]
     assert "selected_template" not in fields["soft_conditions"]

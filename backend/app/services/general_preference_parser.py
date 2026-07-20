@@ -6,19 +6,23 @@ import json
 import os
 from typing import Any
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from ..core.errors import AppError
 from ..models.course import Day, time_to_minutes
 from ..models.preference import (
     GeneralPreferenceLLMOutput,
     GeneralPreferenceParseResult,
+    HardPreferenceConditions,
     PreferenceRules,
     PreferenceWarning,
+    SoftPreferenceConditions,
     UnsupportedCondition,
 )
 from .llm_preference_parser import (
+    DEFAULT_CHAT_PROXY_URL,
     DEFAULT_OPENAI_MODEL,
+    has_proxy_token,
     load_proxy_env,
 )
 
@@ -58,6 +62,7 @@ HARD_FIELDS = {
     "earliest_start_time",
     "latest_end_time",
     "excluded_time_ranges",
+    "excluded_professors",
     "required_course_names",
     "excluded_course_names",
     "max_consecutive_classes",
@@ -84,15 +89,15 @@ class GeneralPreferenceParser:
         *,
         llm: Any | None = None,
         model_name: str | None = None,
+        base_url: str | None = None,
     ) -> None:
         load_proxy_env()
         self.llm = llm
         self.model_name = model_name or os.getenv("OPENAI_MODEL", DEFAULT_OPENAI_MODEL)
+        self.base_url = base_url or os.getenv("CHAT_PROXY_URL", DEFAULT_CHAT_PROXY_URL)
+        self.proxy_token = os.getenv("PROXY_TOKEN")
 
-    async def parse(self, prompt: str) -> GeneralPreferenceParseResult:
-        return self.parse_sync(prompt)
-
-    def parse_sync(self, prompt: str) -> GeneralPreferenceParseResult:
+    def parse(self, prompt: str) -> GeneralPreferenceParseResult:
         text = prompt.strip()
         if len(text) > MAX_PROMPT_LENGTH:
             raise AppError(
@@ -117,20 +122,15 @@ class GeneralPreferenceParser:
         return self._validate_and_normalize(parsed, raw_output=raw_output)
 
     def _invoke_llm(self, prompt: str) -> Any:
-        if self.llm is None:
-            raise AppError(
-                "PREFERENCE_PARSE_FAILED",
-                "교양 선호 파서 LLM 설정이 없습니다.",
-                hint="llm 또는 기본 LLM 설정을 주입해 주세요.",
-            )
         try:
-            if hasattr(self.llm, "with_structured_output"):
-                structured_llm = self.llm.with_structured_output(
+            llm = self.llm or self._build_default_llm()
+            if hasattr(llm, "with_structured_output"):
+                structured_llm = llm.with_structured_output(
                     GeneralPreferenceLLMOutput
                 )
                 return structured_llm.invoke(self._messages(prompt))
-            if callable(self.llm):
-                return self.llm(
+            if callable(llm):
+                return llm(
                     {
                         "system": GENERAL_PREFERENCE_SYSTEM_PROMPT,
                         "prompt": prompt,
@@ -152,6 +152,27 @@ class GeneralPreferenceParser:
         raise AppError(
             "PREFERENCE_PARSE_FAILED",
             "교양 선호 파서 LLM을 호출할 수 없습니다.",
+        )
+
+    def _build_default_llm(self) -> Any:
+        if not has_proxy_token(self.proxy_token):
+            raise AppError(
+                "PREFERENCE_PARSE_FAILED",
+                "교양 선호 파서 LLM 설정이 없습니다.",
+                hint="PROXY_TOKEN을 설정하거나 테스트에서 llm을 주입해 주세요.",
+            )
+        try:
+            from langchain_openai import ChatOpenAI
+        except ImportError as exc:
+            raise AppError(
+                "PREFERENCE_PARSE_FAILED",
+                "교양 선호 파서 LLM 클라이언트를 사용할 수 없습니다.",
+            ) from exc
+        return ChatOpenAI(
+            model=self.model_name,
+            api_key=self.proxy_token,
+            base_url=self.base_url,
+            temperature=0,
         )
 
     @staticmethod
@@ -198,8 +219,8 @@ class GeneralPreferenceParser:
     ) -> GeneralPreferenceParseResult:
         warnings = list(parsed.warnings)
         unsupported = list(parsed.unsupported_conditions)
-        hard_dump = self._scoped_dump(parsed.hard_conditions, HARD_FIELDS, warnings, "hard")
-        soft_dump = self._scoped_dump(parsed.soft_conditions, SOFT_FIELDS, warnings, "soft")
+        hard_dump = self._scoped_dump(parsed.hard_conditions)
+        soft_dump = self._scoped_dump(parsed.soft_conditions)
 
         hard_dump, soft_dump = self._drop_hard_soft_duplicates(
             hard_dump,
@@ -210,8 +231,8 @@ class GeneralPreferenceParser:
         self._detect_course_conflicts(hard_dump, soft_dump, warnings)
 
         try:
-            hard = PreferenceRules.model_validate(hard_dump)
-            soft = PreferenceRules.model_validate(soft_dump)
+            hard = HardPreferenceConditions.model_validate(hard_dump).to_preference_rules()
+            soft = SoftPreferenceConditions.model_validate(soft_dump).to_preference_rules()
         except ValidationError as exc:
             raise self._validation_error(exc) from exc
 
@@ -226,25 +247,9 @@ class GeneralPreferenceParser:
 
     @staticmethod
     def _scoped_dump(
-        rules: PreferenceRules,
-        allowed_fields: set[str],
-        warnings: list[PreferenceWarning],
-        scope: str,
+        rules: BaseModel,
     ) -> dict[str, Any]:
-        dumped = rules.model_dump(mode="json", exclude_unset=True)
-        filtered: dict[str, Any] = {}
-        dropped = sorted(field for field, value in dumped.items() if value and field not in allowed_fields)
-        for field_name, value in dumped.items():
-            if field_name in allowed_fields:
-                filtered[field_name] = value
-        if dropped:
-            warnings.append(
-                PreferenceWarning(
-                    code="UNSUPPORTED_FIELD_SCOPE",
-                    message=f"{scope} 조건에서 지원하지 않는 필드를 제거했습니다: {', '.join(dropped)}.",
-                )
-            )
-        return filtered
+        return rules.model_dump(mode="json", exclude_unset=True)
 
     @staticmethod
     def _drop_hard_soft_duplicates(
@@ -378,10 +383,15 @@ def parse_general_preferences(
     *,
     llm: Any | None = None,
     model_name: str | None = None,
+    base_url: str | None = None,
 ) -> GeneralPreferenceParseResult:
     """Functional API for parsing general-education preference prompts."""
 
-    return GeneralPreferenceParser(llm=llm, model_name=model_name).parse_sync(prompt)
+    return GeneralPreferenceParser(
+        llm=llm,
+        model_name=model_name,
+        base_url=base_url,
+    ).parse(prompt)
 
 
 def supported_general_preference_fields() -> dict[str, list[str]]:

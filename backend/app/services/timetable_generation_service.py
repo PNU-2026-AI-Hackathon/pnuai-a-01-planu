@@ -4,8 +4,12 @@ from __future__ import annotations
 
 from ..core.errors import AppError
 from ..models.course_load import CourseLoadTarget
-from ..models.preference import PreferenceRules
+from ..models.preference import (
+    GeneralPreferenceParseResult,
+    PreferenceRules,
+)
 from ..models.timetable import TimetableGenerationResult
+from .general_preference_parser import GeneralPreferenceParser
 from .session_store import (
     SessionNotFoundError,
     SessionStage,
@@ -25,10 +29,12 @@ class TimetableGenerationService:
         store: SessionStore = session_store,
         generator: TimetableGenerator | None = None,
         validator: TimetableValidator | None = None,
+        preference_parser: GeneralPreferenceParser | None = None,
     ) -> None:
         self.store = store
         self.validator = validator or TimetableValidator()
         self.generator = generator or TimetableGenerator(validator=self.validator)
+        self.preference_parser = preference_parser or GeneralPreferenceParser()
 
     def generate_for_session(
         self,
@@ -36,6 +42,7 @@ class TimetableGenerationService:
         session_id: str,
         course_load_target: CourseLoadTarget | None = None,
         hard_conditions: PreferenceRules | None = None,
+        preference_prompt: str = "",
         max_candidates: int | None = None,
     ) -> TimetableGenerationResult:
         session_id = session_id.strip()
@@ -74,20 +81,64 @@ class TimetableGenerationService:
             )
 
         target = course_load_target or CourseLoadTarget.mvp_default_policy()
+        parse_result = self._parse_prompt(preference_prompt)
+        effective_hard_conditions = self._merge_rules(
+            hard_conditions,
+            parse_result.hard_conditions,
+        )
+        ranking_preferences = self._merge_rules(
+            effective_hard_conditions,
+            parse_result.soft_conditions,
+        )
         result = self.generator.generate_detailed(
             fixed_major_courses=data.fixed_courses,
             required_general_candidates=data.general_required_candidates,
             elective_general_candidates=data.general_elective_candidates,
             course_load_target=target,
-            hard_conditions=hard_conditions,
+            hard_conditions=effective_hard_conditions,
             max_candidates=max_candidates,
+        )
+        result = result.model_copy(
+            update={
+                "hard_conditions": effective_hard_conditions,
+                "soft_conditions": parse_result.soft_conditions,
+                "unsupported_conditions": parse_result.unsupported_conditions,
+                "warnings": parse_result.warnings,
+            }
         )
         self.store.update_timetable_generation(
             session_id,
             candidates=result.candidates,
             diagnostics=result.diagnostics,
             course_load_target=target,
-            hard_conditions=hard_conditions,
+            hard_conditions=effective_hard_conditions,
+            ranking_preferences=ranking_preferences,
+            unsupported_conditions=parse_result.unsupported_conditions,
+            warnings=parse_result.warnings,
             truncated=result.truncated,
         )
         return result
+
+    def _parse_prompt(self, prompt: str) -> GeneralPreferenceParseResult:
+        if not prompt.strip():
+            return GeneralPreferenceParseResult()
+        return self.preference_parser.parse(prompt)
+
+    @staticmethod
+    def _merge_rules(
+        base: PreferenceRules | None,
+        addition: PreferenceRules | None,
+    ) -> PreferenceRules:
+        merged = (base or PreferenceRules()).model_dump(mode="json")
+        extra = addition or PreferenceRules()
+        extra_dump = extra.model_dump(mode="json")
+        for field_name, value in extra_dump.items():
+            if isinstance(value, list):
+                merged[field_name] = list(dict.fromkeys([*merged.get(field_name, []), *value]))
+                continue
+            if isinstance(value, bool):
+                merged[field_name] = bool(merged.get(field_name)) or value
+                continue
+            if merged.get(field_name) in (None, "") and value not in (None, ""):
+                merged[field_name] = value
+        return PreferenceRules.model_validate(merged)
