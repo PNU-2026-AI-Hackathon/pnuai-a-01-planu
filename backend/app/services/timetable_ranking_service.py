@@ -66,7 +66,7 @@ class TimetableRankingService:
         definition = self.template_service.get_definition(ranking_template)
         candidates = list(session.generated_candidates)
         diagnostics = []
-        deduped_candidates = self.ranker._dedupe_candidates(candidates)
+        deduped_candidates = self.ranker.dedupe_candidates(candidates)
         duplicate_count = len(candidates) - len(deduped_candidates)
         if duplicate_count:
             diagnostics.append(
@@ -94,7 +94,7 @@ class TimetableRankingService:
         if ranking_limit <= 0:
             raise ValueError("top_n must be positive")
 
-        context = self.ranker._build_context(ranking_template, session.ranking_preferences)
+        context = self.ranker.build_context(ranking_template, session.ranking_preferences)
         ranked = self.ranker.rank_filtered_candidates(
             hard_filtered,
             preferences=session.ranking_preferences,

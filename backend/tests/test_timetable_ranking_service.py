@@ -10,6 +10,7 @@ from backend.app.models import (
     Course,
     CourseLoadSatisfaction,
     Day,
+    PreferenceRules,
     RankingTemplate,
     Timetable,
 )
@@ -237,6 +238,72 @@ def test_same_ranker_instance_does_not_share_template_state() -> None:
     assert no_morning.raw_score < balanced.raw_score
 
 
+def test_balanced_template_averages_daily_first_start_score() -> None:
+    two_late_days = _timetable(
+        "TWO",
+        [(Day.MON, "11:00", "12:00"), (Day.TUE, "11:00", "12:00")],
+    )
+    five_late_days = _timetable(
+        "FIVE",
+        [
+            (Day.MON, "11:00", "12:00"),
+            (Day.TUE, "11:00", "12:00"),
+            (Day.WED, "11:00", "12:00"),
+            (Day.THU, "11:00", "12:00"),
+            (Day.FRI, "11:00", "12:00"),
+        ],
+    )
+
+    ranked = rank_timetables(
+        [two_late_days, five_late_days],
+        template=RankingTemplate.BALANCED,
+        top_n=2,
+    )
+    daily_components = {
+        item.timetable.courses[0].course_id.split("-")[0]: [
+            component
+            for component in item.score_components
+            if component.key == "daily_first_start"
+        ][0]
+        for item in ranked
+    }
+
+    assert daily_components["TWO"].value == daily_components["FIVE"].value
+
+
+def test_no_morning_template_sums_daily_first_start_score() -> None:
+    two_late_days = _timetable(
+        "TWO",
+        [(Day.MON, "11:00", "12:00"), (Day.TUE, "11:00", "12:00")],
+    )
+    five_late_days = _timetable(
+        "FIVE",
+        [
+            (Day.MON, "11:00", "12:00"),
+            (Day.TUE, "11:00", "12:00"),
+            (Day.WED, "11:00", "12:00"),
+            (Day.THU, "11:00", "12:00"),
+            (Day.FRI, "11:00", "12:00"),
+        ],
+    )
+
+    ranked = rank_timetables(
+        [two_late_days, five_late_days],
+        template=RankingTemplate.NO_MORNING_PRIORITY,
+        top_n=2,
+    )
+    daily_components = {
+        item.timetable.courses[0].course_id.split("-")[0]: [
+            component
+            for component in item.score_components
+            if component.key == "daily_first_start"
+        ][0]
+        for item in ranked
+    }
+
+    assert daily_components["FIVE"].value > daily_components["TWO"].value
+
+
 def test_compact_schedule_prefers_shorter_idle_time_with_same_attendance_days() -> None:
     short_idle = _timetable(
         "SHORT",
@@ -288,13 +355,58 @@ def test_compact_schedule_does_not_reward_only_single_class_days_as_best() -> No
     assert "수업이 2개 이상인 날" in spread_component.reason
 
 
+def test_movement_checker_receives_course_and_class_time_context() -> None:
+    candidate = _timetable(
+        "MOVE",
+        [(Day.MON, "09:00", "10:00"), (Day.MON, "10:00", "11:00")],
+    )
+    calls: list[tuple[Course, ClassTime, Course, ClassTime]] = []
+
+    def checker(
+        previous_course: Course,
+        previous_meeting: ClassTime,
+        following_course: Course,
+        following_meeting: ClassTime,
+    ) -> bool:
+        calls.append(
+            (
+                previous_course,
+                previous_meeting,
+                following_course,
+                following_meeting,
+            )
+        )
+        return True
+
+    TimetableRanker(movement_checker=checker).rank(
+        [candidate],
+        template=RankingTemplate.COMPACT_SCHEDULE,
+    )
+
+    assert len(calls) == 1
+    previous_course, previous_meeting, following_course, following_meeting = calls[0]
+    assert previous_course.course_id == "MOVE-1"
+    assert previous_meeting.day is Day.MON
+    assert previous_meeting.end == "10:00"
+    assert following_course.course_id == "MOVE-2"
+    assert following_meeting.start == "10:00"
+
+
 def test_movement_checker_can_exempt_movable_consecutive_classes() -> None:
     candidate = _timetable(
         "MOVE",
         [(Day.MON, "09:00", "10:00"), (Day.MON, "10:00", "11:00")],
     )
 
-    movable = TimetableRanker(movement_checker=lambda _previous, _following: True).rank(
+    def movable_checker(
+        _previous_course: Course,
+        _previous_meeting: ClassTime,
+        _following_course: Course,
+        _following_meeting: ClassTime,
+    ) -> bool:
+        return True
+
+    movable = TimetableRanker(movement_checker=movable_checker).rank(
         [candidate],
         template=RankingTemplate.COMPACT_SCHEDULE,
     )[0]
@@ -315,6 +427,61 @@ def test_movement_checker_can_exempt_movable_consecutive_classes() -> None:
     ][0]
 
     assert movable_component.value > unknown_component.value
+    assert movable_component.value == 0
+    assert "모두 이동 가능한 구간" in movable_component.reason
+    assert "연강 없음" not in movable_component.reason
+
+
+def test_difficult_consecutive_classes_are_penalized_by_difficult_count() -> None:
+    candidate = _timetable(
+        "MOVE",
+        [
+            (Day.MON, "09:00", "10:00"),
+            (Day.MON, "10:00", "11:00"),
+            (Day.MON, "11:00", "12:00"),
+        ],
+    )
+
+    def mixed_checker(
+        previous_course: Course,
+        _previous_meeting: ClassTime,
+        _following_course: Course,
+        _following_meeting: ClassTime,
+    ) -> bool:
+        return previous_course.course_id == "MOVE-1"
+
+    ranked = TimetableRanker(movement_checker=mixed_checker).rank(
+        [candidate],
+        template=RankingTemplate.COMPACT_SCHEDULE,
+    )[0]
+    component = [
+        item
+        for item in ranked.score_components
+        if item.key == "consecutive_classes"
+    ][0]
+
+    assert component.value == -4
+    assert "연강 2개 중 1개" in component.reason
+
+
+def test_missing_movement_checker_uses_existing_consecutive_fallback() -> None:
+    candidate = _timetable(
+        "MOVE",
+        [(Day.MON, "09:00", "10:00"), (Day.MON, "10:00", "11:00")],
+    )
+
+    ranked = TimetableRanker().rank(
+        [candidate],
+        template=RankingTemplate.COMPACT_SCHEDULE,
+    )[0]
+    component = [
+        item
+        for item in ranked.score_components
+        if item.key == "consecutive_classes"
+    ][0]
+
+    assert component.value == -4
+    assert "이동이 어려운 구간" in component.reason
 
 
 def test_course_load_satisfaction_sorts_before_raw_score() -> None:
@@ -372,6 +539,32 @@ def test_ranking_service_removes_duplicates_and_saves_result() -> None:
     )
     assert saved.session_stage is SessionStage.RANKING_COMPLETED
     assert saved.latest_ranking_result == result
+
+
+def test_ranking_service_hard_filter_diagnostic_matches_ranked_count() -> None:
+    store = SessionStore()
+    session = store.create("정보컴퓨터공학부")
+    valid = Timetable(courses=[_course("GEN-A", day=Day.MON)])
+    hard_violation = Timetable(courses=[_course("GEN-B", day=Day.FRI)])
+    store.update_generated_candidates(
+        session.session_id,
+        candidates=[valid, hard_violation],
+        preferences=PreferenceRules(excluded_days=[Day.FRI]),
+    )
+
+    result = TimetableRankingService(store).rank_for_session(
+        session_id=session.session_id,
+        template=RankingTemplate.BALANCED,
+    )
+    diagnostic = [
+        item
+        for item in result.diagnostics
+        if item.code == "HARD_CONDITION_CANDIDATE_DETECTED"
+    ][0]
+
+    assert diagnostic.details["removed_count"] == 1
+    assert len(result.ranked_candidates) == 1
+    assert result.ranked_candidates[0].timetable.courses[0].course_id == "GEN-A"
 
 
 def test_ranking_service_requires_generated_candidate_stage() -> None:

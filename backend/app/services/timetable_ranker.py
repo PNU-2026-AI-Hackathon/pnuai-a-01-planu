@@ -29,7 +29,7 @@ TEMPLATE_WEIGHT_PROFILES: dict[PreferenceTemplate, RankingWeights] = (
     LEGACY_TEMPLATE_WEIGHT_PROFILES
 )
 
-MovementChecker = Callable[[Course, Course], bool]
+MovementChecker = Callable[[Course, ClassTime, Course, ClassTime], bool]
 
 
 @dataclass(frozen=True)
@@ -37,6 +37,13 @@ class RankingContext:
     template: RankingTemplate
     weights: RankingWeights
     explicit_template: bool
+
+
+@dataclass(frozen=True)
+class ConsecutiveClassSummary:
+    total_count: int
+    movable_count: int
+    difficult_count: int
 
 
 def weights_for_template(
@@ -87,8 +94,8 @@ class TimetableRanker:
         if limit <= 0:
             raise ValueError("top_n must be positive")
 
-        context = self._build_context(template, rules)
-        deduped = self._dedupe_candidates(candidates)
+        context = self.build_context(template, rules)
+        deduped = self.dedupe_candidates(candidates)
         hard_filtered = self.apply_hard_filters(deduped, preferences=rules)
         return self.rank_filtered_candidates(
             hard_filtered,
@@ -133,7 +140,7 @@ class TimetableRanker:
             for index, result in enumerate(scored[:top_n], start=1)
         ]
 
-    def _build_context(
+    def build_context(
         self,
         template: RankingTemplate | PreferenceTemplate | str | None,
         preferences: PreferenceRules,
@@ -148,6 +155,13 @@ class TimetableRanker:
             weights=weights,
             explicit_template=template is not None,
         )
+
+    def _build_context(
+        self,
+        template: RankingTemplate | PreferenceTemplate | str | None,
+        preferences: PreferenceRules,
+    ) -> RankingContext:
+        return self.build_context(template, preferences)
 
     def apply_hard_filters(
         self,
@@ -518,19 +532,34 @@ class TimetableRanker:
         candidate: TimetableCandidate,
         context: RankingContext,
     ) -> ScoreComponent:
-        consecutive_count = self._consecutive_class_count(candidate.courses)
-        if consecutive_count == 0:
+        summary = self._consecutive_class_summary(candidate.courses)
+        if summary.total_count == 0:
             return ScoreComponent(
                 key="consecutive_classes",
                 label="연강 없음",
                 value=context.weights.no_consecutive_classes,
                 reason="연강이 없습니다.",
             )
+        if summary.difficult_count == 0:
+            return ScoreComponent(
+                key="consecutive_classes",
+                label=f"이동 어려운 연강 0개 / 전체 {summary.total_count}개",
+                value=0,
+                reason=(
+                    f"연강 {summary.total_count}개가 있으며 모두 이동 가능한 구간입니다."
+                ),
+            )
         return ScoreComponent(
             key="consecutive_classes",
-            label=f"연강 구간 {consecutive_count}개",
-            value=context.weights.consecutive_class * consecutive_count,
-            reason=f"연강 구간이 {consecutive_count}개 있습니다.",
+            label=(
+                f"이동 어려운 연강 {summary.difficult_count}개 / "
+                f"전체 {summary.total_count}개"
+            ),
+            value=context.weights.consecutive_class * summary.difficult_count,
+            reason=(
+                f"연강 {summary.total_count}개 중 {summary.difficult_count}개는 "
+                "이동이 어려운 구간입니다."
+            ),
         )
 
     def _compact_schedule_component(
@@ -575,7 +604,16 @@ class TimetableRanker:
         context: RankingContext,
     ) -> ScoreComponent:
         first_starts = self._daily_first_start_minutes(candidate.courses)
-        value = sum(self._late_start_value(start, context) for start in first_starts)
+        daily_values = [
+            self._late_start_value(start, context)
+            for start in first_starts
+        ]
+        if not daily_values:
+            value = 0
+        elif context.template is RankingTemplate.NO_MORNING_PRIORITY:
+            value = sum(daily_values)
+        else:
+            value = sum(daily_values) / len(daily_values)
         late_days = sum(1 for start in first_starts if start >= time_to_minutes("10:00"))
         very_late_days = sum(1 for start in first_starts if start >= time_to_minutes("11:00"))
         early_days = sum(1 for start in first_starts if start < time_to_minutes("09:00"))
@@ -617,7 +655,15 @@ class TimetableRanker:
         return set(Day) - occupied
 
     def _consecutive_class_count(self, courses: Iterable[Course]) -> int:
-        count = 0
+        return self._consecutive_class_summary(courses).difficult_count
+
+    def _consecutive_class_summary(
+        self,
+        courses: Iterable[Course],
+    ) -> ConsecutiveClassSummary:
+        total_count = 0
+        movable_count = 0
+        difficult_count = 0
         for meetings in self._course_meetings_by_day(courses).values():
             for (previous, previous_course), (following, following_course) in zip(
                 meetings,
@@ -625,12 +671,24 @@ class TimetableRanker:
             ):
                 if following.start_minutes != previous.end_minutes:
                     continue
+                total_count += 1
                 if self.movement_checker is not None:
-                    if not self.movement_checker(previous_course, following_course):
-                        count += 1
+                    if self.movement_checker(
+                        previous_course,
+                        previous,
+                        following_course,
+                        following,
+                    ):
+                        movable_count += 1
+                    else:
+                        difficult_count += 1
                     continue
-                count += 1
-        return count
+                difficult_count += 1
+        return ConsecutiveClassSummary(
+            total_count=total_count,
+            movable_count=movable_count,
+            difficult_count=difficult_count,
+        )
 
     def _longest_consecutive_chain(self, courses: Iterable[Course]) -> int:
         longest = 1
@@ -765,7 +823,7 @@ class TimetableRanker:
         return tuple(sorted((course.course_id, course.division) for course in candidate.courses))
 
     @classmethod
-    def _dedupe_candidates(
+    def dedupe_candidates(
         cls,
         candidates: Iterable[TimetableCandidate],
     ) -> list[TimetableCandidate]:
@@ -778,6 +836,13 @@ class TimetableRanker:
             deduped.append(candidate)
             seen.add(key)
         return deduped
+
+    @classmethod
+    def _dedupe_candidates(
+        cls,
+        candidates: Iterable[TimetableCandidate],
+    ) -> list[TimetableCandidate]:
+        return cls.dedupe_candidates(candidates)
 
     @staticmethod
     def _minutes_to_clock(value: int) -> str:
