@@ -141,3 +141,22 @@ def test_major_catalog_upload_api_returns_standard_error_for_missing_file() -> N
 
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "MAJOR_CATALOG_REQUIRED"
+
+
+def test_major_catalog_upload_api_requires_department() -> None:
+    client = TestClient(app)
+
+    missing = client.post(
+        "/catalog/major",
+        files={"major_catalog": ("major.xlsx", b"placeholder")},
+    )
+    blank = client.post(
+        "/catalog/major",
+        data={"department": "   "},
+        files={"major_catalog": ("major.xlsx", b"placeholder")},
+    )
+
+    assert missing.status_code == 400
+    assert missing.json()["error"]["code"] == "DEPARTMENT_REQUIRED"
+    assert blank.status_code == 400
+    assert blank.json()["error"]["code"] == "DEPARTMENT_REQUIRED"

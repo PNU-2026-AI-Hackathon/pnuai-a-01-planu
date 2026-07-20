@@ -254,6 +254,73 @@ class SessionStore:
             data.updated_at = self._clock()
             return self._copy(data)
 
+    def reconfirm_major_preview(
+        self,
+        session_id: str,
+        *,
+        preview_id: str,
+        fixed_courses: Iterable[Course],
+        confirmed_major_credits: float,
+        confirmed_preview: dict[str, Any],
+    ) -> SessionData:
+        """Atomically replace the confirmed major selection and clear descendants."""
+
+        with self._lock:
+            data = self._get_live_locked(session_id, touch=False)
+
+            if (
+                data.confirmed_major_preview_id == preview_id
+                and data.fixed_courses
+                and data.session_stage is SessionStage.MAJOR_CONFIRMED
+                and (
+                    data.latest_major_preview is None
+                    or data.latest_major_preview.get("preview_id") == preview_id
+                )
+            ):
+                data.updated_at = self._clock()
+                return self._copy(data)
+
+            preview = data.latest_major_preview
+            if preview is None:
+                raise MajorPreviewNotFoundError("major preview not found")
+            if preview.get("session_id") not in (None, data.session_id):
+                raise InvalidPreviewSessionError("preview belongs to another session")
+            if preview.get("preview_id") != preview_id:
+                raise StaleMajorPreviewError("latest preview id does not match")
+
+            courses = list(fixed_courses)
+            preview_course_ids = list(preview.get("matched_course_ids") or [])
+            fixed_course_ids = [course.course_id for course in courses]
+            if preview_course_ids != fixed_course_ids:
+                raise MajorCourseReferenceMismatchError(
+                    "fixed courses do not match latest preview references"
+                )
+
+            data.fixed_courses = courses
+            data.confirmed_major_credits = confirmed_major_credits
+            data.confirmed_major_preview_id = preview_id
+            data.latest_major_preview = dict(confirmed_preview)
+            data.session_stage = SessionStage.MAJOR_CONFIRMED
+
+            data.general_required_candidates = []
+            data.general_elective_candidates = []
+            data.general_pool_diagnostics = []
+            data.general_pool_warnings = []
+            data.generated_candidates = []
+            data.generated_timetable_candidates = []
+            data.generation_diagnostics = []
+            data.generation_course_load_target = None
+            data.generation_hard_conditions = None
+            data.generation_truncated = False
+            data.generated_at = None
+            data.ranking_preferences = PreferenceRules()
+            data.latest_ranking_result = None
+            data.preference_unsupported_conditions = []
+            data.preference_warnings = []
+
+            data.updated_at = self._clock()
+            return self._copy(data)
+
     def update(
         self,
         session_id: str,

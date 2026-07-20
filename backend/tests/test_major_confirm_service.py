@@ -4,12 +4,30 @@ from __future__ import annotations
 
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 from threading import Barrier
 
 import pytest
 
 from backend.app.core.errors import AppError
-from backend.app.models import Category, ClassTime, Course, Day
+from backend.app.models import (
+    Category,
+    ClassTime,
+    Course,
+    CourseLoadSatisfaction,
+    CourseLoadTarget,
+    Day,
+    ExcludedCourseDiagnostic,
+    GenerationDiagnostic,
+    GeneralCoursePoolResult,
+    GeneralCoursePools,
+    PreferenceRules,
+    PreferenceWarning,
+    Timetable,
+    TimetableGenerationCandidate,
+    TimetableRankingResult,
+    UnsupportedCondition,
+)
 from backend.app.services.major_confirm_service import MajorConfirmService
 from backend.app.services.session_store import SessionStage, SessionStore
 
@@ -233,3 +251,221 @@ def test_concurrent_same_preview_confirm_keeps_session_consistent() -> None:
     assert saved.confirmed_major_preview_id == "preview-1"
     assert [course.course_id for course in saved.fixed_courses] == ["MA100-001"]
     assert saved.confirmed_major_credits == 3
+
+
+def _populate_downstream_results(store: SessionStore, session_id: str, course: Course) -> None:
+    timetable = Timetable(courses=[course])
+    store.update_general_course_pool(
+        session_id,
+        GeneralCoursePoolResult(
+            pools=GeneralCoursePools(
+                required_courses=[_course("REQ-001", "고전읽기", "001")],
+                elective_courses=[_course("ELE-001", "교양선택", "001")],
+            ),
+            excluded_courses=[
+                ExcludedCourseDiagnostic(
+                    course_name="제외과목",
+                    section="001",
+                    reason_code="OLD_EXCLUDED",
+                    reason="old excluded",
+                )
+            ],
+            warnings=["old warning"],
+        ),
+    )
+    store.update(
+        session_id,
+        generated_candidates=[timetable],
+        generated_timetable_candidates=[
+            TimetableGenerationCandidate(
+                timetable=timetable,
+                load_satisfaction=CourseLoadSatisfaction(final_total_credits=course.credit),
+            )
+        ],
+        generation_diagnostics=[
+            GenerationDiagnostic(reason_code="OLD", reason="old diagnostic")
+        ],
+        generation_course_load_target=CourseLoadTarget(target_total_credits=18),
+        generation_hard_conditions=PreferenceRules(excluded_days=[Day.FRI]),
+        generation_truncated=True,
+        generated_at=datetime.now(timezone.utc),
+        ranking_preferences=PreferenceRules(preferred_course_names=["고전읽기"]),
+        latest_ranking_result=TimetableRankingResult(total_candidate_count=1),
+        preference_unsupported_conditions=[
+            UnsupportedCondition(
+                source_text="old",
+                reason_code="OLD_UNSUPPORTED",
+                reason="old unsupported",
+            )
+        ],
+        preference_warnings=[
+            PreferenceWarning(code="OLD_WARNING", message="old warning")
+        ],
+    )
+
+
+def test_reconfirm_replaces_fixed_courses_and_clears_downstream_results() -> None:
+    first = _course("MA100-001", "자료구조", "001", credit=3)
+    second = _course(
+        "MA200-001",
+        "운영체제",
+        "001",
+        credit=2,
+        start="10:30",
+        end="11:45",
+    )
+    store = SessionStore()
+    session = store.create("컴퓨터공학과", major_candidates=[first, second])
+    _save_preview(store, session.session_id, preview_id="preview-1")
+    service = MajorConfirmService(store=store)
+    asyncio.run(service.confirm(session.session_id, "preview-1"))
+    _populate_downstream_results(store, session.session_id, first)
+    store.update(
+        session.session_id,
+        session_stage=SessionStage.MAJOR_PREVIEW_CREATED,
+        latest_major_preview={
+            "session_id": session.session_id,
+            "preview_id": "preview-2",
+            "matched_course_ids": ["MA200-001"],
+            "ambiguous_courses": [],
+            "unmatched_courses": [],
+            "ambiguous_texts": [],
+            "has_time_conflict": False,
+            "conflicts": [],
+        },
+    )
+
+    response = asyncio.run(service.reconfirm(session.session_id, "preview-2"))
+
+    saved = store.get(session.session_id)
+    assert [course.course_id for course in saved.fixed_courses] == ["MA200-001"]
+    assert saved.confirmed_major_credits == 2
+    assert saved.session_stage is SessionStage.MAJOR_CONFIRMED
+    assert saved.confirmed_major_preview_id == "preview-2"
+    assert response.confirmed_course_count == 1
+    assert response.confirmed_major_credits == 2
+    assert saved.general_required_candidates == []
+    assert saved.general_elective_candidates == []
+    assert saved.general_pool_diagnostics == []
+    assert saved.general_pool_warnings == []
+    assert saved.generated_candidates == []
+    assert saved.generated_timetable_candidates == []
+    assert saved.generation_diagnostics == []
+    assert saved.generation_course_load_target is None
+    assert saved.generation_hard_conditions is None
+    assert saved.generation_truncated is False
+    assert saved.generated_at is None
+    assert saved.ranking_preferences == PreferenceRules()
+    assert saved.latest_ranking_result is None
+    assert saved.preference_unsupported_conditions == []
+    assert saved.preference_warnings == []
+    assert saved.major_candidates == [first, second]
+    assert saved.department == "컴퓨터공학과"
+
+
+def test_reconfirm_rejects_wrong_session_and_stale_preview() -> None:
+    first = _course("MA100-001", "자료구조", "001")
+    second = _course("MA200-001", "운영체제", "001", start="10:30", end="11:45")
+    store = SessionStore()
+    session = store.create("컴퓨터공학과", major_candidates=[first, second])
+    _save_preview(store, session.session_id, preview_id="preview-1")
+    service = MajorConfirmService(store=store)
+    asyncio.run(service.confirm(session.session_id, "preview-1"))
+
+    store.update(
+        session.session_id,
+        session_stage=SessionStage.MAJOR_PREVIEW_CREATED,
+        latest_major_preview={
+            "session_id": "other-session",
+            "preview_id": "preview-2",
+            "matched_course_ids": ["MA200-001"],
+            "ambiguous_courses": [],
+            "unmatched_courses": [],
+            "ambiguous_texts": [],
+            "has_time_conflict": False,
+            "conflicts": [],
+        },
+    )
+    with pytest.raises(AppError) as wrong_session:
+        asyncio.run(service.reconfirm(session.session_id, "preview-2"))
+    assert wrong_session.value.code == "INVALID_PREVIEW_SESSION"
+
+    store.update(
+        session.session_id,
+        latest_major_preview={
+            "session_id": session.session_id,
+            "preview_id": "preview-2",
+            "matched_course_ids": ["MA200-001"],
+            "ambiguous_courses": [],
+            "unmatched_courses": [],
+            "ambiguous_texts": [],
+            "has_time_conflict": False,
+            "conflicts": [],
+        },
+    )
+    with pytest.raises(AppError) as stale:
+        asyncio.run(service.reconfirm(session.session_id, "preview-1"))
+    assert stale.value.code == "STALE_MAJOR_PREVIEW"
+
+
+def test_reconfirm_is_idempotent_for_same_latest_preview() -> None:
+    first = _course("MA100-001", "자료구조", "001")
+    second = _course("MA200-001", "운영체제", "001", start="10:30", end="11:45")
+    store = SessionStore()
+    session = store.create("컴퓨터공학과", major_candidates=[first, second])
+    _save_preview(store, session.session_id, preview_id="preview-1")
+    service = MajorConfirmService(store=store)
+    asyncio.run(service.confirm(session.session_id, "preview-1"))
+    store.update(
+        session.session_id,
+        session_stage=SessionStage.MAJOR_PREVIEW_CREATED,
+        latest_major_preview={
+            "session_id": session.session_id,
+            "preview_id": "preview-2",
+            "matched_course_ids": ["MA200-001"],
+            "ambiguous_courses": [],
+            "unmatched_courses": [],
+            "ambiguous_texts": [],
+            "has_time_conflict": False,
+            "conflicts": [],
+        },
+    )
+
+    first_response = asyncio.run(service.reconfirm(session.session_id, "preview-2"))
+    second_response = asyncio.run(service.reconfirm(session.session_id, "preview-2"))
+
+    assert first_response == second_response
+    saved = store.get(session.session_id)
+    assert [course.course_id for course in saved.fixed_courses] == ["MA200-001"]
+
+
+def test_regular_confirm_still_rejects_changing_confirmed_major() -> None:
+    first = _course("MA100-001", "자료구조", "001")
+    second = _course("MA200-001", "운영체제", "001", start="10:30", end="11:45")
+    store = SessionStore()
+    session = store.create("컴퓨터공학과", major_candidates=[first, second])
+    _save_preview(store, session.session_id, preview_id="preview-1")
+    service = MajorConfirmService(store=store)
+    asyncio.run(service.confirm(session.session_id, "preview-1"))
+    store.update(
+        session.session_id,
+        session_stage=SessionStage.MAJOR_PREVIEW_CREATED,
+        latest_major_preview={
+            "session_id": session.session_id,
+            "preview_id": "preview-2",
+            "matched_course_ids": ["MA200-001"],
+            "ambiguous_courses": [],
+            "unmatched_courses": [],
+            "ambiguous_texts": [],
+            "has_time_conflict": False,
+            "conflicts": [],
+        },
+    )
+
+    with pytest.raises(AppError) as exc_info:
+        asyncio.run(service.confirm(session.session_id, "preview-2"))
+
+    assert exc_info.value.code == "INVALID_SESSION_STAGE"
+    assert [course.course_id for course in store.get(session.session_id).fixed_courses] == [
+        "MA100-001"
+    ]

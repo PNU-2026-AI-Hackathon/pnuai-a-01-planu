@@ -131,3 +131,38 @@ def test_upload_major_catalog_rejects_non_xlsx_name() -> None:
         )
 
     assert error.value.code == "INVALID_FILE_EXTENSION"
+
+
+def test_upload_major_catalog_rejects_missing_department() -> None:
+    service = MajorCatalogUploadService(
+        store=SessionStore(),
+        parser=FakeParser([_course()]),
+    )
+
+    with pytest.raises(AppError) as error:
+        asyncio.run(
+            service.upload_and_create_session(
+                upload_file=_upload("major.xlsx", b"placeholder"),
+            )
+        )
+
+    assert error.value.code == "DEPARTMENT_REQUIRED"
+    assert error.value.status_code == 400
+
+
+def test_upload_major_catalog_rejects_blank_department() -> None:
+    service = MajorCatalogUploadService(
+        store=SessionStore(),
+        parser=FakeParser([_course()]),
+    )
+
+    with pytest.raises(AppError) as error:
+        asyncio.run(
+            service.upload_and_create_session(
+                upload_file=_upload("major.xlsx", b"placeholder"),
+                department="   ",
+            )
+        )
+
+    assert error.value.code == "DEPARTMENT_REQUIRED"
+    assert error.value.status_code == 400

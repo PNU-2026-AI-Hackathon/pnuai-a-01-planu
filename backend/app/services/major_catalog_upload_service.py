@@ -47,7 +47,13 @@ class MajorCatalogUploadService:
         upload_file: UploadFile | None,
         department: str | None = None,
     ) -> MajorCatalogUploadResponse:
-        department = (department or "미정").strip() or "미정"
+        department = (department or "").strip()
+        if not department:
+            raise AppError(
+                "DEPARTMENT_REQUIRED",
+                "학과를 선택해주세요.",
+                status_code=400,
+            )
         self._validate_upload_name(upload_file)
 
         temp_path: Path | None = None

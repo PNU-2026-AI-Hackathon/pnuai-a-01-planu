@@ -420,7 +420,7 @@ def test_missing_major_catalog_is_rejected_before_parser_call() -> None:
     assert parser.prompts == []
 
 
-def test_confirmed_session_rejects_preview() -> None:
+def test_confirmed_session_can_create_new_preview_for_reselection() -> None:
     fixed = _course("MA100-001", "자료구조", "001")
     store = SessionStore()
     session = store.create(
@@ -435,10 +435,13 @@ def test_confirmed_session_rejects_preview() -> None:
         ),
     )
 
-    with pytest.raises(AppError) as exc_info:
-        asyncio.run(service.create_preview(session.session_id, "자료구조 001분반"))
+    response = asyncio.run(service.create_preview(session.session_id, "자료구조 001분반"))
+    saved = store.get(session.session_id)
 
-    assert exc_info.value.code == "INVALID_SESSION_STAGE"
+    assert response.can_confirm is True
+    assert saved.fixed_courses == [fixed]
+    assert saved.latest_major_preview is not None
+    assert saved.latest_major_preview["preview_id"] == response.preview_id
 
 
 def test_parser_failure_is_sanitized() -> None:

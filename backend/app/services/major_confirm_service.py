@@ -39,6 +39,18 @@ class MajorConfirmService:
         self.validator = validator or TimetableValidator()
 
     async def confirm(self, session_id: str, preview_id: str) -> MajorConfirmResponse:
+        return await self._confirm(session_id, preview_id, allow_reconfirm=False)
+
+    async def reconfirm(self, session_id: str, preview_id: str) -> MajorConfirmResponse:
+        return await self._confirm(session_id, preview_id, allow_reconfirm=True)
+
+    async def _confirm(
+        self,
+        session_id: str,
+        preview_id: str,
+        *,
+        allow_reconfirm: bool,
+    ) -> MajorConfirmResponse:
         session_id = session_id.strip()
         preview_id = preview_id.strip()
         if not session_id:
@@ -57,18 +69,25 @@ class MajorConfirmService:
 
         if session.fixed_courses:
             if session.confirmed_major_preview_id == preview_id:
-                return self._response(
-                    session_id=session.session_id,
-                    preview_id=preview_id,
-                    courses=session.fixed_courses,
-                    session_stage=session.session_stage,
-                    confirmed_major_credits=session.confirmed_major_credits,
+                latest_preview_id = (
+                    session.latest_major_preview.get("preview_id")
+                    if session.latest_major_preview is not None
+                    else None
                 )
-            raise AppError(
-                "INVALID_SESSION_STAGE",
-                "이미 다른 전공 미리보기로 확정된 세션입니다.",
-                status_code=409,
-            )
+                if not allow_reconfirm or latest_preview_id in (None, preview_id):
+                    return self._response(
+                        session_id=session.session_id,
+                        preview_id=preview_id,
+                        courses=session.fixed_courses,
+                        session_stage=session.session_stage,
+                        confirmed_major_credits=session.confirmed_major_credits,
+                    )
+            if not allow_reconfirm:
+                raise AppError(
+                    "INVALID_SESSION_STAGE",
+                    "이미 다른 전공 미리보기로 확정된 세션입니다.",
+                    status_code=409,
+                )
 
         if not session.major_candidates:
             raise AppError(
@@ -76,7 +95,14 @@ class MajorConfirmService:
                 "세션에 파싱된 전공 수강편람 데이터가 없습니다.",
                 status_code=409,
             )
-        if session.session_stage is not SessionStage.MAJOR_PREVIEW_CREATED:
+        if (
+            session.session_stage is not SessionStage.MAJOR_PREVIEW_CREATED
+            and not (
+                allow_reconfirm
+                and session.confirmed_major_preview_id == preview_id
+                and session.fixed_courses
+            )
+        ):
             raise AppError(
                 "INVALID_SESSION_STAGE",
                 "전공 미리보기 생성 이후에만 전공 시간표를 확정할 수 있습니다.",
@@ -133,13 +159,22 @@ class MajorConfirmService:
         confirmed_preview["is_confirmed"] = True
 
         try:
-            updated = self.store.confirm_major_preview(
-                session.session_id,
-                preview_id=preview_id,
-                fixed_courses=courses,
-                confirmed_major_credits=confirmed_credits,
-                confirmed_preview=confirmed_preview,
-            )
+            if allow_reconfirm:
+                updated = self.store.reconfirm_major_preview(
+                    session.session_id,
+                    preview_id=preview_id,
+                    fixed_courses=courses,
+                    confirmed_major_credits=confirmed_credits,
+                    confirmed_preview=confirmed_preview,
+                )
+            else:
+                updated = self.store.confirm_major_preview(
+                    session.session_id,
+                    preview_id=preview_id,
+                    fixed_courses=courses,
+                    confirmed_major_credits=confirmed_credits,
+                    confirmed_preview=confirmed_preview,
+                )
         except SessionNotFoundError as exc:
             raise AppError(
                 "SESSION_NOT_FOUND",

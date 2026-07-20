@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from fastapi.testclient import TestClient
 
 from backend.app.deps import get_major_confirm_service
@@ -171,3 +173,73 @@ def test_major_confirm_api_rejects_invalid_session_stage() -> None:
 
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "INVALID_SESSION_STAGE"
+
+
+def test_major_reconfirm_api_replaces_confirmed_courses() -> None:
+    first = _course("MA100-001")
+    second = Course(
+        course_id="MA200-001",
+        course_name="운영체제",
+        category=Category.MAJOR_REQUIRED,
+        credit=2,
+        division="001",
+        professor="이교수",
+        class_times=[
+            ClassTime(
+                day=Day.TUE,
+                start="10:30",
+                end="11:45",
+                classroom="제6공학관 6202",
+                building_code="6202",
+            )
+        ],
+    )
+    store = SessionStore()
+    session = store.create("컴퓨터공학과", major_candidates=[first, second])
+    store.update(
+        session.session_id,
+        session_stage=SessionStage.MAJOR_PREVIEW_CREATED,
+        latest_major_preview={
+            "session_id": session.session_id,
+            "preview_id": "preview-1",
+            "matched_course_ids": ["MA100-001"],
+            "ambiguous_courses": [],
+            "unmatched_courses": [],
+            "ambiguous_texts": [],
+            "has_time_conflict": False,
+            "conflicts": [],
+        },
+    )
+    service = MajorConfirmService(store=store)
+    asyncio.run(service.confirm(session.session_id, "preview-1"))
+    store.update(
+        session.session_id,
+        session_stage=SessionStage.MAJOR_PREVIEW_CREATED,
+        latest_major_preview={
+            "session_id": session.session_id,
+            "preview_id": "preview-2",
+            "matched_course_ids": ["MA200-001"],
+            "ambiguous_courses": [],
+            "unmatched_courses": [],
+            "ambiguous_texts": [],
+            "has_time_conflict": False,
+            "conflicts": [],
+        },
+    )
+    app.dependency_overrides[get_major_confirm_service] = lambda: service
+    client = TestClient(app)
+
+    try:
+        response = client.post(
+            "/major/reconfirm",
+            json={"session_id": session.session_id, "preview_id": "preview-2"},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["confirmed_courses"][0]["course_id"] == "MA200-001"
+    assert body["confirmed_major_credits"] == 2
+    assert body["session_stage"] == "major_confirmed"
+    assert store.get(session.session_id).fixed_courses[0].course_id == "MA200-001"

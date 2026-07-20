@@ -86,13 +86,6 @@ class MajorPreviewService:
                 "세션에 파싱된 전공 수강편람 데이터가 없습니다.",
                 status_code=409,
             )
-        if session.fixed_courses:
-            raise AppError(
-                "INVALID_SESSION_STAGE",
-                "이미 전공 시간표가 확정된 세션에서는 미리보기를 생성할 수 없습니다.",
-                status_code=409,
-            )
-
         try:
             parse_result = await asyncio.to_thread(self.parser.parse, prompt)
         except EmptyMajorSelectionPromptError as exc:
