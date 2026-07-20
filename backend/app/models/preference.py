@@ -74,6 +74,34 @@ class PreferenceTraceEvent(BaseModel):
     error: str | None = None
 
 
+class UnsupportedCondition(BaseModel):
+    """A user preference PlaNU cannot safely apply with current data."""
+
+    model_config = ConfigDict(
+        extra="forbid",
+        str_strip_whitespace=True,
+        validate_assignment=True,
+    )
+
+    source_text: str = Field(min_length=1)
+    reason_code: str = Field(min_length=1)
+    reason: str = Field(min_length=1)
+
+
+class PreferenceWarning(BaseModel):
+    """A non-fatal parser diagnostic shown without exposing LLM internals."""
+
+    model_config = ConfigDict(
+        extra="forbid",
+        str_strip_whitespace=True,
+        validate_assignment=True,
+    )
+
+    code: str = Field(min_length=1)
+    message: str = Field(min_length=1)
+    source_text: str | None = None
+
+
 class TimeRange(BaseModel):
     """A time window attached to one weekday."""
 
@@ -282,6 +310,37 @@ class PreferenceParseResult(BaseModel):
     trace: list[PreferenceTraceEvent] = Field(default_factory=list)
     fallback_used: bool = False
     warnings: list[str] = Field(default_factory=list)
+    raw_output: dict[str, Any] | str | None = None
+
+
+class GeneralPreferenceLLMOutput(BaseModel):
+    """Structured LLM output for general-education preference parsing."""
+
+    model_config = ConfigDict(
+        extra="forbid",
+        str_strip_whitespace=True,
+        validate_assignment=True,
+    )
+
+    hard_conditions: PreferenceRules = Field(default_factory=PreferenceRules)
+    soft_conditions: PreferenceRules = Field(default_factory=PreferenceRules)
+    unsupported_conditions: list[UnsupportedCondition] = Field(default_factory=list)
+    warnings: list[PreferenceWarning] = Field(default_factory=list)
+
+
+class GeneralPreferenceParseResult(BaseModel):
+    """Deterministically validated preference parse result for later stages."""
+
+    model_config = ConfigDict(
+        extra="forbid",
+        str_strip_whitespace=True,
+        validate_assignment=True,
+    )
+
+    hard_conditions: PreferenceRules = Field(default_factory=PreferenceRules)
+    soft_conditions: PreferenceRules = Field(default_factory=PreferenceRules)
+    unsupported_conditions: list[UnsupportedCondition] = Field(default_factory=list)
+    warnings: list[PreferenceWarning] = Field(default_factory=list)
     raw_output: dict[str, Any] | str | None = None
 
 

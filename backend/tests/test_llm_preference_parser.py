@@ -105,6 +105,19 @@ def test_non_concrete_course_descriptions_do_not_create_preferred_names() -> Non
     assert rules.required_course_names == []
 
 
+def test_broad_subject_terms_do_not_create_preferred_names() -> None:
+    rules = _parse_with_output(
+        "인문학 관련은 좋아하지만 민주주의론은 절대 듣고 싶지 않아.",
+        {
+            "preferred_course_names": ["인문학"],
+            "excluded_course_names": ["민주주의론"],
+        },
+    )
+
+    assert rules.preferred_course_names == []
+    assert rules.excluded_course_names == ["민주주의론"]
+
+
 def test_morning_hard_condition_uses_earliest_start_time() -> None:
     rules = _parse_with_output(
         "아침 수업은 절대 안 돼.",
