@@ -125,47 +125,62 @@ class MajorCatalogUploadService:
             )
 
     async def _write_limited_temp_file(self, upload_file: UploadFile) -> Path:
-        handle = tempfile.NamedTemporaryFile(
-            mode="wb",
+        return await write_limited_upload_to_temp(
+            upload_file,
             suffix=".xlsx",
             prefix="planu-major-catalog-",
-            delete=False,
+            max_upload_size=self.max_upload_size,
         )
-        temp_path = Path(handle.name)
-        total_size = 0
-        try:
-            with handle:
-                while True:
-                    chunk = await upload_file.read(UPLOAD_CHUNK_SIZE)
-                    if not chunk:
-                        break
-                    total_size += len(chunk)
-                    if total_size > self.max_upload_size:
-                        raise AppError(
-                            "FILE_TOO_LARGE",
-                            "업로드 파일은 5MB 이하여야 합니다.",
-                            status_code=413,
-                            details={"max_size_bytes": self.max_upload_size},
-                        )
-                    handle.write(chunk)
-        except Exception:
-            try:
-                os.unlink(temp_path)
-            except OSError:
-                pass
-            raise
 
-        if total_size == 0:
-            try:
-                os.unlink(temp_path)
-            except OSError:
-                pass
-            raise AppError(
-                "INVALID_EXCEL_FILE",
-                "유효한 .xlsx 파일이 아닙니다.",
-                status_code=400,
-            )
-        return temp_path
+
+async def write_limited_upload_to_temp(
+    upload_file: UploadFile,
+    *,
+    suffix: str,
+    prefix: str,
+    max_upload_size: int = MAX_UPLOAD_SIZE,
+) -> Path:
+    handle = tempfile.NamedTemporaryFile(
+        mode="wb",
+        suffix=suffix,
+        prefix=prefix,
+        delete=False,
+    )
+    temp_path = Path(handle.name)
+    total_size = 0
+    try:
+        with handle:
+            while True:
+                chunk = await upload_file.read(UPLOAD_CHUNK_SIZE)
+                if not chunk:
+                    break
+                total_size += len(chunk)
+                if total_size > max_upload_size:
+                    raise AppError(
+                        "FILE_TOO_LARGE",
+                        "업로드 파일은 5MB 이하여야 합니다.",
+                        status_code=413,
+                        details={"max_size_bytes": max_upload_size},
+                    )
+                handle.write(chunk)
+    except Exception:
+        try:
+            os.unlink(temp_path)
+        except OSError:
+            pass
+        raise
+
+    if total_size == 0:
+        try:
+            os.unlink(temp_path)
+        except OSError:
+            pass
+        raise AppError(
+            "INVALID_EXCEL_FILE",
+            "유효한 .xlsx 파일이 아닙니다.",
+            status_code=400,
+        )
+    return temp_path
 
 
 def _catalog_app_error(exc: UploadedCatalogError) -> AppError:
