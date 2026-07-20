@@ -108,7 +108,7 @@ class TimetableGenerator:
         the ranking stage to evaluate later.
         """
 
-        target = course_load_target or CourseLoadTarget()
+        target = course_load_target or CourseLoadTarget.mvp_default_policy()
         fixed = list(fixed_major_courses)
         required_candidates = self._dedupe_by_course_identity(
             required_general_candidates
@@ -363,7 +363,7 @@ class TimetableGenerator:
             requested_elective_count=target.additional_elective_count,
             credit_gap=credit_gap,
             elective_count_gap=elective_gap,
-            target_credit_met=(
+            within_credit_limit=(
                 None
                 if target.target_total_credits is None
                 else final_total <= target.target_total_credits

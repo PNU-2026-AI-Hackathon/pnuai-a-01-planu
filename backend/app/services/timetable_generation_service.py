@@ -6,7 +6,12 @@ from ..core.errors import AppError
 from ..models.course_load import CourseLoadTarget
 from ..models.preference import PreferenceRules
 from ..models.timetable import TimetableGenerationResult
-from .session_store import SessionStage, SessionStore, session_store
+from .session_store import (
+    SessionNotFoundError,
+    SessionStage,
+    SessionStore,
+    session_store,
+)
 from .timetable_generator import TimetableGenerator
 from .timetable_validator import TimetableValidator
 
@@ -33,7 +38,17 @@ class TimetableGenerationService:
         hard_conditions: PreferenceRules | None = None,
         max_candidates: int | None = None,
     ) -> TimetableGenerationResult:
-        data = self.store.get(session_id)
+        session_id = session_id.strip()
+        if not session_id:
+            raise AppError("SESSION_NOT_FOUND", "세션 ID가 비어 있습니다.", status_code=400)
+        try:
+            data = self.store.get(session_id)
+        except SessionNotFoundError as exc:
+            raise AppError(
+                "SESSION_NOT_FOUND",
+                "세션을 찾을 수 없거나 만료되었습니다.",
+                status_code=404,
+            ) from exc
         if data.session_stage is not SessionStage.GENERAL_READY:
             raise AppError(
                 "INVALID_SESSION_STAGE",
@@ -58,7 +73,7 @@ class TimetableGenerationService:
                 },
             )
 
-        target = course_load_target or CourseLoadTarget()
+        target = course_load_target or CourseLoadTarget.mvp_default_policy()
         result = self.generator.generate_detailed(
             fixed_major_courses=data.fixed_courses,
             required_general_candidates=data.general_required_candidates,
@@ -76,4 +91,3 @@ class TimetableGenerationService:
             truncated=result.truncated,
         )
         return result
-

@@ -109,7 +109,7 @@ class CourseLoadSatisfaction(_Model):
     requested_elective_count: int | None = Field(default=None, ge=0)
     credit_gap: float | None = None
     elective_count_gap: int | None = None
-    target_credit_met: bool | None = None
+    within_credit_limit: bool | None = None
     elective_count_met: bool | None = None
 
 

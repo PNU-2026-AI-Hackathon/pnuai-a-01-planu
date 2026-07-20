@@ -30,6 +30,17 @@ class CourseLoadTarget(_Model):
     target_total_credits: float | None = Field(default=None, gt=0)
     additional_elective_count: int | None = Field(default=None, ge=0)
 
+    @classmethod
+    def mvp_default_policy(cls) -> "CourseLoadTarget":
+        """PlaNU MVP default: required generals only, no automatic electives.
+
+        When both target fields are absent, the generator may still include
+        required general courses but does not add elective general courses on
+        the user's behalf.
+        """
+
+        return cls()
+
 
 class CourseLoadWarning(_Model):
     """Structured warning emitted when interpreted load goals conflict."""

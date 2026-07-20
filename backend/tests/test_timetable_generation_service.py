@@ -11,6 +11,8 @@ from backend.app.models import (
     Course,
     CourseLoadTarget,
     Day,
+    GeneralCoursePoolResult,
+    GeneralCoursePools,
     PreferenceRules,
 )
 from backend.app.services.session_store import SessionStage, SessionStore
@@ -105,6 +107,7 @@ def test_detailed_generation_keeps_fixed_major_and_records_load_metadata() -> No
     assert best.load_satisfaction.required_general_count == 1
     assert best.load_satisfaction.elective_count == 1
     assert best.load_satisfaction.credit_gap == 0
+    assert best.load_satisfaction.within_credit_limit is True
     assert best.load_satisfaction.elective_count_gap == 0
 
 
@@ -235,3 +238,112 @@ def test_generation_service_rejects_wrong_stage_without_partial_save() -> None:
     assert exc_info.value.code == "INVALID_SESSION_STAGE"
     assert saved.generated_timetable_candidates == []
 
+
+def test_generation_service_rejects_confirmed_major_credit_mismatch() -> None:
+    store = SessionStore()
+    session = store.create("컴퓨터공학과")
+    store.update(
+        session.session_id,
+        fixed_courses=[_major(credit=9)],
+        confirmed_major_credits=6,
+        session_stage=SessionStage.GENERAL_READY,
+    )
+
+    with pytest.raises(AppError) as exc_info:
+        TimetableGenerationService(store=store).generate_for_session(
+            session_id=session.session_id,
+        )
+
+    assert exc_info.value.code == "CONFIRMED_MAJOR_CREDIT_MISMATCH"
+
+
+def test_generation_service_returns_fixed_major_integrity_diagnostic() -> None:
+    first = _major("MAJ-001", credit=3)
+    second = _course(
+        "MAJ-002",
+        "운영체제",
+        Category.MAJOR_REQUIRED,
+        day=Day.MON,
+        start="09:30",
+        end="10:30",
+        credit=3,
+    )
+    store = SessionStore()
+    session = store.create("컴퓨터공학과")
+    store.update(
+        session.session_id,
+        fixed_courses=[first, second],
+        confirmed_major_credits=6,
+        session_stage=SessionStage.GENERAL_READY,
+    )
+
+    result = TimetableGenerationService(store=store).generate_for_session(
+        session_id=session.session_id,
+    )
+
+    assert result.candidates == []
+    assert result.diagnostics[0].reason_code == "FIXED_MAJOR_INTEGRITY_ERROR"
+
+
+def test_generation_service_returns_major_credits_exceed_target_diagnostic() -> None:
+    store = SessionStore()
+    session = store.create("컴퓨터공학과")
+    store.update(
+        session.session_id,
+        fixed_courses=[_major(credit=15)],
+        confirmed_major_credits=15,
+        session_stage=SessionStage.GENERAL_READY,
+    )
+
+    result = TimetableGenerationService(store=store).generate_for_session(
+        session_id=session.session_id,
+        course_load_target=CourseLoadTarget(target_total_credits=12),
+    )
+
+    assert result.candidates == []
+    assert result.diagnostics[0].reason_code == "MAJOR_CREDITS_EXCEED_TARGET"
+
+
+def test_generation_service_marks_truncated_when_max_candidates_reached() -> None:
+    store = SessionStore()
+    session = store.create("컴퓨터공학과")
+    store.update(
+        session.session_id,
+        fixed_courses=[_major(credit=3)],
+        confirmed_major_credits=3,
+        session_stage=SessionStage.GENERAL_READY,
+    )
+    store.update_general_course_pool(
+        session.session_id,
+        GeneralCoursePoolResult(
+            pools=GeneralCoursePools(
+                elective_courses=[
+                    _elective("ELE-001", day=Day.TUE, start="10:00"),
+                    _elective("ELE-002", day=Day.WED, start="11:00"),
+                    _elective("ELE-003", day=Day.THU, start="12:00"),
+                ],
+            )
+        ),
+    )
+
+    result = TimetableGenerationService(store=store).generate_for_session(
+        session_id=session.session_id,
+        course_load_target=CourseLoadTarget(target_total_credits=12),
+        max_candidates=1,
+    )
+
+    assert result.truncated is True
+    assert any(
+        diagnostic.reason_code == "GENERATION_TRUNCATED"
+        for diagnostic in result.diagnostics
+    )
+
+
+def test_generation_service_uses_standard_session_not_found_error() -> None:
+    with pytest.raises(AppError) as exc_info:
+        TimetableGenerationService(store=SessionStore()).generate_for_session(
+            session_id="missing-session",
+        )
+
+    assert exc_info.value.code == "SESSION_NOT_FOUND"
+    assert exc_info.value.status_code == 404
