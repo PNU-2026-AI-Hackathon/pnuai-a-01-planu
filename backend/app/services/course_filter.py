@@ -29,26 +29,12 @@ class CourseFilter:
     parts of those rules and keeps ranking-only preferences for the ranker.
     """
 
-    def __init__(
-        self,
-        *,
-        restricted_course_ids_by_department: dict[str, set[str]] | None = None,
-        restricted_course_names_by_department: dict[str, set[str]] | None = None,
-    ) -> None:
-        self.restricted_course_ids_by_department = (
-            restricted_course_ids_by_department or {}
-        )
-        self.restricted_course_names_by_department = (
-            restricted_course_names_by_department or {}
-        )
-
     def filter(
         self,
         courses: Iterable[Course],
         *,
         fixed_courses: Iterable[Course] = (),
         preferences: PreferenceRules | None = None,
-        department: str | None = None,
     ) -> CourseFilterResult:
         rules = preferences or PreferenceRules()
         fixed = list(fixed_courses)
@@ -61,9 +47,6 @@ class CourseFilter:
                 Category.GENERAL_REQUIRED,
                 Category.GENERAL_ELECTIVE,
             }:
-                rejected_count += 1
-                continue
-            if self._is_restricted(course, department):
                 rejected_count += 1
                 continue
             if self._fails_preference_hard_filters(course, rules):
@@ -97,15 +80,6 @@ class CourseFilter:
         rejected = len(values) - len(required) - len(elective)
         return CourseFilterResult(required, elective, rejected)
 
-    def _is_restricted(self, course: Course, department: str | None) -> bool:
-        if not department:
-            return False
-        restricted_ids = self.restricted_course_ids_by_department.get(department, set())
-        restricted_names = self.restricted_course_names_by_department.get(
-            department, set()
-        )
-        return course.course_id in restricted_ids or course.course_name in restricted_names
-
     @staticmethod
     def _fails_preference_hard_filters(
         course: Course, preferences: PreferenceRules
@@ -119,11 +93,6 @@ class CourseFilter:
             meeting.day in preferences.required_free_days for meeting in course.class_times
         ):
             return True
-
-        if preferences.no_morning_classes:
-            morning_end = time_to_minutes(preferences.morning_end_time)
-            if any(meeting.start_minutes < morning_end for meeting in course.class_times):
-                return True
 
         if preferences.earliest_start_time is not None:
             earliest = time_to_minutes(preferences.earliest_start_time)
@@ -148,24 +117,7 @@ class CourseFilter:
         if excluded_professors and course.professor.casefold() in excluded_professors:
             return True
 
-        if (
-            course.category == Category.GENERAL_ELECTIVE
-            and preferences.preferred_elective_areas
-            and course.area not in preferences.preferred_elective_areas
-        ):
-            return True
-
-        searchable = f"{course.course_name} {course.professor}".casefold()
-        if preferences.required_keywords and not all(
-            keyword.casefold() in searchable
-            for keyword in preferences.required_keywords
-        ):
-            return True
-
-        return any(
-            keyword.casefold() in searchable
-            for keyword in preferences.excluded_keywords
-        )
+        return course.course_name in preferences.excluded_course_names
 
     @staticmethod
     def _overlaps_excluded_range(
@@ -183,18 +135,11 @@ def filter_general_courses(
     *,
     fixed_courses: Iterable[Course] = (),
     preferences: PreferenceRules | None = None,
-    department: str | None = None,
-    restricted_course_ids_by_department: dict[str, set[str]] | None = None,
-    restricted_course_names_by_department: dict[str, set[str]] | None = None,
 ) -> CourseFilterResult:
     """Functional convenience API used by route handlers and tests."""
 
-    return CourseFilter(
-        restricted_course_ids_by_department=restricted_course_ids_by_department,
-        restricted_course_names_by_department=restricted_course_names_by_department,
-    ).filter(
+    return CourseFilter().filter(
         courses,
         fixed_courses=fixed_courses,
         preferences=preferences,
-        department=department,
     )

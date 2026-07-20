@@ -7,7 +7,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from ..models.course import Category, ClassTime, Course, Day
+from ..models.course import Category, ClassTime, Course, Day, normalize_course_category
 
 
 class CourseCatalogLoadError(ValueError):
@@ -89,7 +89,10 @@ def _course_from_catalog_item(item: dict[str, Any]) -> Course | None:
     if not class_times:
         return None
 
-    category = Category(str(item.get("category")))
+    try:
+        category = normalize_course_category(item.get("category"))
+    except ValueError as exc:
+        raise CourseCatalogLoadError(str(exc)) from exc
     course_code = str(item.get("courseCode") or "").strip()
     section = str(item.get("section") or "").strip()
     if not course_code or not section:
@@ -142,7 +145,11 @@ def load_courses(path: str | Path, *, category: Category | None = None) -> list[
     courses: list[Course] = []
     seen: set[str] = set()
     for item in load_course_catalog(path):
-        if category is not None and item.get("category") != category.value:
+        try:
+            item_category = normalize_course_category(item.get("category"))
+        except ValueError as exc:
+            raise CourseCatalogLoadError(str(exc)) from exc
+        if category is not None and item_category is not category:
             continue
         course = _course_from_catalog_item(item)
         if course is None or course.course_id in seen:

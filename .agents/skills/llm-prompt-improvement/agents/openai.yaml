@@ -1,0 +1,4 @@
+interface:
+  display_name: "LLM Prompt Improvement"
+  short_description: "Evaluate and improve PlaNU LLM prompts"
+  default_prompt: "Use $llm-prompt-improvement to evaluate PlaNU LLM preference parsing and improve prompts only when failures justify it."

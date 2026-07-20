@@ -32,10 +32,15 @@ class ScheduleItem(_Model):
         return self
 
 
-class ScoreDetail(_Model):
+class ScoreComponent(_Model):
     key: str = Field(min_length=1)
     label: str = Field(min_length=1)
     value: float
+    reason: str = Field(min_length=1)
+
+
+# Backward-compatible alias for older tests/clients.
+ScoreDetail = ScoreComponent
 
 
 class Timetable(_Model):
@@ -46,7 +51,7 @@ class Timetable(_Model):
     total_credit: float | None = Field(default=None, gt=0)
     courses: list[Course] = Field(min_length=1)
     schedule_items: list[ScheduleItem] = Field(default_factory=list)
-    score_details: list[ScoreDetail] = Field(default_factory=list)
+    score_details: list[ScoreComponent] = Field(default_factory=list)
     reasons: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
 
@@ -84,10 +89,32 @@ class Timetable(_Model):
             object.__setattr__(self, "schedule_items", items)
 
         self.schedule_items.sort(
-            key=lambda item: (item.day.order, time_to_minutes(item.start))
+            key=lambda item: (list(Day).index(item.day), time_to_minutes(item.start))
         )
         return self
 
 
 # Descriptive alias used by generator/ranker services.
 TimetableCandidate = Timetable
+
+
+class RankingResult(_Model):
+    raw_score: float = 0
+    score_components: list[ScoreComponent] = Field(default_factory=list)
+    timetable: Timetable
+
+    @model_validator(mode="after")
+    def sync_raw_score_and_timetable(self) -> "RankingResult":
+        raw_score = sum(component.value for component in self.score_components)
+        object.__setattr__(self, "raw_score", raw_score)
+        object.__setattr__(
+            self,
+            "timetable",
+            self.timetable.model_copy(
+                update={
+                    "score": raw_score,
+                    "score_details": self.score_components,
+                }
+            ),
+        )
+        return self

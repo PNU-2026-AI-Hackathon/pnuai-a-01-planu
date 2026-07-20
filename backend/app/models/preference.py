@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from enum import Enum
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -10,10 +11,12 @@ from .course import Day, time_to_minutes
 
 
 class PreferenceTemplate(str, Enum):
-    """User-facing preference choices mapped to deterministic backend rules."""
+    """The single timetable direction selected by the user.
 
-    NO_MORNING_CLASSES = "no_morning_classes"
-    PREFER_LATE_START = "prefer_late_start"
+    It chooses one complete ranking profile; concrete ``PreferenceRules``
+    fields still hold the actual preference content.
+    """
+
     REQUIRED_FREE_DAY = "required_free_day"
     PREFER_FREE_DAY = "prefer_free_day"
     MINIMIZE_ATTENDANCE_DAYS = "minimize_attendance_days"
@@ -21,8 +24,58 @@ class PreferenceTemplate(str, Enum):
     COMPACT_SCHEDULE = "compact_schedule"
 
 
-class ExcludedTimeRange(BaseModel):
-    """A hard time window that no meeting may overlap."""
+class PreferenceParseStatus(str, Enum):
+    """High-level outcome of a natural-language preference parse."""
+
+    SUCCESS = "success"
+    FALLBACK = "fallback"
+    SKIPPED = "skipped"
+
+
+class PreferenceToolStatus(str, Enum):
+    """Status for an observable parser tool/step."""
+
+    STARTED = "started"
+    SUCCESS = "success"
+    ERROR = "error"
+    SKIPPED = "skipped"
+
+
+class PreferenceToolUsage(BaseModel):
+    """A tool or parser capability used while interpreting preferences."""
+
+    model_config = ConfigDict(
+        extra="forbid",
+        str_strip_whitespace=True,
+        validate_assignment=True,
+    )
+
+    name: str = Field(min_length=1)
+    purpose: str = Field(min_length=1)
+    status: PreferenceToolStatus
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class PreferenceTraceEvent(BaseModel):
+    """One inspectable trace event for LLM preference parsing."""
+
+    model_config = ConfigDict(
+        extra="forbid",
+        str_strip_whitespace=True,
+        validate_assignment=True,
+    )
+
+    step: str = Field(min_length=1)
+    tool: str = Field(min_length=1)
+    status: PreferenceToolStatus
+    message: str = Field(min_length=1)
+    input: dict[str, Any] | None = None
+    output: dict[str, Any] | None = None
+    error: str | None = None
+
+
+class TimeRange(BaseModel):
+    """A time window attached to one weekday."""
 
     model_config = ConfigDict(
         extra="forbid",
@@ -41,9 +94,9 @@ class ExcludedTimeRange(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def validate_range(self) -> "ExcludedTimeRange":
+    def validate_range(self) -> "TimeRange":
         if self.start_minutes >= self.end_minutes:
-            raise ValueError("excluded time range end must be later than start")
+            raise ValueError("time range end must be later than start")
         return self
 
     @property
@@ -55,8 +108,12 @@ class ExcludedTimeRange(BaseModel):
         return time_to_minutes(self.end)
 
 
+class ExcludedTimeRange(TimeRange):
+    """Backward-compatible name for hard excluded time windows."""
+
+
 class PreferenceRules(BaseModel):
-    """Structured, deterministic input for filtering and ranking.
+    """Concrete user preference content for filtering and ranking.
 
     Every field has a safe default so an LLM parsing failure can fall back to an
     empty ``PreferenceRules`` instance as required by the backend design.
@@ -73,26 +130,66 @@ class PreferenceRules(BaseModel):
     required_free_days: list[Day] = Field(default_factory=list)
     earliest_start_time: str | None = None
     latest_end_time: str | None = None
-    no_morning_classes: bool = False
     excluded_time_ranges: list[ExcludedTimeRange] = Field(default_factory=list)
     excluded_professors: list[str] = Field(default_factory=list)
-    preferred_elective_areas: list[int] = Field(default_factory=list)
-    required_keywords: list[str] = Field(default_factory=list)
-    excluded_keywords: list[str] = Field(default_factory=list)
-    selected_templates: list[PreferenceTemplate] = Field(default_factory=list)
+    required_course_names: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Concrete course names explicitly stated by the user as hard "
+            "requirements that must be included in the final timetable. "
+            "Use this field for expressions such as '대학영어는 반드시 넣어줘' "
+            "or '대학영어는 꼭 들어야 해'. Do not use this field for optional "
+            "or soft preferences."
+        ),
+    )
+    excluded_course_names: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Concrete course names explicitly stated by the user as hard "
+            "negative constraints that must not appear in the final timetable. "
+            "Use this field for expressions such as '절대 듣고 싶지 않아', "
+            "'무조건 제외해줘', '포함하지 마', '넣지 마', or '있으면 안 돼'. "
+            "Do not use avoided_course_names for these hard exclusion requests."
+        ),
+    )
+    selected_template: PreferenceTemplate | None = None
+    max_consecutive_classes: int | None = Field(default=None, ge=1)
 
     # Soft ranking preferences
+    preferred_first_class_time: str | None = None
+    preferred_free_time_ranges: list[TimeRange] = Field(default_factory=list)
     preferred_free_days: list[Day] = Field(default_factory=list)
-    avoid_morning_classes: bool = False
-    morning_end_time: str = "10:00" # 아침 수업 기준을 10시로 설정
-    prefer_late_start: bool = False
+    preferred_elective_areas: list[int] = Field(default_factory=list)
+    preferred_course_names: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Concrete course names explicitly stated by the user as positive soft "
+            "preferences, not hard requirements. These courses should influence "
+            "ranking but should not remove candidates when absent. Use this field "
+            "for expressions such as '가능하면 대학영어를 듣고 싶어', "
+            "'대학영어를 선호해', '대학영어가 시간표에 있으면 좋겠어', and "
+            "'꼭 들어야 하는 것은 아니지만 대학영어를 듣고 싶어'. Do not leave "
+            "this field empty when a concrete course name and a positive soft "
+            "preference are both explicitly present. Do not include topics, "
+            "general course characteristics, or invented course names."
+        ),
+    )
+    avoided_course_names: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Concrete course names explicitly stated by the user as negative soft "
+            "preferences, not hard exclusions. Use this field for expressions "
+            "such as '가능하면 피하고 싶어', '다른 선택지가 있으면 피해줘', "
+            "'별로 선호하지 않아', or '절대 제외할 정도는 아니야'. Do not use "
+            "this field when the user strongly forbids the course."
+        ),
+    )
     minimize_attendance_days: bool = False
     minimize_consecutive_classes: bool = False
     compact_schedule: bool = False
-    max_consecutive_classes: int | None = Field(default=None, ge=1)
 
     @field_validator(
-        "earliest_start_time", "latest_end_time", "morning_end_time"
+        "earliest_start_time", "latest_end_time", "preferred_first_class_time"
     )
     @classmethod
     def validate_time(cls, value: str | None) -> str | None:
@@ -111,10 +208,11 @@ class PreferenceRules(BaseModel):
         "excluded_days",
         "required_free_days",
         "preferred_free_days",
-        "required_keywords",
-        "excluded_keywords",
         "excluded_professors",
-        "selected_templates",
+        "required_course_names",
+        "excluded_course_names",
+        "preferred_course_names",
+        "avoided_course_names",
     )
     @classmethod
     def remove_duplicates(cls, values: list) -> list:
@@ -130,16 +228,61 @@ class PreferenceRules(BaseModel):
         ):
             raise ValueError("latest_end_time must be later than earliest_start_time")
         template_flags = {
-            PreferenceTemplate.NO_MORNING_CLASSES: "no_morning_classes",
-            PreferenceTemplate.PREFER_LATE_START: "prefer_late_start",
             PreferenceTemplate.MINIMIZE_ATTENDANCE_DAYS: "minimize_attendance_days",
             PreferenceTemplate.MINIMIZE_CONSECUTIVE_CLASSES: "minimize_consecutive_classes",
             PreferenceTemplate.COMPACT_SCHEDULE: "compact_schedule",
         }
         for template, field_name in template_flags.items():
-            if template in self.selected_templates and not getattr(self, field_name):
+            if self.selected_template == template and not getattr(self, field_name):
                 object.__setattr__(self, field_name, True)
+        self._validate_course_name_conflicts()
         return self
+
+    def _validate_course_name_conflicts(self) -> None:
+        required = set(self.required_course_names)
+        excluded = set(self.excluded_course_names)
+        preferred = set(self.preferred_course_names)
+        avoided = set(self.avoided_course_names)
+
+        required_and_excluded = required & excluded
+        if required_and_excluded:
+            names = ", ".join(sorted(required_and_excluded))
+            raise ValueError(f"course names cannot be both required and excluded: {names}")
+
+        preferred_and_avoided = preferred & avoided
+        if preferred_and_avoided:
+            names = ", ".join(sorted(preferred_and_avoided))
+            raise ValueError(f"course names cannot be both preferred and avoided: {names}")
+
+        object.__setattr__(
+            self,
+            "preferred_course_names",
+            [name for name in self.preferred_course_names if name not in required and name not in excluded],
+        )
+        object.__setattr__(
+            self,
+            "avoided_course_names",
+            [name for name in self.avoided_course_names if name not in required and name not in excluded],
+        )
+
+
+class PreferenceParseResult(BaseModel):
+    """Inspectable result of parsing free text into timetable preferences."""
+
+    model_config = ConfigDict(
+        extra="forbid",
+        str_strip_whitespace=True,
+        validate_assignment=True,
+    )
+
+    status: PreferenceParseStatus
+    llm_preferences: PreferenceRules = Field(default_factory=PreferenceRules)
+    merged_preferences: PreferenceRules = Field(default_factory=PreferenceRules)
+    used_tools: list[PreferenceToolUsage] = Field(default_factory=list)
+    trace: list[PreferenceTraceEvent] = Field(default_factory=list)
+    fallback_used: bool = False
+    warnings: list[str] = Field(default_factory=list)
+    raw_output: dict[str, Any] | str | None = None
 
 
 def merge_preference_rules(

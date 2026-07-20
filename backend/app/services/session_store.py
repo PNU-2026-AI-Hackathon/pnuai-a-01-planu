@@ -4,11 +4,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
+from enum import Enum
 from threading import RLock
-from typing import Callable, Iterable
+from typing import Any, Callable, Iterable
 from uuid import uuid4
 
 from ..models.course import Course
+from ..models.general_course_pool import (
+    ExcludedCourseDiagnostic,
+    GeneralCoursePoolResult,
+)
 
 
 def _utcnow() -> datetime:
@@ -23,6 +28,41 @@ class SessionNotFoundError(KeyError):
         self.session_id = session_id
 
 
+class MajorConfirmStoreError(RuntimeError):
+    """Base class for expected major preview confirmation failures."""
+
+
+class MajorPreviewNotFoundError(MajorConfirmStoreError):
+    pass
+
+
+class InvalidPreviewSessionError(MajorConfirmStoreError):
+    pass
+
+
+class StaleMajorPreviewError(MajorConfirmStoreError):
+    pass
+
+
+class InvalidMajorConfirmStageError(MajorConfirmStoreError):
+    pass
+
+
+class MajorAlreadyConfirmedError(MajorConfirmStoreError):
+    pass
+
+
+class MajorCourseReferenceMismatchError(MajorConfirmStoreError):
+    pass
+
+
+class SessionStage(str, Enum):
+    CATALOG_PARSED = "catalog_parsed"
+    MAJOR_PREVIEW_CREATED = "major_preview_created"
+    MAJOR_CONFIRMED = "major_confirmed"
+    GENERAL_READY = "general_ready"
+
+
 @dataclass(slots=True)
 class SessionData:
     session_id: str
@@ -30,6 +70,14 @@ class SessionData:
     major_candidates: list[Course] = field(default_factory=list)
     elective_candidates: list[Course] = field(default_factory=list)
     fixed_courses: list[Course] = field(default_factory=list)
+    general_required_candidates: list[Course] = field(default_factory=list)
+    general_elective_candidates: list[Course] = field(default_factory=list)
+    general_pool_diagnostics: list[ExcludedCourseDiagnostic] = field(default_factory=list)
+    general_pool_warnings: list[str] = field(default_factory=list)
+    confirmed_major_credits: float = 0
+    session_stage: SessionStage = SessionStage.CATALOG_PARSED
+    confirmed_major_preview_id: str | None = None
+    latest_major_preview: dict[str, Any] | None = None
     created_at: datetime = field(default_factory=_utcnow)
     updated_at: datetime = field(default_factory=_utcnow)
 
@@ -42,6 +90,14 @@ class SessionData:
         self.major_candidates = list(self.major_candidates)
         self.elective_candidates = list(self.elective_candidates)
         self.fixed_courses = list(self.fixed_courses)
+        self.general_required_candidates = list(self.general_required_candidates)
+        self.general_elective_candidates = list(self.general_elective_candidates)
+        self.general_pool_diagnostics = list(self.general_pool_diagnostics)
+        self.general_pool_warnings = list(self.general_pool_warnings)
+        if not isinstance(self.session_stage, SessionStage):
+            self.session_stage = SessionStage(self.session_stage)
+        if self.latest_major_preview is not None:
+            self.latest_major_preview = dict(self.latest_major_preview)
 
 
 class SessionStore:
@@ -92,16 +148,57 @@ class SessionStore:
 
     def get(self, session_id: str, *, touch: bool = True) -> SessionData:
         with self._lock:
-            now = self._clock()
-            data = self._sessions.get(session_id)
-            if data is None or self._is_expired(data, now):
-                self._sessions.pop(session_id, None)
-                raise SessionNotFoundError(session_id)
-            if touch:
-                data.updated_at = now
+            data = self._get_live_locked(session_id, touch=touch)
             return self._copy(data)
 
     get_session = get
+
+    def confirm_major_preview(
+        self,
+        session_id: str,
+        *,
+        preview_id: str,
+        fixed_courses: Iterable[Course],
+        confirmed_major_credits: float,
+        confirmed_preview: dict[str, Any],
+    ) -> SessionData:
+        """Atomically confirm the latest major preview for one in-memory session."""
+
+        with self._lock:
+            data = self._get_live_locked(session_id, touch=False)
+
+            if data.fixed_courses:
+                if data.confirmed_major_preview_id == preview_id:
+                    data.updated_at = self._clock()
+                    return self._copy(data)
+                raise MajorAlreadyConfirmedError("session already confirmed with another preview")
+
+            if data.session_stage is not SessionStage.MAJOR_PREVIEW_CREATED:
+                raise InvalidMajorConfirmStageError("major preview stage is required")
+
+            preview = data.latest_major_preview
+            if preview is None:
+                raise MajorPreviewNotFoundError("major preview not found")
+            if preview.get("session_id") not in (None, data.session_id):
+                raise InvalidPreviewSessionError("preview belongs to another session")
+            if preview.get("preview_id") != preview_id:
+                raise StaleMajorPreviewError("latest preview id does not match")
+
+            courses = list(fixed_courses)
+            preview_course_ids = list(preview.get("matched_course_ids") or [])
+            fixed_course_ids = [course.course_id for course in courses]
+            if preview_course_ids != fixed_course_ids:
+                raise MajorCourseReferenceMismatchError(
+                    "fixed courses do not match latest preview references"
+                )
+
+            data.fixed_courses = courses
+            data.confirmed_major_credits = confirmed_major_credits
+            data.session_stage = SessionStage.MAJOR_CONFIRMED
+            data.confirmed_major_preview_id = preview_id
+            data.latest_major_preview = dict(confirmed_preview)
+            data.updated_at = self._clock()
+            return self._copy(data)
 
     def update(
         self,
@@ -111,11 +208,14 @@ class SessionStore:
         major_candidates: Iterable[Course] | None = None,
         elective_candidates: Iterable[Course] | None = None,
         fixed_courses: Iterable[Course] | None = None,
+        confirmed_major_credits: float | None = None,
+        session_stage: SessionStage | str | None = None,
+        confirmed_major_preview_id: str | None = None,
+        latest_major_preview: dict[str, Any] | None = None,
     ) -> SessionData:
         with self._lock:
             # get() performs expiry handling; the stored instance is then updated.
-            self.get(session_id, touch=False)
-            data = self._sessions[session_id]
+            data = self._get_live_locked(session_id, touch=False)
             if department is not None:
                 if not department.strip():
                     raise ValueError("department must not be empty")
@@ -126,10 +226,37 @@ class SessionStore:
                 data.elective_candidates = list(elective_candidates)
             if fixed_courses is not None:
                 data.fixed_courses = list(fixed_courses)
+            if confirmed_major_credits is not None:
+                data.confirmed_major_credits = confirmed_major_credits
+            if session_stage is not None:
+                data.session_stage = (
+                    session_stage
+                    if isinstance(session_stage, SessionStage)
+                    else SessionStage(session_stage)
+                )
+            if confirmed_major_preview_id is not None:
+                data.confirmed_major_preview_id = confirmed_major_preview_id
+            if latest_major_preview is not None:
+                data.latest_major_preview = dict(latest_major_preview)
             data.updated_at = self._clock()
             return self._copy(data)
 
     update_session = update
+
+    def update_general_course_pool(
+        self,
+        session_id: str,
+        result: GeneralCoursePoolResult,
+    ) -> SessionData:
+        with self._lock:
+            data = self._get_live_locked(session_id, touch=False)
+            data.general_required_candidates = list(result.pools.required_courses)
+            data.general_elective_candidates = list(result.pools.elective_courses)
+            data.general_pool_diagnostics = list(result.excluded_courses)
+            data.general_pool_warnings = list(result.warnings)
+            data.session_stage = SessionStage.GENERAL_READY
+            data.updated_at = self._clock()
+            return self._copy(data)
 
     def delete(self, session_id: str) -> bool:
         with self._lock:
@@ -156,6 +283,16 @@ class SessionStore:
     def _is_expired(self, data: SessionData, now: datetime) -> bool:
         return now - data.updated_at >= self.ttl
 
+    def _get_live_locked(self, session_id: str, *, touch: bool) -> SessionData:
+        now = self._clock()
+        data = self._sessions.get(session_id)
+        if data is None or self._is_expired(data, now):
+            self._sessions.pop(session_id, None)
+            raise SessionNotFoundError(session_id)
+        if touch:
+            data.updated_at = now
+        return data
+
     @staticmethod
     def _copy(data: SessionData) -> SessionData:
         return replace(
@@ -163,6 +300,16 @@ class SessionStore:
             major_candidates=list(data.major_candidates),
             elective_candidates=list(data.elective_candidates),
             fixed_courses=list(data.fixed_courses),
+            general_required_candidates=list(data.general_required_candidates),
+            general_elective_candidates=list(data.general_elective_candidates),
+            general_pool_diagnostics=list(data.general_pool_diagnostics),
+            general_pool_warnings=list(data.general_pool_warnings),
+            session_stage=data.session_stage,
+            latest_major_preview=(
+                dict(data.latest_major_preview)
+                if data.latest_major_preview is not None
+                else None
+            ),
         )
 
 

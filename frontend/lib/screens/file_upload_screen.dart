@@ -1,11 +1,20 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 
 /// A file selected from a platform file picker.
 class CatalogFile {
-  const CatalogFile({required this.name, required this.sizeInBytes});
+  const CatalogFile({
+    required this.name,
+    required this.sizeInBytes,
+    this.path,
+    this.bytes,
+  });
 
   final String name;
   final int sizeInBytes;
+  final String? path;
+  final Uint8List? bytes;
 }
 
 typedef CatalogFilePicker = Future<CatalogFile?> Function();
@@ -164,7 +173,7 @@ class _FileUploadScreenState extends State<FileUploadScreen> {
                         const SizedBox(width: 10),
                         Expanded(
                           child: Text(
-                            '지원 형식은 .xlsx이며, 파일당 최대 '
+                            '지원 형식은 .xlsx, .xls이며, 파일당 최대 '
                             '${_formatFileSize(widget.maxFileSizeInBytes)}까지 업로드할 수 있습니다.',
                             textAlign: TextAlign.left,
                             style: _bodySmallStyle.copyWith(color: _muted),
@@ -258,8 +267,11 @@ class _FileUploadScreenState extends State<FileUploadScreen> {
   }
 
   String? _validate(CatalogFile file) {
-    if (!file.name.toLowerCase().endsWith('.xlsx')) {
-      return '학생지원시스템에서 내려받은 .xlsx 파일만 사용할 수 있습니다.';
+    final lowerCaseName = file.name.toLowerCase();
+    final isExcelFile =
+        lowerCaseName.endsWith('.xlsx') || lowerCaseName.endsWith('.xls');
+    if (!isExcelFile) {
+      return '학생지원시스템에서 내려받은 .xlsx 또는 .xls 파일만 사용할 수 있습니다.';
     }
     if (file.sizeInBytes > widget.maxFileSizeInBytes) {
       return '파일 크기는 ${_formatFileSize(widget.maxFileSizeInBytes)} 이하여야 합니다.';

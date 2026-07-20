@@ -11,6 +11,7 @@ from backend.app.models import (
     InputTimetable,
     PreferenceRules,
     Timetable,
+    normalize_course_category,
     time_to_minutes,
 )
 
@@ -129,12 +130,33 @@ def test_general_elective_requires_area() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("효원핵심교양", Category.GENERAL_REQUIRED),
+        (" 효원 핵심 교양 ", Category.GENERAL_REQUIRED),
+        ("교양 필수", Category.GENERAL_REQUIRED),
+        ("교양 선택", Category.GENERAL_ELECTIVE),
+        ("GENERAL REQUIRED", Category.GENERAL_REQUIRED),
+    ],
+)
+def test_normalize_course_category_accepts_aliases_and_spacing(raw: str, expected: Category) -> None:
+    assert normalize_course_category(raw) is expected
+
+
+def test_normalize_course_category_rejects_unknown_values() -> None:
+    with pytest.raises(ValueError, match="unknown course category"):
+        normalize_course_category("자유선택")
+
+
 def test_empty_preference_rules_are_safe_fallback() -> None:
     rules = PreferenceRules()
 
     assert rules.preferred_free_days == []
-    assert rules.avoid_morning_classes is False
-    assert rules.morning_end_time == "10:00"
+    assert rules.preferred_first_class_time is None
+    assert rules.preferred_free_time_ranges == []
+    assert "no_morning_classes" not in rules.model_dump()
+    assert "avoid_morning_classes" not in rules.model_dump()
 
 
 def test_preference_rules_validate_and_deduplicate_values() -> None:
@@ -147,6 +169,26 @@ def test_preference_rules_validate_and_deduplicate_values() -> None:
 
     assert rules.preferred_free_days == [Day.FRI]
     assert rules.preferred_elective_areas == [1, 3]
+
+
+def test_preference_rules_reject_conflicting_course_names() -> None:
+    with pytest.raises(ValidationError, match="both required and excluded"):
+        PreferenceRules(
+            required_course_names=["대학영어"],
+            excluded_course_names=["대학영어"],
+        )
+
+
+def test_preference_rules_hard_course_names_win_over_soft_duplicates() -> None:
+    rules = PreferenceRules(
+        required_course_names=["대학영어"],
+        preferred_course_names=["대학영어", "고전읽기와토론"],
+        excluded_course_names=["컴퓨팅사고와인공지능"],
+        avoided_course_names=["컴퓨팅사고와인공지능", "열린사고와표현"],
+    )
+
+    assert rules.preferred_course_names == ["고전읽기와토론"]
+    assert rules.avoided_course_names == ["열린사고와표현"]
 
 
 def test_timetable_calculates_credit_and_sorts_schedule(
