@@ -8,7 +8,6 @@ from ..models.preference import PreferenceRules, PreferenceTemplate
 from ..models.timetable import (
     RankingDiagnostic,
     RankingTemplate,
-    TimetableCandidate,
     TimetableRankingResult,
 )
 from .ranking_template_service import RankingTemplateService, normalize_ranking_template
@@ -65,27 +64,43 @@ class TimetableRankingService:
         ranking_template = normalize_ranking_template(template)
         definition = self.template_service.get_definition(ranking_template)
         candidates = list(session.generated_candidates)
-        diagnostics = self._pre_rank_diagnostics(candidates)
+        diagnostics = []
+        deduped_candidates = self.ranker._dedupe_candidates(candidates)
+        duplicate_count = len(candidates) - len(deduped_candidates)
+        if duplicate_count:
+            diagnostics.append(
+                RankingDiagnostic(
+                    code="DUPLICATE_CANDIDATE_REMOVED",
+                    message="동일한 과목/분반 조합의 중복 후보가 제거되었습니다.",
+                    details={"removed_count": duplicate_count},
+                )
+            )
         hard_filtered = self.ranker.apply_hard_filters(
-            candidates,
+            deduped_candidates,
             preferences=session.ranking_preferences,
         )
-        if len(hard_filtered) < len(candidates):
+        hard_removed_count = len(deduped_candidates) - len(hard_filtered)
+        if hard_removed_count:
             diagnostics.append(
                 RankingDiagnostic(
                     code="HARD_CONDITION_CANDIDATE_DETECTED",
                     message="하드 조건을 위반한 후보가 랭킹 대상에서 제외되었습니다.",
-                    details={"removed_count": len(candidates) - len(hard_filtered)},
+                    details={"removed_count": hard_removed_count},
                 )
             )
 
-        ranked = self.ranker.rank(
-            candidates,
+        ranking_limit = len(hard_filtered) if top_n is None else top_n
+        if ranking_limit <= 0:
+            raise ValueError("top_n must be positive")
+
+        context = self.ranker._build_context(ranking_template, session.ranking_preferences)
+        ranked = self.ranker.rank_filtered_candidates(
+            hard_filtered,
             preferences=session.ranking_preferences,
-            template=ranking_template,
-            top_n=top_n or len(candidates),
+            context=context,
+            top_n=ranking_limit,
         )
-        if top_n is not None and len(ranked) < len(hard_filtered):
+        if len(ranked) < len(hard_filtered):
             diagnostics.append(
                 RankingDiagnostic(
                     code="RANKING_RESULT_TRUNCATED",
@@ -114,32 +129,6 @@ class TimetableRankingService:
         )
         self.store.update_ranking_result(session_id, result)
         return result
-
-    @staticmethod
-    def _pre_rank_diagnostics(
-        candidates: list[TimetableCandidate],
-    ) -> list[RankingDiagnostic]:
-        diagnostics: list[RankingDiagnostic] = []
-        seen: set[tuple[tuple[str, str], ...]] = set()
-        duplicate_count = 0
-        for candidate in candidates:
-            key = tuple(
-                sorted((course.course_id, course.division) for course in candidate.courses)
-            )
-            if key in seen:
-                duplicate_count += 1
-            else:
-                seen.add(key)
-        if duplicate_count:
-            diagnostics.append(
-                RankingDiagnostic(
-                    code="DUPLICATE_CANDIDATE_REMOVED",
-                    message="동일한 과목/분반 조합의 중복 후보가 제거되었습니다.",
-                    details={"removed_count": duplicate_count},
-                )
-            )
-        return diagnostics
-
 
 def rank_timetables_for_session(
     *,
