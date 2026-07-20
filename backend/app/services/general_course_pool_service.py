@@ -21,7 +21,6 @@ class EligibilityStatus(str, Enum):
     ELIGIBLE = "eligible"
     NOT_ELIGIBLE = "not_eligible"
     NOT_RESTRICTED = "not_restricted"
-    RULE_DATA_MISSING = "rule_data_missing"
     UNKNOWN_DEPARTMENT = "unknown_department"
 
 
@@ -54,10 +53,16 @@ class CourseRestrictionPolicy:
         *,
         rules: Iterable[DepartmentRestrictionRule] = (),
     ) -> None:
-        self.rules_by_course_section = {
-            (_normalized(rule.course_code), _normalized(rule.division)): rule
-            for rule in rules
-        }
+        rules_by_course_section: dict[tuple[str, str], DepartmentRestrictionRule] = {}
+        for rule in rules:
+            key = (
+                _normalized(rule.course_code),
+                _normalized(rule.division),
+            )
+            if key in rules_by_course_section:
+                raise ValueError(f"duplicate restriction rule: {rule.course_code}-{rule.division}")
+            rules_by_course_section[key] = rule
+        self.rules_by_course_section = rules_by_course_section
 
     def evaluate(self, course: Course, *, department: str) -> EligibilityDecision:
         department_name = department.strip()
@@ -293,7 +298,6 @@ def _diagnostic(course: Course, reason_code: str, reason: str, source: str) -> E
 def _reason_code(status: EligibilityStatus) -> str:
     return {
         EligibilityStatus.NOT_ELIGIBLE: "DEPARTMENT_NOT_ELIGIBLE",
-        EligibilityStatus.RULE_DATA_MISSING: "DEPARTMENT_RULE_DATA_MISSING",
         EligibilityStatus.UNKNOWN_DEPARTMENT: "UNKNOWN_DEPARTMENT",
         EligibilityStatus.ELIGIBLE: "ELIGIBLE",
         EligibilityStatus.NOT_RESTRICTED: "NOT_RESTRICTED",

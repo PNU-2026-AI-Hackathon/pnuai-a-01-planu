@@ -234,6 +234,27 @@ def test_department_missing_from_allowed_list_is_excluded() -> None:
     assert result.excluded_courses[0].reason_code == "DEPARTMENT_NOT_ELIGIBLE"
 
 
+def test_duplicate_restriction_rule_for_same_course_section_raises() -> None:
+    with pytest.raises(ValueError, match="duplicate restriction rule: ZE100-001"):
+        CourseRestrictionPolicy(
+            rules=[
+                _rule("ZE100", "001", allowed={"컴퓨터공학과"}),
+                _rule("ZE100", "001", blocked={"전자공학과"}),
+            ]
+        )
+
+
+def test_restriction_rules_for_different_divisions_are_allowed() -> None:
+    policy = CourseRestrictionPolicy(
+        rules=[
+            _rule("ZE100", "001", blocked={"컴퓨터공학과"}),
+            _rule("ZE100", "002", blocked={"컴퓨터공학과"}),
+        ]
+    )
+
+    assert len(policy.rules_by_course_section) == 2
+
+
 def test_loader_merges_multiple_department_rows_into_one_rule(tmp_path) -> None:
     path = tmp_path / "course_restrictions.json"
     path.write_text(

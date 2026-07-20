@@ -35,7 +35,6 @@ class CourseFilter:
         *,
         fixed_courses: Iterable[Course] = (),
         preferences: PreferenceRules | None = None,
-        department: str | None = None,
     ) -> CourseFilterResult:
         rules = preferences or PreferenceRules()
         fixed = list(fixed_courses)
@@ -136,7 +135,6 @@ def filter_general_courses(
     *,
     fixed_courses: Iterable[Course] = (),
     preferences: PreferenceRules | None = None,
-    department: str | None = None,
 ) -> CourseFilterResult:
     """Functional convenience API used by route handlers and tests."""
 
@@ -144,5 +142,4 @@ def filter_general_courses(
         courses,
         fixed_courses=fixed_courses,
         preferences=preferences,
-        department=department,
     )
