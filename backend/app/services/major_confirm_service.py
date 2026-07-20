@@ -69,12 +69,7 @@ class MajorConfirmService:
 
         if session.fixed_courses:
             if session.confirmed_major_preview_id == preview_id:
-                latest_preview_id = (
-                    session.latest_major_preview.get("preview_id")
-                    if session.latest_major_preview is not None
-                    else None
-                )
-                if not allow_reconfirm or latest_preview_id in (None, preview_id):
+                if not allow_reconfirm or session.pending_major_preview is None:
                     return self._response(
                         session_id=session.session_id,
                         preview_id=preview_id,
@@ -88,6 +83,12 @@ class MajorConfirmService:
                     "이미 다른 전공 미리보기로 확정된 세션입니다.",
                     status_code=409,
                 )
+        elif allow_reconfirm:
+            raise AppError(
+                "INVALID_SESSION_STAGE",
+                "전공 확정 이후에만 전공 시간표를 재확정할 수 있습니다.",
+                status_code=409,
+            )
 
         if not session.major_candidates:
             raise AppError(
@@ -95,21 +96,18 @@ class MajorConfirmService:
                 "세션에 파싱된 전공 수강편람 데이터가 없습니다.",
                 status_code=409,
             )
-        if (
-            session.session_stage is not SessionStage.MAJOR_PREVIEW_CREATED
-            and not (
-                allow_reconfirm
-                and session.confirmed_major_preview_id == preview_id
-                and session.fixed_courses
-            )
-        ):
+        if not allow_reconfirm and session.session_stage is not SessionStage.MAJOR_PREVIEW_CREATED:
             raise AppError(
                 "INVALID_SESSION_STAGE",
                 "전공 미리보기 생성 이후에만 전공 시간표를 확정할 수 있습니다.",
                 status_code=409,
             )
 
-        preview = session.latest_major_preview
+        preview = (
+            session.pending_major_preview
+            if allow_reconfirm
+            else session.latest_major_preview
+        )
         if preview is None:
             raise AppError(
                 "MAJOR_PREVIEW_NOT_FOUND",

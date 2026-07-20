@@ -212,10 +212,9 @@ def test_major_reconfirm_api_replaces_confirmed_courses() -> None:
     )
     service = MajorConfirmService(store=store)
     asyncio.run(service.confirm(session.session_id, "preview-1"))
-    store.update(
+    store.save_major_preview(
         session.session_id,
-        session_stage=SessionStage.MAJOR_PREVIEW_CREATED,
-        latest_major_preview={
+        preview={
             "session_id": session.session_id,
             "preview_id": "preview-2",
             "matched_course_ids": ["MA200-001"],

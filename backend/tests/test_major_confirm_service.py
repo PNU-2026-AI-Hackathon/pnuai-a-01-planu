@@ -304,6 +304,29 @@ def _populate_downstream_results(store: SessionStore, session_id: str, course: C
     )
 
 
+def _save_pending_preview(
+    store: SessionStore,
+    session_id: str,
+    *,
+    preview_id: str = "preview-2",
+    matched_course_ids: list[str] | None = None,
+    session_owner: str | None = None,
+) -> None:
+    store.save_major_preview(
+        session_id,
+        preview={
+            "session_id": session_owner or session_id,
+            "preview_id": preview_id,
+            "matched_course_ids": ["MA200-001"] if matched_course_ids is None else matched_course_ids,
+            "ambiguous_courses": [],
+            "unmatched_courses": [],
+            "ambiguous_texts": [],
+            "has_time_conflict": False,
+            "conflicts": [],
+        },
+    )
+
+
 def test_reconfirm_replaces_fixed_courses_and_clears_downstream_results() -> None:
     first = _course("MA100-001", "자료구조", "001", credit=3)
     second = _course(
@@ -320,20 +343,7 @@ def test_reconfirm_replaces_fixed_courses_and_clears_downstream_results() -> Non
     service = MajorConfirmService(store=store)
     asyncio.run(service.confirm(session.session_id, "preview-1"))
     _populate_downstream_results(store, session.session_id, first)
-    store.update(
-        session.session_id,
-        session_stage=SessionStage.MAJOR_PREVIEW_CREATED,
-        latest_major_preview={
-            "session_id": session.session_id,
-            "preview_id": "preview-2",
-            "matched_course_ids": ["MA200-001"],
-            "ambiguous_courses": [],
-            "unmatched_courses": [],
-            "ambiguous_texts": [],
-            "has_time_conflict": False,
-            "conflicts": [],
-        },
-    )
+    _save_pending_preview(store, session.session_id, preview_id="preview-2")
 
     response = asyncio.run(service.reconfirm(session.session_id, "preview-2"))
 
@@ -342,6 +352,9 @@ def test_reconfirm_replaces_fixed_courses_and_clears_downstream_results() -> Non
     assert saved.confirmed_major_credits == 2
     assert saved.session_stage is SessionStage.MAJOR_CONFIRMED
     assert saved.confirmed_major_preview_id == "preview-2"
+    assert saved.latest_major_preview is not None
+    assert saved.latest_major_preview["preview_id"] == "preview-2"
+    assert saved.pending_major_preview is None
     assert response.confirmed_course_count == 1
     assert response.confirmed_major_credits == 2
     assert saved.general_required_candidates == []
@@ -372,40 +385,42 @@ def test_reconfirm_rejects_wrong_session_and_stale_preview() -> None:
     service = MajorConfirmService(store=store)
     asyncio.run(service.confirm(session.session_id, "preview-1"))
 
-    store.update(
+    _save_pending_preview(
+        store,
         session.session_id,
-        session_stage=SessionStage.MAJOR_PREVIEW_CREATED,
-        latest_major_preview={
-            "session_id": "other-session",
-            "preview_id": "preview-2",
-            "matched_course_ids": ["MA200-001"],
-            "ambiguous_courses": [],
-            "unmatched_courses": [],
-            "ambiguous_texts": [],
-            "has_time_conflict": False,
-            "conflicts": [],
-        },
+        preview_id="preview-2",
+        session_owner="other-session",
     )
     with pytest.raises(AppError) as wrong_session:
         asyncio.run(service.reconfirm(session.session_id, "preview-2"))
     assert wrong_session.value.code == "INVALID_PREVIEW_SESSION"
 
-    store.update(
-        session.session_id,
-        latest_major_preview={
-            "session_id": session.session_id,
-            "preview_id": "preview-2",
-            "matched_course_ids": ["MA200-001"],
-            "ambiguous_courses": [],
-            "unmatched_courses": [],
-            "ambiguous_texts": [],
-            "has_time_conflict": False,
-            "conflicts": [],
-        },
-    )
+    _save_pending_preview(store, session.session_id, preview_id="preview-2")
     with pytest.raises(AppError) as stale:
         asyncio.run(service.reconfirm(session.session_id, "preview-1"))
     assert stale.value.code == "STALE_MAJOR_PREVIEW"
+
+
+def test_reconfirm_rejects_stale_pending_preview() -> None:
+    first = _course("MA100-001", "자료구조", "001")
+    second = _course("MA200-001", "운영체제", "001", start="10:30", end="11:45")
+    store = SessionStore()
+    session = store.create("컴퓨터공학과", major_candidates=[first, second])
+    _save_preview(store, session.session_id, preview_id="preview-1")
+    service = MajorConfirmService(store=store)
+    asyncio.run(service.confirm(session.session_id, "preview-1"))
+
+    _save_pending_preview(store, session.session_id, preview_id="pending-old")
+    _save_pending_preview(store, session.session_id, preview_id="pending-new")
+
+    with pytest.raises(AppError) as exc_info:
+        asyncio.run(service.reconfirm(session.session_id, "pending-old"))
+
+    assert exc_info.value.code == "STALE_MAJOR_PREVIEW"
+    saved = store.get(session.session_id)
+    assert saved.pending_major_preview is not None
+    assert saved.pending_major_preview["preview_id"] == "pending-new"
+    assert [course.course_id for course in saved.fixed_courses] == ["MA100-001"]
 
 
 def test_reconfirm_is_idempotent_for_same_latest_preview() -> None:
@@ -416,20 +431,7 @@ def test_reconfirm_is_idempotent_for_same_latest_preview() -> None:
     _save_preview(store, session.session_id, preview_id="preview-1")
     service = MajorConfirmService(store=store)
     asyncio.run(service.confirm(session.session_id, "preview-1"))
-    store.update(
-        session.session_id,
-        session_stage=SessionStage.MAJOR_PREVIEW_CREATED,
-        latest_major_preview={
-            "session_id": session.session_id,
-            "preview_id": "preview-2",
-            "matched_course_ids": ["MA200-001"],
-            "ambiguous_courses": [],
-            "unmatched_courses": [],
-            "ambiguous_texts": [],
-            "has_time_conflict": False,
-            "conflicts": [],
-        },
-    )
+    _save_pending_preview(store, session.session_id, preview_id="preview-2")
 
     first_response = asyncio.run(service.reconfirm(session.session_id, "preview-2"))
     second_response = asyncio.run(service.reconfirm(session.session_id, "preview-2"))
@@ -437,6 +439,7 @@ def test_reconfirm_is_idempotent_for_same_latest_preview() -> None:
     assert first_response == second_response
     saved = store.get(session.session_id)
     assert [course.course_id for course in saved.fixed_courses] == ["MA200-001"]
+    assert saved.pending_major_preview is None
 
 
 def test_regular_confirm_still_rejects_changing_confirmed_major() -> None:
@@ -447,20 +450,7 @@ def test_regular_confirm_still_rejects_changing_confirmed_major() -> None:
     _save_preview(store, session.session_id, preview_id="preview-1")
     service = MajorConfirmService(store=store)
     asyncio.run(service.confirm(session.session_id, "preview-1"))
-    store.update(
-        session.session_id,
-        session_stage=SessionStage.MAJOR_PREVIEW_CREATED,
-        latest_major_preview={
-            "session_id": session.session_id,
-            "preview_id": "preview-2",
-            "matched_course_ids": ["MA200-001"],
-            "ambiguous_courses": [],
-            "unmatched_courses": [],
-            "ambiguous_texts": [],
-            "has_time_conflict": False,
-            "conflicts": [],
-        },
-    )
+    _save_pending_preview(store, session.session_id, preview_id="preview-2")
 
     with pytest.raises(AppError) as exc_info:
         asyncio.run(service.confirm(session.session_id, "preview-2"))

@@ -15,10 +15,12 @@ from backend.app.models import (
     Day,
     MajorCourseReference,
     MajorSelectionParseResult,
+    Timetable,
+    TimetableRankingResult,
 )
 from backend.app.services.major_preview_service import MajorPreviewService
 from backend.app.services.major_selection_parser import InvalidMajorSelectionOutputError
-from backend.app.services.session_store import SessionStore
+from backend.app.services.session_store import SessionStage, SessionStore
 
 
 class FakeMajorSelectionParser:
@@ -440,8 +442,62 @@ def test_confirmed_session_can_create_new_preview_for_reselection() -> None:
 
     assert response.can_confirm is True
     assert saved.fixed_courses == [fixed]
+    assert saved.latest_major_preview is None
+    assert saved.pending_major_preview is not None
+    assert saved.pending_major_preview["preview_id"] == response.preview_id
+
+
+def test_reselection_preview_preserves_confirmed_ranking_state() -> None:
+    fixed = _course("MA100-001", "자료구조", "001")
+    replacement = _course(
+        "MA200-001",
+        "운영체제",
+        "001",
+        day=Day.TUE,
+        start="10:30",
+        end="11:45",
+    )
+    existing_timetable = Timetable(courses=[fixed])
+    existing_ranking = TimetableRankingResult(total_candidate_count=1)
+    store = SessionStore()
+    session = store.create(
+        "컴퓨터공학과",
+        major_candidates=[fixed, replacement],
+    )
+    store.update(
+        session.session_id,
+        fixed_courses=[fixed],
+        confirmed_major_credits=3,
+        confirmed_major_preview_id="preview-1",
+        latest_major_preview={
+            "session_id": session.session_id,
+            "preview_id": "preview-1",
+            "matched_course_ids": ["MA100-001"],
+        },
+        generated_candidates=[existing_timetable],
+        latest_ranking_result=existing_ranking,
+        session_stage=SessionStage.RANKING_COMPLETED,
+    )
+    service = _service(
+        store,
+        MajorSelectionParseResult(
+            selected_courses=[MajorCourseReference(course_name="운영체제", section="001")]
+        ),
+    )
+
+    response = asyncio.run(service.create_preview(session.session_id, "운영체제 001분반"))
+
+    saved = store.get(session.session_id)
+    assert response.can_confirm is True
+    assert saved.session_stage is SessionStage.RANKING_COMPLETED
+    assert saved.fixed_courses == [fixed]
+    assert saved.generated_candidates == [existing_timetable]
+    assert saved.latest_ranking_result == existing_ranking
     assert saved.latest_major_preview is not None
-    assert saved.latest_major_preview["preview_id"] == response.preview_id
+    assert saved.latest_major_preview["preview_id"] == "preview-1"
+    assert saved.pending_major_preview is not None
+    assert saved.pending_major_preview["preview_id"] == response.preview_id
+    assert saved.pending_major_preview["matched_course_ids"] == ["MA200-001"]
 
 
 def test_parser_failure_is_sanitized() -> None:

@@ -99,6 +99,7 @@ class SessionData:
     session_stage: SessionStage = SessionStage.CATALOG_PARSED
     confirmed_major_preview_id: str | None = None
     latest_major_preview: dict[str, Any] | None = None
+    pending_major_preview: dict[str, Any] | None = None
     created_at: datetime = field(default_factory=_utcnow)
     updated_at: datetime = field(default_factory=_utcnow)
 
@@ -152,6 +153,8 @@ class SessionData:
             self.session_stage = SessionStage(self.session_stage)
         if self.latest_major_preview is not None:
             self.latest_major_preview = dict(self.latest_major_preview)
+        if self.pending_major_preview is not None:
+            self.pending_major_preview = dict(self.pending_major_preview)
 
 
 class SessionStore:
@@ -206,6 +209,24 @@ class SessionStore:
             return self._copy(data)
 
     get_session = get
+
+    def save_major_preview(
+        self,
+        session_id: str,
+        *,
+        preview: dict[str, Any],
+    ) -> SessionData:
+        """Save a preview without invalidating confirmed downstream state."""
+
+        with self._lock:
+            data = self._get_live_locked(session_id, touch=False)
+            if data.fixed_courses:
+                data.pending_major_preview = dict(preview)
+            else:
+                data.latest_major_preview = dict(preview)
+                data.session_stage = SessionStage.MAJOR_PREVIEW_CREATED
+            data.updated_at = self._clock()
+            return self._copy(data)
 
     def confirm_major_preview(
         self,
@@ -272,6 +293,7 @@ class SessionStore:
                 data.confirmed_major_preview_id == preview_id
                 and data.fixed_courses
                 and data.session_stage is SessionStage.MAJOR_CONFIRMED
+                and data.pending_major_preview is None
                 and (
                     data.latest_major_preview is None
                     or data.latest_major_preview.get("preview_id") == preview_id
@@ -280,7 +302,7 @@ class SessionStore:
                 data.updated_at = self._clock()
                 return self._copy(data)
 
-            preview = data.latest_major_preview
+            preview = data.pending_major_preview
             if preview is None:
                 raise MajorPreviewNotFoundError("major preview not found")
             if preview.get("session_id") not in (None, data.session_id):
@@ -300,6 +322,7 @@ class SessionStore:
             data.confirmed_major_credits = confirmed_major_credits
             data.confirmed_major_preview_id = preview_id
             data.latest_major_preview = dict(confirmed_preview)
+            data.pending_major_preview = None
             data.session_stage = SessionStage.MAJOR_CONFIRMED
 
             data.general_required_candidates = []
@@ -545,6 +568,11 @@ class SessionStore:
             latest_major_preview=(
                 dict(data.latest_major_preview)
                 if data.latest_major_preview is not None
+                else None
+            ),
+            pending_major_preview=(
+                dict(data.pending_major_preview)
+                if data.pending_major_preview is not None
                 else None
             ),
         )
