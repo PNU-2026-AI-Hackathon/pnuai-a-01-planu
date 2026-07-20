@@ -18,6 +18,7 @@ from .services.general_course_pool_service import (
 )
 from .services.major_confirm_service import MajorConfirmService
 from .services.major_catalog_upload_service import MajorCatalogUploadService
+from .services.uploaded_catalog_parser import UploadedCatalogParser
 from .services.major_preview_service import MajorPreviewService
 from .services.major_selection_parser import MajorSelectionParser
 from .services.session_store import SessionStore, session_store
@@ -96,4 +97,5 @@ def get_general_course_preparation_service() -> GeneralCoursePreparationService:
         pool_service=get_general_course_pool_service(),
         general_required_courses=general_required_courses,
         fallback_elective_courses=fallback_elective_courses,
+        elective_parser=UploadedCatalogParser(),
     )

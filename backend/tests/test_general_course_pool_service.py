@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import asyncio
 
 import pytest
 
@@ -431,13 +432,14 @@ def test_preparation_requires_major_confirmed_session_and_saves_result() -> None
         session_stage=SessionStage.MAJOR_CONFIRMED,
     )
 
-    result = GeneralCoursePreparationService(
+    response = asyncio.run(GeneralCoursePreparationService(
         store=store,
         general_required_courses=[required],
-    ).prepare_for_session(session.session_id)
+    ).prepare_for_session(session.session_id))
 
     saved = store.get(session.session_id)
-    assert result.pools.required_courses == [required]
+    assert response.required_course_count == 1
+    assert response.elective_course_count == 1
     assert saved.general_required_candidates == [required]
     assert saved.general_elective_candidates == [elective]
     assert saved.session_stage is SessionStage.GENERAL_READY
@@ -454,14 +456,14 @@ def test_preparation_is_idempotent_when_session_is_general_ready() -> None:
         session_stage=SessionStage.MAJOR_CONFIRMED,
     )
 
-    first = GeneralCoursePreparationService(
+    first = asyncio.run(GeneralCoursePreparationService(
         store=store,
         general_required_courses=[required],
-    ).prepare_for_session(session.session_id)
-    second = GeneralCoursePreparationService(
+    ).prepare_for_session(session.session_id))
+    second = asyncio.run(GeneralCoursePreparationService(
         store=store,
         general_required_courses=[],
-    ).prepare_for_session(session.session_id)
+    ).prepare_for_session(session.session_id))
 
     saved = store.get(session.session_id)
     assert second == first
@@ -477,10 +479,10 @@ def test_preparation_rejects_wrong_stage_without_partial_save() -> None:
     session = store.create("컴퓨터공학과")
 
     with pytest.raises(AppError) as exc_info:
-        GeneralCoursePreparationService(
+        asyncio.run(GeneralCoursePreparationService(
             store=store,
             general_required_courses=[required],
-        ).prepare_for_session(session.session_id)
+        ).prepare_for_session(session.session_id))
 
     saved = store.get(session.session_id)
     assert exc_info.value.code == "INVALID_SESSION_STAGE"

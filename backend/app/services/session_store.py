@@ -84,6 +84,9 @@ class SessionData:
     general_elective_candidates: list[Course] = field(default_factory=list)
     general_pool_diagnostics: list[ExcludedCourseDiagnostic] = field(default_factory=list)
     general_pool_warnings: list[str] = field(default_factory=list)
+    general_pool_data_source: str | None = None
+    general_pool_elective_area: int | None = None
+    general_pool_prepared_at: datetime | None = None
     generated_candidates: list[TimetableCandidate] = field(default_factory=list)
     ranking_preferences: PreferenceRules = field(default_factory=PreferenceRules)
     latest_ranking_result: TimetableRankingResult | None = None
@@ -329,6 +332,9 @@ class SessionStore:
             data.general_elective_candidates = []
             data.general_pool_diagnostics = []
             data.general_pool_warnings = []
+            data.general_pool_data_source = None
+            data.general_pool_elective_area = None
+            data.general_pool_prepared_at = None
             data.generated_candidates = []
             data.generated_timetable_candidates = []
             data.generation_diagnostics = []
@@ -424,15 +430,33 @@ class SessionStore:
         self,
         session_id: str,
         result: GeneralCoursePoolResult,
+        *,
+        data_source: str | None = None,
+        elective_area: int | None = None,
     ) -> SessionData:
         with self._lock:
             data = self._get_live_locked(session_id, touch=False)
+            now = self._clock()
             data.general_required_candidates = list(result.pools.required_courses)
             data.general_elective_candidates = list(result.pools.elective_courses)
             data.general_pool_diagnostics = list(result.excluded_courses)
             data.general_pool_warnings = list(result.warnings)
+            data.general_pool_data_source = data_source
+            data.general_pool_elective_area = elective_area
+            data.general_pool_prepared_at = now
+            data.generated_candidates = []
+            data.generated_timetable_candidates = []
+            data.generation_diagnostics = []
+            data.generation_course_load_target = None
+            data.generation_hard_conditions = None
+            data.generation_truncated = False
+            data.generated_at = None
+            data.ranking_preferences = PreferenceRules()
+            data.latest_ranking_result = None
+            data.preference_unsupported_conditions = []
+            data.preference_warnings = []
             data.session_stage = SessionStage.GENERAL_READY
-            data.updated_at = self._clock()
+            data.updated_at = now
             return self._copy(data)
 
     def update_generated_candidates(
@@ -545,6 +569,9 @@ class SessionStore:
             general_elective_candidates=list(data.general_elective_candidates),
             general_pool_diagnostics=list(data.general_pool_diagnostics),
             general_pool_warnings=list(data.general_pool_warnings),
+            general_pool_data_source=data.general_pool_data_source,
+            general_pool_elective_area=data.general_pool_elective_area,
+            general_pool_prepared_at=data.general_pool_prepared_at,
             generated_candidates=list(data.generated_candidates),
             ranking_preferences=data.ranking_preferences.model_copy(deep=True),
             latest_ranking_result=(
