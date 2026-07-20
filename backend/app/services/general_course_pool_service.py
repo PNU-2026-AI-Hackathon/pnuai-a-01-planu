@@ -104,34 +104,34 @@ class GeneralCoursePoolService:
         self,
         *,
         department: str,
-        restricted_courses: Iterable[Course],
+        internal_general_courses: Iterable[Course],
         uploaded_elective_courses: Iterable[Course] | None = None,
         fallback_elective_courses: Iterable[Course] | None = None,
     ) -> GeneralCoursePoolResult:
         if not department.strip():
             raise AppError("DEPARTMENT_NOT_FOUND", "사용자 학과 정보가 없습니다.", status_code=409)
 
-        restricted_list = list(restricted_courses)
-        if not restricted_list:
+        internal_courses = list(internal_general_courses)
+        if not internal_courses:
             raise AppError(
                 "RESTRICTED_COURSE_DATA_NOT_FOUND",
-                "내부 제한 과목 데이터가 없습니다.",
+                "내부 교양 및 제한 과목 데이터가 없습니다.",
                 status_code=500,
             )
 
         uploaded = list(uploaded_elective_courses or [])
         fallback = list(fallback_elective_courses or [])
         result = GeneralCoursePoolResult()
-        restricted_by_key = {_course_key(course): course for course in restricted_list}
+        internal_course_by_key = {_course_key(course): course for course in internal_courses}
 
         required = self._accept_courses(
-            restricted_list,
+            internal_courses,
             department=department,
             result=result,
-            restricted_by_key=restricted_by_key,
-            source="restricted_course_catalog",
+            internal_course_by_key=internal_course_by_key,
+            source="internal_general_courses",
             allowed_categories={Category.GENERAL_REQUIRED},
-            apply_restriction_when_present=True,
+            apply_restriction_to_all=True,
         )
 
         if uploaded:
@@ -149,10 +149,10 @@ class GeneralCoursePoolService:
             elective_source,
             department=department,
             result=result,
-            restricted_by_key=restricted_by_key,
+            internal_course_by_key=internal_course_by_key,
             source=elective_source_name,
             allowed_categories={Category.GENERAL_ELECTIVE},
-            apply_restriction_when_present=False,
+            apply_restriction_to_all=False,
         )
 
         result.pools = GeneralCoursePools(
@@ -167,10 +167,10 @@ class GeneralCoursePoolService:
         *,
         department: str,
         result: GeneralCoursePoolResult,
-        restricted_by_key: dict[tuple[str, str], Course],
+        internal_course_by_key: dict[tuple[str, str], Course],
         source: str,
         allowed_categories: set[Category],
-        apply_restriction_when_present: bool,
+        apply_restriction_to_all: bool,
     ) -> list[Course]:
         accepted: list[Course] = []
         seen: set[tuple[str, str]] = set()
@@ -189,8 +189,14 @@ class GeneralCoursePoolService:
                 )
                 continue
 
-            restriction_course = restricted_by_key.get(key)
-            if apply_restriction_when_present or restriction_course is not None:
+            restriction_course = internal_course_by_key.get(key)
+            # Uploaded elective rows are checked only when the same course
+            # section exists in the internal restriction-bearing data.
+            should_check_restriction = (
+                apply_restriction_to_all
+                or restriction_course is not None
+            )
+            if should_check_restriction:
                 if restriction_course is not None and restriction_course != course:
                     result.warnings.append(
                         f"{course.course_id} 강의 정보가 내부 제한 데이터와 달라 실제 후보 정보는 {source} 값을 유지했습니다."
@@ -222,12 +228,12 @@ class GeneralCoursePreparationService:
         *,
         store: SessionStore = session_store,
         pool_service: GeneralCoursePoolService | None = None,
-        restricted_courses: Iterable[Course] = (),
+        internal_general_courses: Iterable[Course] = (),
         fallback_elective_courses: Iterable[Course] | None = None,
     ) -> None:
         self.store = store
         self.pool_service = pool_service or GeneralCoursePoolService()
-        self.restricted_courses = list(restricted_courses)
+        self.internal_general_courses = list(internal_general_courses)
         self.fallback_elective_courses = (
             None if fallback_elective_courses is None else list(fallback_elective_courses)
         )
@@ -242,6 +248,16 @@ class GeneralCoursePreparationService:
                 status_code=404,
             ) from exc
 
+        if session.session_stage is SessionStage.GENERAL_READY:
+            return GeneralCoursePoolResult(
+                pools=GeneralCoursePools(
+                    required_courses=session.general_required_candidates,
+                    elective_courses=session.general_elective_candidates,
+                ),
+                excluded_courses=session.general_pool_diagnostics,
+                warnings=session.general_pool_warnings,
+            )
+
         if session.session_stage is not SessionStage.MAJOR_CONFIRMED:
             raise AppError(
                 "INVALID_SESSION_STAGE",
@@ -253,7 +269,7 @@ class GeneralCoursePreparationService:
 
         result = self.pool_service.build_pools(
             department=session.department,
-            restricted_courses=self.restricted_courses,
+            internal_general_courses=self.internal_general_courses,
             uploaded_elective_courses=session.elective_candidates,
             fallback_elective_courses=self.fallback_elective_courses,
         )
