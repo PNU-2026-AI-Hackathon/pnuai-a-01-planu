@@ -34,6 +34,7 @@ from .preference import (
 )
 from .timetable import (
     CourseLoadSatisfaction,
+    GenerationDiagnostic,
     RankingDiagnostic,
     RankingResult,
     RankingTemplate,
@@ -42,6 +43,8 @@ from .timetable import (
     ScoreDetail,
     Timetable,
     TimetableCandidate,
+    TimetableGenerationCandidate,
+    TimetableGenerationResult,
     TimetableRankingResult,
 )
 
@@ -58,6 +61,7 @@ __all__ = [
     "ExcludedCourseDiagnostic",
     "GeneralCoursePoolResult",
     "GeneralCoursePools",
+    "GenerationDiagnostic",
     "InputTimetable",
     "AmbiguousMajorCourse",
     "MajorCourseMatchResult",
@@ -80,6 +84,8 @@ __all__ = [
     "TimeRange",
     "Timetable",
     "TimetableCandidate",
+    "TimetableGenerationCandidate",
+    "TimetableGenerationResult",
     "TimetableRankingResult",
     "UnmatchedMajorCourse",
     "merge_preference_rules",

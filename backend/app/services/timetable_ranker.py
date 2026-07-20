@@ -115,9 +115,9 @@ class TimetableRanker:
         ]
         scored.sort(
             key=lambda item: (
-                -item.load_satisfaction.satisfied_required_group_count,
-                item.load_satisfaction.elective_count_gap,
-                item.load_satisfaction.credit_gap,
+                -item.load_satisfaction.required_group_sort_count,
+                item.load_satisfaction.elective_count_sort_gap,
+                item.load_satisfaction.credit_sort_gap,
                 -item.raw_score,
                 self._idle_minutes(item.timetable.courses),
                 len(self._meetings_by_day(item.timetable.courses)),

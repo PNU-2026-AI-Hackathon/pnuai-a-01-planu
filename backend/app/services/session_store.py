@@ -10,12 +10,18 @@ from typing import Any, Callable, Iterable
 from uuid import uuid4
 
 from ..models.course import Course
+from ..models.course_load import CourseLoadTarget
 from ..models.general_course_pool import (
     ExcludedCourseDiagnostic,
     GeneralCoursePoolResult,
 )
 from ..models.preference import PreferenceRules
-from ..models.timetable import TimetableCandidate, TimetableRankingResult
+from ..models.timetable import (
+    GenerationDiagnostic,
+    TimetableCandidate,
+    TimetableGenerationCandidate,
+    TimetableRankingResult,
+)
 
 
 def _utcnow() -> datetime:
@@ -81,6 +87,12 @@ class SessionData:
     generated_candidates: list[TimetableCandidate] = field(default_factory=list)
     ranking_preferences: PreferenceRules = field(default_factory=PreferenceRules)
     latest_ranking_result: TimetableRankingResult | None = None
+    generated_timetable_candidates: list[TimetableGenerationCandidate] = field(default_factory=list)
+    generation_diagnostics: list[GenerationDiagnostic] = field(default_factory=list)
+    generation_course_load_target: CourseLoadTarget | None = None
+    generation_hard_conditions: PreferenceRules | None = None
+    generation_truncated: bool = False
+    generated_at: datetime | None = None
     confirmed_major_credits: float = 0
     session_stage: SessionStage = SessionStage.CATALOG_PARSED
     confirmed_major_preview_id: str | None = None
@@ -112,6 +124,15 @@ class SessionData:
         ):
             self.latest_ranking_result = TimetableRankingResult.model_validate(
                 self.latest_ranking_result
+            )
+        self.generated_timetable_candidates = list(self.generated_timetable_candidates)
+        self.generation_diagnostics = list(self.generation_diagnostics)
+        if (
+            self.generation_hard_conditions is not None
+            and not isinstance(self.generation_hard_conditions, PreferenceRules)
+        ):
+            self.generation_hard_conditions = PreferenceRules.model_validate(
+                self.generation_hard_conditions
             )
         if not isinstance(self.session_stage, SessionStage):
             self.session_stage = SessionStage(self.session_stage)
@@ -234,6 +255,12 @@ class SessionStore:
         generated_candidates: Iterable[TimetableCandidate] | None = None,
         ranking_preferences: PreferenceRules | None = None,
         latest_ranking_result: TimetableRankingResult | None = None,
+        generated_timetable_candidates: Iterable[TimetableGenerationCandidate] | None = None,
+        generation_diagnostics: Iterable[GenerationDiagnostic] | None = None,
+        generation_course_load_target: CourseLoadTarget | None = None,
+        generation_hard_conditions: PreferenceRules | None = None,
+        generation_truncated: bool | None = None,
+        generated_at: datetime | None = None,
     ) -> SessionData:
         with self._lock:
             # get() performs expiry handling; the stored instance is then updated.
@@ -266,6 +293,18 @@ class SessionStore:
                 data.ranking_preferences = ranking_preferences
             if latest_ranking_result is not None:
                 data.latest_ranking_result = latest_ranking_result
+            if generated_timetable_candidates is not None:
+                data.generated_timetable_candidates = list(generated_timetable_candidates)
+            if generation_diagnostics is not None:
+                data.generation_diagnostics = list(generation_diagnostics)
+            if generation_course_load_target is not None:
+                data.generation_course_load_target = generation_course_load_target
+            if generation_hard_conditions is not None:
+                data.generation_hard_conditions = generation_hard_conditions
+            if generation_truncated is not None:
+                data.generation_truncated = generation_truncated
+            if generated_at is not None:
+                data.generated_at = generated_at
             data.updated_at = self._clock()
             return self._copy(data)
 
@@ -313,6 +352,36 @@ class SessionStore:
             data.latest_ranking_result = result
             data.session_stage = SessionStage.RANKING_COMPLETED
             data.updated_at = self._clock()
+            return self._copy(data)
+
+    def update_timetable_generation(
+        self,
+        session_id: str,
+        *,
+        candidates: Iterable[TimetableGenerationCandidate],
+        diagnostics: Iterable[GenerationDiagnostic],
+        course_load_target: CourseLoadTarget,
+        hard_conditions: PreferenceRules | None,
+        truncated: bool,
+    ) -> SessionData:
+        with self._lock:
+            data = self._get_live_locked(session_id, touch=False)
+            now = self._clock()
+            data.generated_timetable_candidates = list(candidates)
+            data.generation_diagnostics = list(diagnostics)
+            data.generation_course_load_target = course_load_target
+            data.generation_hard_conditions = hard_conditions
+            data.generation_truncated = truncated
+            data.generated_candidates = [
+                candidate.timetable.model_copy(
+                    update={"load_satisfaction": candidate.load_satisfaction}
+                )
+                for candidate in data.generated_timetable_candidates
+            ]
+            data.ranking_preferences = hard_conditions or PreferenceRules()
+            data.latest_ranking_result = None
+            data.generated_at = now
+            data.updated_at = now
             return self._copy(data)
 
     def delete(self, session_id: str) -> bool:
@@ -368,6 +437,16 @@ class SessionStore:
                 if data.latest_ranking_result is not None
                 else None
             ),
+            generated_timetable_candidates=list(data.generated_timetable_candidates),
+            generation_diagnostics=list(data.generation_diagnostics),
+            generation_course_load_target=data.generation_course_load_target,
+            generation_hard_conditions=(
+                data.generation_hard_conditions.model_copy(deep=True)
+                if data.generation_hard_conditions is not None
+                else None
+            ),
+            generation_truncated=data.generation_truncated,
+            generated_at=data.generated_at,
             session_stage=data.session_stage,
             latest_major_preview=(
                 dict(data.latest_major_preview)

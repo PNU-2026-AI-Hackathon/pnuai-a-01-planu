@@ -54,24 +54,43 @@ class RankingTemplate(str, Enum):
 
 
 class CourseLoadSatisfaction(_Model):
-    """Objective course-load fit used before subjective template scoring."""
+    """Objective course-load metadata calculated during candidate generation."""
 
-    satisfied_required_group_count: int = Field(default=0, ge=0)
-    requested_required_group_count: int = Field(default=0, ge=0)
-    satisfied_elective_count: int = Field(default=0, ge=0)
-    requested_elective_count: int = Field(default=0, ge=0)
-    target_total_credits: float | None = Field(default=None, gt=0)
-    total_credit: float | None = Field(default=None, ge=0)
+    final_total_credits: float = Field(default=0, ge=0)
+    target_total_credits: float | None = None
+    required_general_count: int = Field(default=0, ge=0)
+    required_general_credits: float = Field(default=0, ge=0)
+    elective_count: int = Field(default=0, ge=0)
+    requested_elective_count: int | None = Field(default=None, ge=0)
+    credit_gap: float | None = None
+    elective_count_gap: int | None = Field(default=None, ge=0)
+    within_credit_limit: bool | None = None
+    elective_count_met: bool | None = None
+    satisfied_required_group_count: int | None = Field(default=None, ge=0)
+    requested_required_group_count: int | None = Field(default=None, ge=0)
+    satisfied_elective_count: int | None = Field(default=None, ge=0)
 
     @property
-    def elective_count_gap(self) -> int:
-        return max(self.requested_elective_count - self.satisfied_elective_count, 0)
+    def required_group_sort_count(self) -> int:
+        if self.satisfied_required_group_count is not None:
+            return self.satisfied_required_group_count
+        return self.required_general_count
 
     @property
-    def credit_gap(self) -> float:
-        if self.target_total_credits is None or self.total_credit is None:
+    def elective_count_sort_gap(self) -> int:
+        if self.elective_count_gap is not None:
+            return self.elective_count_gap
+        if self.requested_elective_count is None:
             return 0
-        return abs(self.target_total_credits - self.total_credit)
+        return max(self.requested_elective_count - self.elective_count, 0)
+
+    @property
+    def credit_sort_gap(self) -> float:
+        if self.credit_gap is not None:
+            return self.credit_gap
+        if self.target_total_credits is None:
+            return 0
+        return abs(self.target_total_credits - self.final_total_credits)
 
 
 class Timetable(_Model):
@@ -130,6 +149,25 @@ class Timetable(_Model):
 
 # Descriptive alias used by generator/ranker services.
 TimetableCandidate = Timetable
+
+
+class TimetableGenerationCandidate(_Model):
+    """A valid generated timetable plus non-ranking objective metadata."""
+
+    timetable: Timetable
+    load_satisfaction: CourseLoadSatisfaction
+
+
+class GenerationDiagnostic(_Model):
+    reason_code: str = Field(min_length=1)
+    reason: str = Field(min_length=1)
+    count: int | None = None
+
+
+class TimetableGenerationResult(_Model):
+    candidates: list[TimetableGenerationCandidate] = Field(default_factory=list)
+    diagnostics: list[GenerationDiagnostic] = Field(default_factory=list)
+    truncated: bool = False
 
 
 class RankingResult(_Model):

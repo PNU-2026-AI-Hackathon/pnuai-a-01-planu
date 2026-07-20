@@ -31,6 +31,7 @@ class TimetableRankingService:
     """Rank already-generated candidates stored in a session."""
 
     ranking_ready_stages = {
+        SessionStage.GENERAL_READY,
         SessionStage.CANDIDATES_GENERATED,
         SessionStage.RANKING_COMPLETED,
     }
