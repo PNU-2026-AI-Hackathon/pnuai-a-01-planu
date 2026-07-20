@@ -98,6 +98,40 @@ class Timetable(_Model):
 TimetableCandidate = Timetable
 
 
+class CourseLoadSatisfaction(_Model):
+    """Objective course-load metadata calculated during candidate generation."""
+
+    final_total_credits: float = Field(ge=0)
+    target_total_credits: float | None = None
+    required_general_count: int = Field(ge=0)
+    required_general_credits: float = Field(ge=0)
+    elective_count: int = Field(ge=0)
+    requested_elective_count: int | None = Field(default=None, ge=0)
+    credit_gap: float | None = None
+    elective_count_gap: int | None = None
+    target_credit_met: bool | None = None
+    elective_count_met: bool | None = None
+
+
+class TimetableGenerationCandidate(_Model):
+    """A valid generated timetable plus non-ranking objective metadata."""
+
+    timetable: Timetable
+    load_satisfaction: CourseLoadSatisfaction
+
+
+class GenerationDiagnostic(_Model):
+    reason_code: str = Field(min_length=1)
+    reason: str = Field(min_length=1)
+    count: int | None = None
+
+
+class TimetableGenerationResult(_Model):
+    candidates: list[TimetableGenerationCandidate] = Field(default_factory=list)
+    diagnostics: list[GenerationDiagnostic] = Field(default_factory=list)
+    truncated: bool = False
+
+
 class RankingResult(_Model):
     raw_score: float = 0
     score_components: list[ScoreComponent] = Field(default_factory=list)
