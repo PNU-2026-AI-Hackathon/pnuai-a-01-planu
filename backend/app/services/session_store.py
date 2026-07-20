@@ -10,9 +10,15 @@ from typing import Any, Callable, Iterable
 from uuid import uuid4
 
 from ..models.course import Course
+from ..models.course_load import CourseLoadTarget
 from ..models.general_course_pool import (
     ExcludedCourseDiagnostic,
     GeneralCoursePoolResult,
+)
+from ..models.preference import PreferenceRules
+from ..models.timetable import (
+    GenerationDiagnostic,
+    TimetableGenerationCandidate,
 )
 
 
@@ -74,6 +80,12 @@ class SessionData:
     general_elective_candidates: list[Course] = field(default_factory=list)
     general_pool_diagnostics: list[ExcludedCourseDiagnostic] = field(default_factory=list)
     general_pool_warnings: list[str] = field(default_factory=list)
+    generated_timetable_candidates: list[TimetableGenerationCandidate] = field(default_factory=list)
+    generation_diagnostics: list[GenerationDiagnostic] = field(default_factory=list)
+    generation_course_load_target: CourseLoadTarget | None = None
+    generation_hard_conditions: PreferenceRules | None = None
+    generation_truncated: bool = False
+    generated_at: datetime | None = None
     confirmed_major_credits: float = 0
     session_stage: SessionStage = SessionStage.CATALOG_PARSED
     confirmed_major_preview_id: str | None = None
@@ -94,6 +106,8 @@ class SessionData:
         self.general_elective_candidates = list(self.general_elective_candidates)
         self.general_pool_diagnostics = list(self.general_pool_diagnostics)
         self.general_pool_warnings = list(self.general_pool_warnings)
+        self.generated_timetable_candidates = list(self.generated_timetable_candidates)
+        self.generation_diagnostics = list(self.generation_diagnostics)
         if not isinstance(self.session_stage, SessionStage):
             self.session_stage = SessionStage(self.session_stage)
         if self.latest_major_preview is not None:
@@ -258,6 +272,28 @@ class SessionStore:
             data.updated_at = self._clock()
             return self._copy(data)
 
+    def update_timetable_generation(
+        self,
+        session_id: str,
+        *,
+        candidates: Iterable[TimetableGenerationCandidate],
+        diagnostics: Iterable[GenerationDiagnostic],
+        course_load_target: CourseLoadTarget,
+        hard_conditions: PreferenceRules | None,
+        truncated: bool,
+    ) -> SessionData:
+        with self._lock:
+            data = self._get_live_locked(session_id, touch=False)
+            now = self._clock()
+            data.generated_timetable_candidates = list(candidates)
+            data.generation_diagnostics = list(diagnostics)
+            data.generation_course_load_target = course_load_target
+            data.generation_hard_conditions = hard_conditions
+            data.generation_truncated = truncated
+            data.generated_at = now
+            data.updated_at = now
+            return self._copy(data)
+
     def delete(self, session_id: str) -> bool:
         with self._lock:
             return self._sessions.pop(session_id, None) is not None
@@ -304,6 +340,12 @@ class SessionStore:
             general_elective_candidates=list(data.general_elective_candidates),
             general_pool_diagnostics=list(data.general_pool_diagnostics),
             general_pool_warnings=list(data.general_pool_warnings),
+            generated_timetable_candidates=list(data.generated_timetable_candidates),
+            generation_diagnostics=list(data.generation_diagnostics),
+            generation_course_load_target=data.generation_course_load_target,
+            generation_hard_conditions=data.generation_hard_conditions,
+            generation_truncated=data.generation_truncated,
+            generated_at=data.generated_at,
             session_stage=data.session_stage,
             latest_major_preview=(
                 dict(data.latest_major_preview)

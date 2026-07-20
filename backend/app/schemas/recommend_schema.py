@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from ..models.course_load import CourseLoadTarget
 from ..models.preference import PreferenceRules
-from ..models.timetable import RankingResult
+from ..models.timetable import RankingResult, TimetableGenerationResult
 
 
 class RecommendRequest(BaseModel):
@@ -42,3 +43,34 @@ class RecommendResponse(BaseModel):
     )
 
     recommendations: list[RankingResult]
+
+
+class TimetableGenerationRequest(BaseModel):
+    """Input for generating valid timetable candidates before ranking."""
+
+    model_config = ConfigDict(
+        extra="forbid",
+        str_strip_whitespace=True,
+        validate_assignment=True,
+    )
+
+    session_id: str = Field(min_length=1)
+    target_total_credits: float | None = Field(default=None, gt=0)
+    additional_elective_count: int | None = Field(default=None, ge=0)
+    hard_conditions: PreferenceRules = Field(default_factory=PreferenceRules)
+    max_candidates: int | None = Field(default=None, gt=0)
+
+    def course_load_target(self) -> CourseLoadTarget:
+        if (
+            self.target_total_credits is None
+            and self.additional_elective_count is None
+        ):
+            return CourseLoadTarget.mvp_default_policy()
+        return CourseLoadTarget(
+            target_total_credits=self.target_total_credits,
+            additional_elective_count=self.additional_elective_count,
+        )
+
+
+class TimetableGenerationResponse(TimetableGenerationResult):
+    """Response returned by ``POST /recommend/generate``."""
