@@ -16,7 +16,7 @@ router = APIRouter(prefix="/recommend", tags=["recommend"])
 
 
 @router.post("/generate", response_model=TimetableGenerationResponse)
-async def generate_timetable_candidates(
+def generate_timetable_candidates(
     request: TimetableGenerationRequest,
     service: TimetableGenerationService = Depends(get_timetable_generation_service),
 ) -> TimetableGenerationResponse:

@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import inspect
+
 from fastapi.testclient import TestClient
 
 from backend.app.deps import get_timetable_generation_service
 from backend.app.main import app
+from backend.app.core.errors import AppError
 from backend.app.models import (
     Category,
     ClassTime,
@@ -20,6 +23,7 @@ from backend.app.models import (
     UnsupportedCondition,
     RankingTemplate,
 )
+from backend.app.routes.recommend import generate_timetable_candidates
 from backend.app.services.session_store import SessionStage, SessionStore
 from backend.app.services.timetable_generation_service import TimetableGenerationService
 from backend.app.services.timetable_ranking_service import TimetableRankingService
@@ -94,6 +98,18 @@ class FakeGeneralPreferenceParser:
     def parse(self, prompt: str) -> GeneralPreferenceParseResult:
         self.calls.append(prompt)
         return self.result
+
+
+class FailingGeneralPreferenceParser:
+    def parse(self, prompt: str) -> GeneralPreferenceParseResult:
+        raise AppError(
+            "INVALID_PREFERENCE_OUTPUT",
+            "교양 선호 조건을 검증할 수 없습니다.",
+        )
+
+
+def test_recommend_generate_endpoint_is_sync_def() -> None:
+    assert inspect.iscoroutinefunction(generate_timetable_candidates) is False
 
 
 def test_timetable_generation_api_returns_candidates_and_saves_session() -> None:
@@ -317,6 +333,52 @@ def test_empty_prompt_does_not_call_parser_and_keeps_generation_flow() -> None:
     assert response.status_code == 200
     assert parser.calls == []
     assert response.json()["candidates"]
+
+
+def test_llm_parse_error_uses_standard_app_error_response() -> None:
+    store = SessionStore()
+    session = store.create("컴퓨터공학과")
+    store.update(
+        session.session_id,
+        fixed_courses=[_major()],
+        confirmed_major_credits=9,
+        session_stage=SessionStage.MAJOR_CONFIRMED,
+    )
+    store.update_general_course_pool(
+        session.session_id,
+        GeneralCoursePoolResult(
+            pools=GeneralCoursePools(elective_courses=[_elective()])
+        ),
+    )
+    service = TimetableGenerationService(
+        store=store,
+        preference_parser=FailingGeneralPreferenceParser(),
+    )
+    app.dependency_overrides[get_timetable_generation_service] = lambda: service
+    client = TestClient(app)
+
+    try:
+        response = client.post(
+            "/recommend/generate",
+            json={
+                "session_id": session.session_id,
+                "target_total_credits": 12,
+                "additional_elective_count": 1,
+                "preference_prompt": "25시 이후 수업만 가능해",
+            },
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "error": {
+            "code": "INVALID_PREFERENCE_OUTPUT",
+            "message": "교양 선호 조건을 검증할 수 없습니다.",
+            "hint": None,
+            "details": {},
+        }
+    }
 
 
 def test_prompt_soft_conditions_reach_latest_ranking_service() -> None:

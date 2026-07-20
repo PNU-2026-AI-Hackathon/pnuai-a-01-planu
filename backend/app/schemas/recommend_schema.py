@@ -10,10 +10,13 @@ from ..models.timetable import RankingResult, TimetableGenerationResult
 
 
 class RecommendRequest(BaseModel):
-    """Input accepted by ``POST /recommend``.
+    """Legacy input shape from the earlier ``POST /recommend`` design.
 
     ``selected_preferences`` comes from explicit UI controls. ``free_text`` is
     passed to the LLM only to extract additional rules not covered by the UI.
+    TODO: Keep this schema until older clients are retired or a full combined
+    recommendation route is restored. The active MVP route is
+    ``POST /recommend/generate`` and uses ``preference_prompt``.
     """
 
     model_config = ConfigDict(

@@ -86,6 +86,7 @@ class TimetableGenerationService:
             hard_conditions,
             parse_result.hard_conditions,
         )
+        # Combined rules used by the ranker for both hard filtering and soft scoring.
         ranking_preferences = self._merge_rules(
             effective_hard_conditions,
             parse_result.soft_conditions,
