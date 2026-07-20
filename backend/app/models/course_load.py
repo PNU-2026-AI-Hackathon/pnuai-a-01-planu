@@ -21,8 +21,11 @@ class _Model(BaseModel):
 class CourseLoadTarget(_Model):
     """Optional user targets for backtracking-based recommendation.
 
-    ``target_total_credits`` is the total credit goal the user would like to
-    approach, not a hard ``max_credit`` validator for this calculation stage.
+    ``target_total_credits`` is the total-credit upper bound that generated
+    candidates must not exceed. Among candidates within that limit, generation
+    metadata lets later stages compare how close each candidate gets to the
+    target credit count.
+
     ``additional_elective_count`` is the desired number of elective general
     courses to add after required general courses are accounted for.
     """
