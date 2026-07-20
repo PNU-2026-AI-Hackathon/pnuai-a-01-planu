@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..services.session_store import SessionStage
@@ -21,6 +23,6 @@ class GeneralPreparationResponse(_Model):
     required_course_count: int = Field(ge=0)
     elective_course_count: int = Field(ge=0)
     excluded_course_count: int = Field(ge=0)
-    data_source: str
+    data_source: Literal["uploaded_catalog", "fallback_catalog"]
     elective_area: int | None = Field(default=None, ge=1, le=7)
     warnings: list[str] = Field(default_factory=list)

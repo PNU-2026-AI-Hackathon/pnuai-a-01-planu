@@ -38,6 +38,7 @@ class EligibilityStatus(str, Enum):
     NOT_ELIGIBLE = "not_eligible"
     NOT_RESTRICTED = "not_restricted"
     UNKNOWN_DEPARTMENT = "unknown_department"
+    RULE_NOT_FOUND = "rule_not_found"
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,6 +90,11 @@ class CourseRestrictionPolicy:
             )
 
         rule = self.rules_by_course_section.get(_course_key(course))
+        if rule is None and course.category is Category.GENERAL_REQUIRED:
+            return EligibilityDecision(
+                EligibilityStatus.RULE_NOT_FOUND,
+                "교양필수 과목의 학과별 수강 제한 규칙을 찾지 못했습니다.",
+            )
         if rule is None:
             return EligibilityDecision(
                 EligibilityStatus.NOT_RESTRICTED,
@@ -260,7 +266,13 @@ class GeneralCoursePreparationService:
         session_id = session_id.strip()
         if not session_id:
             raise AppError("SESSION_ID_REQUIRED", "session_id는 비어 있을 수 없습니다.", status_code=400)
-        if elective_area is not None and not 1 <= elective_area <= 7:
+        if elective_area is None:
+            raise AppError(
+                "ELECTIVE_AREA_REQUIRED",
+                "교양선택 후보 준비 시 교양 영역을 선택해주세요.",
+                status_code=400,
+            )
+        if not 1 <= elective_area <= 7:
             raise AppError(
                 "INVALID_ELECTIVE_AREA",
                 "교양 영역은 1~7 사이의 정수여야 합니다.",
@@ -270,12 +282,6 @@ class GeneralCoursePreparationService:
         has_upload = _has_upload(elective_catalog)
         if has_upload:
             self._validate_upload_name(elective_catalog)
-            if elective_area is None:
-                raise AppError(
-                    "ELECTIVE_AREA_REQUIRED",
-                    "교양선택 수강편람 업로드 시 교양 영역을 선택해주세요.",
-                    status_code=400,
-                )
 
         try:
             session = self.store.get(session_id)
@@ -286,11 +292,16 @@ class GeneralCoursePreparationService:
                 status_code=404,
             ) from exc
 
-        if session.session_stage is SessionStage.GENERAL_READY and not has_upload:
+        if (
+            session.session_stage is SessionStage.GENERAL_READY
+            and not has_upload
+            and session.general_pool_elective_area == elective_area
+        ):
             return _response_from_session(session)
 
         if session.session_stage not in {
             SessionStage.MAJOR_CONFIRMED,
+            SessionStage.GENERAL_READY,
             SessionStage.CANDIDATES_GENERATED,
             SessionStage.RANKING_COMPLETED,
         }:
@@ -310,6 +321,16 @@ class GeneralCoursePreparationService:
                 elective_catalog,
                 elective_area=elective_area,
             )
+            uploaded_elective_courses = _filter_electives_by_area(
+                uploaded_elective_courses,
+                elective_area=elective_area,
+            )
+            if not uploaded_elective_courses:
+                raise AppError(
+                    "EMPTY_ELECTIVE_CATALOG",
+                    "선택한 교양 영역에 해당하는 업로드 교양선택 과목을 찾지 못했습니다.",
+                    status_code=422,
+                )
             data_source = "uploaded_catalog"
         else:
             warnings.append(FALLBACK_WARNING)
@@ -323,6 +344,18 @@ class GeneralCoursePreparationService:
                 "서버 기본 교양선택 데이터가 준비되어 있지 않습니다.",
                 status_code=500,
             )
+        if not has_upload:
+            fallback_elective_courses = _filter_electives_by_area(
+                fallback_elective_courses,
+                elective_area=elective_area,
+            )
+            if not fallback_elective_courses:
+                raise AppError(
+                    "FALLBACK_ELECTIVE_AREA_NOT_FOUND",
+                    "선택한 교양 영역에 해당하는 서버 기본 교양선택 데이터가 없습니다.",
+                    status_code=404,
+                    details={"elective_area": elective_area},
+                )
 
         try:
             result = self.pool_service.build_pools(
@@ -346,7 +379,7 @@ class GeneralCoursePreparationService:
                 session.session_id,
                 result,
                 data_source=data_source,
-                elective_area=elective_area if has_upload else None,
+                elective_area=elective_area,
             )
         except (TypeError, ValueError) as exc:
             raise AppError(
@@ -443,9 +476,22 @@ def _reason_code(status: EligibilityStatus) -> str:
     return {
         EligibilityStatus.NOT_ELIGIBLE: "DEPARTMENT_NOT_ELIGIBLE",
         EligibilityStatus.UNKNOWN_DEPARTMENT: "UNKNOWN_DEPARTMENT",
+        EligibilityStatus.RULE_NOT_FOUND: "RESTRICTION_RULE_NOT_FOUND",
         EligibilityStatus.ELIGIBLE: "ELIGIBLE",
         EligibilityStatus.NOT_RESTRICTED: "NOT_RESTRICTED",
     }[status]
+
+
+def _filter_electives_by_area(
+    courses: Iterable[Course],
+    *,
+    elective_area: int,
+) -> list[Course]:
+    return [
+        course
+        for course in courses
+        if course.category is Category.GENERAL_ELECTIVE and course.area == elective_area
+    ]
 
 
 def _has_upload(upload_file: UploadFile | None) -> bool:

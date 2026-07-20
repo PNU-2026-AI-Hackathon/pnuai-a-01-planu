@@ -78,6 +78,20 @@ def _rule(
     )
 
 
+def _required_allowed_policy(*courses: Course) -> CourseRestrictionPolicy:
+    return CourseRestrictionPolicy(
+        rules=[
+            _rule(
+                course.course_id.rsplit("-", 1)[0],
+                course.division,
+                allowed={"컴퓨터공학과"},
+            )
+            for course in courses
+            if course.category is Category.GENERAL_REQUIRED
+        ],
+    )
+
+
 def _restriction_row(
     course_code: str,
     division: str,
@@ -98,7 +112,9 @@ def _restriction_row(
 def test_build_pools_uses_normalized_general_required_aliases() -> None:
     hyo = _course("ZE100-001", "고전읽기와토론", "효원핵심교양", "001")
     required = _course("ZE101-001", "대학영어", "교양필수", "001")
-    service = GeneralCoursePoolService()
+    service = GeneralCoursePoolService(
+        restriction_policy=_required_allowed_policy(hyo, required),
+    )
 
     result = service.build_pools(
         department="컴퓨터공학과",
@@ -117,7 +133,9 @@ def test_build_pools_keeps_electives_separate_and_rejects_unsupported_category()
     elective = _course("ZE200-001", "과학기술과사회", "교양선택", "001", area=2)
     major = _course("MA100-001", "자료구조", Category.MAJOR_REQUIRED, "001")
 
-    result = GeneralCoursePoolService().build_pools(
+    result = GeneralCoursePoolService(
+        restriction_policy=_required_allowed_policy(required),
+    ).build_pools(
         department="컴퓨터공학과",
         general_required_courses=[required, major],
         uploaded_elective_courses=[elective, major],
@@ -138,6 +156,7 @@ def test_department_restrictions_exclude_only_matching_restricted_courses() -> N
     blocked_upload = _course("ZE400-001", "창의적사고", Category.GENERAL_ELECTIVE, "001", area=4)
     policy = CourseRestrictionPolicy(
         rules=[
+            _rule("ZE100", "001", allowed={"컴퓨터공학과"}),
             _rule("ZE101", "001", blocked={"컴퓨터공학과"}),
             _rule("ZE400", "001", blocked={"컴퓨터공학과"}),
         ],
@@ -160,7 +179,10 @@ def test_upload_without_restriction_entry_is_not_excluded_by_restriction_data() 
     required = _course("ZE100-001", "고전읽기와토론", Category.GENERAL_REQUIRED, "001")
     uploaded = _course("UP100-001", "업로드교양", Category.GENERAL_ELECTIVE, "001", area=1)
     policy = CourseRestrictionPolicy(
-        rules=[_rule("OTHER", "001", blocked={"컴퓨터공학과"})],
+        rules=[
+            _rule("ZE100", "001", allowed={"컴퓨터공학과"}),
+            _rule("OTHER", "001", blocked={"컴퓨터공학과"}),
+        ],
     )
 
     result = GeneralCoursePoolService(restriction_policy=policy).build_pools(
@@ -173,7 +195,7 @@ def test_upload_without_restriction_entry_is_not_excluded_by_restriction_data() 
     assert result.excluded_courses == []
 
 
-def test_restriction_rule_without_matching_course_section_allows_course() -> None:
+def test_general_required_without_matching_restriction_rule_is_excluded() -> None:
     course = _course("ZE100-001", "고전읽기와토론", Category.GENERAL_REQUIRED, "001")
     policy = CourseRestrictionPolicy(rules=[_rule("ZE100", "002", blocked={"컴퓨터공학과"})])
 
@@ -182,12 +204,18 @@ def test_restriction_rule_without_matching_course_section_allows_course() -> Non
         general_required_courses=[course],
     )
 
-    assert result.pools.required_courses == [course]
+    assert result.pools.required_courses == []
+    assert result.excluded_courses[0].reason_code == "RESTRICTION_RULE_NOT_FOUND"
 
 
 def test_blocked_department_is_excluded() -> None:
     course = _course("ZE100-001", "고전읽기와토론", Category.GENERAL_REQUIRED, "001")
-    policy = CourseRestrictionPolicy(rules=[_rule("ZE100", "001", blocked={"컴퓨터공학과"})])
+    policy = CourseRestrictionPolicy(
+        rules=[
+            _rule("ZE100", "001", blocked={"컴퓨터공학과"}),
+            _rule("ZE100", "002", allowed={"컴퓨터공학과"}),
+        ]
+    )
 
     result = GeneralCoursePoolService(restriction_policy=policy).build_pools(
         department="컴퓨터공학과",
@@ -285,7 +313,12 @@ def test_loader_merges_multiple_department_rows_into_one_rule(tmp_path) -> None:
 def test_different_divisions_apply_separate_restriction_rules() -> None:
     first = _course("ZE100-001", "고전읽기와토론", Category.GENERAL_REQUIRED, "001")
     second = _course("ZE100-002", "고전읽기와토론", Category.GENERAL_REQUIRED, "002", start="10:30", end="11:45")
-    policy = CourseRestrictionPolicy(rules=[_rule("ZE100", "001", blocked={"컴퓨터공학과"})])
+    policy = CourseRestrictionPolicy(
+        rules=[
+            _rule("ZE100", "001", blocked={"컴퓨터공학과"}),
+            _rule("ZE100", "002", allowed={"컴퓨터공학과"}),
+        ]
+    )
 
     result = GeneralCoursePoolService(restriction_policy=policy).build_pools(
         department="컴퓨터공학과",
@@ -338,7 +371,9 @@ def test_catalog_elective_fallback_is_not_processed_as_required_candidate() -> N
     required = _course("ZE100-001", "고전읽기와토론", Category.GENERAL_REQUIRED, "001")
     fallback = _course("ZE200-001", "과학기술과사회", Category.GENERAL_ELECTIVE, "001", area=2)
 
-    result = GeneralCoursePoolService().build_pools(
+    result = GeneralCoursePoolService(
+        restriction_policy=_required_allowed_policy(required),
+    ).build_pools(
         department="컴퓨터공학과",
         general_required_courses=[required],
         fallback_elective_courses=[fallback],
@@ -377,7 +412,9 @@ def test_uploaded_elective_information_wins_and_conflicts_warn() -> None:
         professor="업로드교수",
     )
 
-    result = GeneralCoursePoolService().build_pools(
+    result = GeneralCoursePoolService(
+        restriction_policy=_required_allowed_policy(required),
+    ).build_pools(
         department="컴퓨터공학과",
         general_required_courses=[required],
         uploaded_elective_courses=[uploaded_elective, uploaded_elective],
@@ -392,12 +429,15 @@ def test_no_uploaded_elective_uses_explicit_fallback_only() -> None:
     required = _course("ZE100-001", "고전읽기와토론", Category.GENERAL_REQUIRED, "001")
     fallback = _course("FB100-001", "기본교양", Category.GENERAL_ELECTIVE, "001", area=1)
 
-    with_fallback = GeneralCoursePoolService().build_pools(
+    service = GeneralCoursePoolService(
+        restriction_policy=_required_allowed_policy(required),
+    )
+    with_fallback = service.build_pools(
         department="컴퓨터공학과",
         general_required_courses=[required],
         fallback_elective_courses=[fallback],
     )
-    without_fallback = GeneralCoursePoolService().build_pools(
+    without_fallback = service.build_pools(
         department="컴퓨터공학과",
         general_required_courses=[required],
     )
@@ -411,7 +451,9 @@ def test_pool_builder_does_not_filter_major_time_conflicts_or_course_load() -> N
     required = _course("ZE100-001", "고전읽기와토론", Category.GENERAL_REQUIRED, "001")
     elective = _course("ZE200-001", "과학기술과사회", Category.GENERAL_ELECTIVE, "001", area=2)
 
-    result = GeneralCoursePoolService().build_pools(
+    result = GeneralCoursePoolService(
+        restriction_policy=_required_allowed_policy(required),
+    ).build_pools(
         department="컴퓨터공학과",
         general_required_courses=[required],
         uploaded_elective_courses=[elective],
@@ -434,8 +476,11 @@ def test_preparation_requires_major_confirmed_session_and_saves_result() -> None
 
     response = asyncio.run(GeneralCoursePreparationService(
         store=store,
+        pool_service=GeneralCoursePoolService(
+            restriction_policy=_required_allowed_policy(required),
+        ),
         general_required_courses=[required],
-    ).prepare_for_session(session.session_id))
+    ).prepare_for_session(session.session_id, elective_area=2))
 
     saved = store.get(session.session_id)
     assert response.required_course_count == 1
@@ -458,12 +503,15 @@ def test_preparation_is_idempotent_when_session_is_general_ready() -> None:
 
     first = asyncio.run(GeneralCoursePreparationService(
         store=store,
+        pool_service=GeneralCoursePoolService(
+            restriction_policy=_required_allowed_policy(required),
+        ),
         general_required_courses=[required],
-    ).prepare_for_session(session.session_id))
+    ).prepare_for_session(session.session_id, elective_area=2))
     second = asyncio.run(GeneralCoursePreparationService(
         store=store,
         general_required_courses=[],
-    ).prepare_for_session(session.session_id))
+    ).prepare_for_session(session.session_id, elective_area=2))
 
     saved = store.get(session.session_id)
     assert second == first
@@ -482,7 +530,7 @@ def test_preparation_rejects_wrong_stage_without_partial_save() -> None:
         asyncio.run(GeneralCoursePreparationService(
             store=store,
             general_required_courses=[required],
-        ).prepare_for_session(session.session_id))
+        ).prepare_for_session(session.session_id, elective_area=2))
 
     saved = store.get(session.session_id)
     assert exc_info.value.code == "INVALID_SESSION_STAGE"
