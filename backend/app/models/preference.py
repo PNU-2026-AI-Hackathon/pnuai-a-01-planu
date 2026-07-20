@@ -74,6 +74,34 @@ class PreferenceTraceEvent(BaseModel):
     error: str | None = None
 
 
+class UnsupportedCondition(BaseModel):
+    """A user preference PlaNU cannot safely apply with current data."""
+
+    model_config = ConfigDict(
+        extra="forbid",
+        str_strip_whitespace=True,
+        validate_assignment=True,
+    )
+
+    source_text: str = Field(min_length=1)
+    reason_code: str = Field(min_length=1)
+    reason: str = Field(min_length=1)
+
+
+class PreferenceWarning(BaseModel):
+    """A non-fatal parser diagnostic shown without exposing LLM internals."""
+
+    model_config = ConfigDict(
+        extra="forbid",
+        str_strip_whitespace=True,
+        validate_assignment=True,
+    )
+
+    code: str = Field(min_length=1)
+    message: str = Field(min_length=1)
+    source_text: str | None = None
+
+
 class TimeRange(BaseModel):
     """A time window attached to one weekday."""
 
@@ -126,6 +154,9 @@ class PreferenceRules(BaseModel):
     )
 
     # Hard filters
+    # No classes may be scheduled on these days. The current generator/ranker
+    # treats this the same as required_free_days; both names remain for API
+    # compatibility with earlier UI flows.
     excluded_days: list[Day] = Field(default_factory=list)
     required_free_days: list[Day] = Field(default_factory=list)
     earliest_start_time: str | None = None
@@ -282,6 +313,147 @@ class PreferenceParseResult(BaseModel):
     trace: list[PreferenceTraceEvent] = Field(default_factory=list)
     fallback_used: bool = False
     warnings: list[str] = Field(default_factory=list)
+    raw_output: dict[str, Any] | str | None = None
+
+
+class HardPreferenceConditions(BaseModel):
+    """Hard filters supported by timetable generation."""
+
+    model_config = ConfigDict(
+        extra="forbid",
+        str_strip_whitespace=True,
+        validate_assignment=True,
+    )
+
+    excluded_days: list[Day] = Field(default_factory=list)
+    required_free_days: list[Day] = Field(default_factory=list)
+    earliest_start_time: str | None = None
+    latest_end_time: str | None = None
+    excluded_time_ranges: list[ExcludedTimeRange] = Field(default_factory=list)
+    excluded_professors: list[str] = Field(default_factory=list)
+    required_course_names: list[str] = Field(default_factory=list)
+    excluded_course_names: list[str] = Field(default_factory=list)
+    max_consecutive_classes: int | None = Field(default=None, ge=1)
+
+    @field_validator("earliest_start_time", "latest_end_time")
+    @classmethod
+    def validate_time(cls, value: str | None) -> str | None:
+        if value is not None:
+            time_to_minutes(value)
+        return value
+
+    @field_validator(
+        "excluded_days",
+        "required_free_days",
+        "excluded_professors",
+        "required_course_names",
+        "excluded_course_names",
+    )
+    @classmethod
+    def remove_duplicates(cls, values: list) -> list:
+        return list(dict.fromkeys(values))
+
+    @model_validator(mode="after")
+    def validate_ranges(self) -> "HardPreferenceConditions":
+        if (
+            self.earliest_start_time is not None
+            and self.latest_end_time is not None
+            and time_to_minutes(self.earliest_start_time)
+            >= time_to_minutes(self.latest_end_time)
+        ):
+            raise ValueError("latest_end_time must be later than earliest_start_time")
+        overlap = set(self.required_course_names) & set(self.excluded_course_names)
+        if overlap:
+            names = ", ".join(sorted(overlap))
+            raise ValueError(f"course names cannot be both required and excluded: {names}")
+        return self
+
+    def to_preference_rules(self) -> PreferenceRules:
+        return PreferenceRules.model_validate(self.model_dump(mode="json"))
+
+
+class SoftPreferenceConditions(BaseModel):
+    """Soft ranking preferences supported by the timetable ranker."""
+
+    model_config = ConfigDict(
+        extra="forbid",
+        str_strip_whitespace=True,
+        validate_assignment=True,
+    )
+
+    preferred_first_class_time: str | None = None
+    preferred_free_time_ranges: list[TimeRange] = Field(default_factory=list)
+    preferred_free_days: list[Day] = Field(default_factory=list)
+    preferred_elective_areas: list[int] = Field(default_factory=list)
+    preferred_course_names: list[str] = Field(default_factory=list)
+    avoided_course_names: list[str] = Field(default_factory=list)
+    minimize_attendance_days: bool = False
+    minimize_consecutive_classes: bool = False
+    compact_schedule: bool = False
+
+    @field_validator("preferred_first_class_time")
+    @classmethod
+    def validate_time(cls, value: str | None) -> str | None:
+        if value is not None:
+            time_to_minutes(value)
+        return value
+
+    @field_validator("preferred_elective_areas")
+    @classmethod
+    def validate_areas(cls, values: list[int]) -> list[int]:
+        if any(not 1 <= value <= 7 for value in values):
+            raise ValueError("elective areas must be between 1 and 7")
+        return list(dict.fromkeys(values))
+
+    @field_validator(
+        "preferred_free_days",
+        "preferred_course_names",
+        "avoided_course_names",
+    )
+    @classmethod
+    def remove_duplicates(cls, values: list) -> list:
+        return list(dict.fromkeys(values))
+
+    @model_validator(mode="after")
+    def validate_course_name_conflicts(self) -> "SoftPreferenceConditions":
+        overlap = set(self.preferred_course_names) & set(self.avoided_course_names)
+        if overlap:
+            names = ", ".join(sorted(overlap))
+            raise ValueError(f"course names cannot be both preferred and avoided: {names}")
+        return self
+
+    def to_preference_rules(self) -> PreferenceRules:
+        return PreferenceRules.model_validate(self.model_dump(mode="json"))
+
+
+class GeneralPreferenceLLMOutput(BaseModel):
+    """Structured LLM output for general-education preference parsing."""
+
+    model_config = ConfigDict(
+        extra="forbid",
+        str_strip_whitespace=True,
+        validate_assignment=True,
+    )
+
+    hard_conditions: HardPreferenceConditions = Field(default_factory=HardPreferenceConditions)
+    soft_conditions: SoftPreferenceConditions = Field(default_factory=SoftPreferenceConditions)
+    unsupported_conditions: list[UnsupportedCondition] = Field(default_factory=list)
+    warnings: list[PreferenceWarning] = Field(default_factory=list)
+
+
+class GeneralPreferenceParseResult(BaseModel):
+    """Deterministically validated preference parse result for later stages."""
+
+    model_config = ConfigDict(
+        extra="forbid",
+        str_strip_whitespace=True,
+        validate_assignment=True,
+    )
+
+    hard_conditions: PreferenceRules = Field(default_factory=PreferenceRules)
+    soft_conditions: PreferenceRules = Field(default_factory=PreferenceRules)
+    unsupported_conditions: list[UnsupportedCondition] = Field(default_factory=list)
+    warnings: list[PreferenceWarning] = Field(default_factory=list)
     raw_output: dict[str, Any] | str | None = None
 
 

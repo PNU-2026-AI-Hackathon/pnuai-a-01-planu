@@ -16,7 +16,7 @@ router = APIRouter(prefix="/recommend", tags=["recommend"])
 
 
 @router.post("/generate", response_model=TimetableGenerationResponse)
-async def generate_timetable_candidates(
+def generate_timetable_candidates(
     request: TimetableGenerationRequest,
     service: TimetableGenerationService = Depends(get_timetable_generation_service),
 ) -> TimetableGenerationResponse:
@@ -24,6 +24,7 @@ async def generate_timetable_candidates(
         session_id=request.session_id,
         course_load_target=request.course_load_target(),
         hard_conditions=request.hard_conditions,
+        preference_prompt=request.preference_prompt,
         max_candidates=request.max_candidates,
     )
     return TimetableGenerationResponse.model_validate(result.model_dump())

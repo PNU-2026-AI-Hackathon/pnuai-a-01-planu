@@ -15,7 +15,7 @@ from ..models.general_course_pool import (
     ExcludedCourseDiagnostic,
     GeneralCoursePoolResult,
 )
-from ..models.preference import PreferenceRules
+from ..models.preference import PreferenceRules, PreferenceWarning, UnsupportedCondition
 from ..models.timetable import (
     GenerationDiagnostic,
     TimetableCandidate,
@@ -91,6 +91,8 @@ class SessionData:
     generation_diagnostics: list[GenerationDiagnostic] = field(default_factory=list)
     generation_course_load_target: CourseLoadTarget | None = None
     generation_hard_conditions: PreferenceRules | None = None
+    preference_unsupported_conditions: list[UnsupportedCondition] = field(default_factory=list)
+    preference_warnings: list[PreferenceWarning] = field(default_factory=list)
     generation_truncated: bool = False
     generated_at: datetime | None = None
     confirmed_major_credits: float = 0
@@ -134,6 +136,18 @@ class SessionData:
             self.generation_hard_conditions = PreferenceRules.model_validate(
                 self.generation_hard_conditions
             )
+        self.preference_unsupported_conditions = [
+            item
+            if isinstance(item, UnsupportedCondition)
+            else UnsupportedCondition.model_validate(item)
+            for item in self.preference_unsupported_conditions
+        ]
+        self.preference_warnings = [
+            item
+            if isinstance(item, PreferenceWarning)
+            else PreferenceWarning.model_validate(item)
+            for item in self.preference_warnings
+        ]
         if not isinstance(self.session_stage, SessionStage):
             self.session_stage = SessionStage(self.session_stage)
         if self.latest_major_preview is not None:
@@ -259,6 +273,8 @@ class SessionStore:
         generation_diagnostics: Iterable[GenerationDiagnostic] | None = None,
         generation_course_load_target: CourseLoadTarget | None = None,
         generation_hard_conditions: PreferenceRules | None = None,
+        preference_unsupported_conditions: Iterable[UnsupportedCondition] | None = None,
+        preference_warnings: Iterable[PreferenceWarning] | None = None,
         generation_truncated: bool | None = None,
         generated_at: datetime | None = None,
     ) -> SessionData:
@@ -301,6 +317,10 @@ class SessionStore:
                 data.generation_course_load_target = generation_course_load_target
             if generation_hard_conditions is not None:
                 data.generation_hard_conditions = generation_hard_conditions
+            if preference_unsupported_conditions is not None:
+                data.preference_unsupported_conditions = list(preference_unsupported_conditions)
+            if preference_warnings is not None:
+                data.preference_warnings = list(preference_warnings)
             if generation_truncated is not None:
                 data.generation_truncated = generation_truncated
             if generated_at is not None:
@@ -363,6 +383,9 @@ class SessionStore:
         course_load_target: CourseLoadTarget,
         hard_conditions: PreferenceRules | None,
         truncated: bool,
+        ranking_preferences: PreferenceRules | None = None,
+        unsupported_conditions: Iterable[UnsupportedCondition] = (),
+        warnings: Iterable[PreferenceWarning] = (),
     ) -> SessionData:
         with self._lock:
             data = self._get_live_locked(session_id, touch=False)
@@ -371,6 +394,8 @@ class SessionStore:
             data.generation_diagnostics = list(diagnostics)
             data.generation_course_load_target = course_load_target
             data.generation_hard_conditions = hard_conditions
+            data.preference_unsupported_conditions = list(unsupported_conditions)
+            data.preference_warnings = list(warnings)
             data.generation_truncated = truncated
             data.generated_candidates = [
                 candidate.timetable.model_copy(
@@ -378,7 +403,7 @@ class SessionStore:
                 )
                 for candidate in data.generated_timetable_candidates
             ]
-            data.ranking_preferences = hard_conditions or PreferenceRules()
+            data.ranking_preferences = ranking_preferences or hard_conditions or PreferenceRules()
             data.latest_ranking_result = None
             data.generated_at = now
             data.updated_at = now
@@ -445,6 +470,8 @@ class SessionStore:
                 if data.generation_hard_conditions is not None
                 else None
             ),
+            preference_unsupported_conditions=list(data.preference_unsupported_conditions),
+            preference_warnings=list(data.preference_warnings),
             generation_truncated=data.generation_truncated,
             generated_at=data.generated_at,
             session_stage=data.session_stage,

@@ -781,6 +781,22 @@ class LLMPreferenceParser:
         normalized = value.strip()
         if not normalized:
             return False
+        broad_terms = {
+            "경제",
+            "경제학",
+            "공학",
+            "과학",
+            "사회",
+            "사회과학",
+            "예술",
+            "인문",
+            "인문학",
+            "자연",
+            "자연과학",
+            "철학",
+        }
+        if normalized in broad_terms:
+            return True
         broad_suffixes = (
             "과목",
             "수업",
