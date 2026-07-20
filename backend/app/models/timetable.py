@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from enum import Enum
+from typing import Any
+
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .course import Category, Course, Day, time_to_minutes
@@ -43,6 +46,34 @@ class ScoreComponent(_Model):
 ScoreDetail = ScoreComponent
 
 
+class RankingTemplate(str, Enum):
+    BALANCED = "balanced"
+    FREE_DAY_PRIORITY = "free_day_priority"
+    NO_MORNING_PRIORITY = "no_morning_priority"
+    COMPACT_SCHEDULE = "compact_schedule"
+
+
+class CourseLoadSatisfaction(_Model):
+    """Objective course-load fit used before subjective template scoring."""
+
+    satisfied_required_group_count: int = Field(default=0, ge=0)
+    requested_required_group_count: int = Field(default=0, ge=0)
+    satisfied_elective_count: int = Field(default=0, ge=0)
+    requested_elective_count: int = Field(default=0, ge=0)
+    target_total_credits: float | None = Field(default=None, gt=0)
+    total_credit: float | None = Field(default=None, ge=0)
+
+    @property
+    def elective_count_gap(self) -> int:
+        return max(self.requested_elective_count - self.satisfied_elective_count, 0)
+
+    @property
+    def credit_gap(self) -> float:
+        if self.target_total_credits is None or self.total_credit is None:
+            return 0
+        return abs(self.target_total_credits - self.total_credit)
+
+
 class Timetable(_Model):
     """A recommendation candidate ready to return from ``POST /recommend``."""
 
@@ -52,6 +83,9 @@ class Timetable(_Model):
     courses: list[Course] = Field(min_length=1)
     schedule_items: list[ScheduleItem] = Field(default_factory=list)
     score_details: list[ScoreComponent] = Field(default_factory=list)
+    load_satisfaction: CourseLoadSatisfaction = Field(
+        default_factory=CourseLoadSatisfaction
+    )
     reasons: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
 
@@ -102,11 +136,21 @@ class RankingResult(_Model):
     raw_score: float = 0
     score_components: list[ScoreComponent] = Field(default_factory=list)
     timetable: Timetable
+    load_satisfaction: CourseLoadSatisfaction = Field(
+        default_factory=CourseLoadSatisfaction
+    )
+    template: RankingTemplate = RankingTemplate.BALANCED
 
     @model_validator(mode="after")
     def sync_raw_score_and_timetable(self) -> "RankingResult":
         raw_score = sum(component.value for component in self.score_components)
+        load_satisfaction = (
+            self.load_satisfaction
+            if self.load_satisfaction != CourseLoadSatisfaction()
+            else self.timetable.load_satisfaction
+        )
         object.__setattr__(self, "raw_score", raw_score)
+        object.__setattr__(self, "load_satisfaction", load_satisfaction)
         object.__setattr__(
             self,
             "timetable",
@@ -114,7 +158,21 @@ class RankingResult(_Model):
                 update={
                     "score": raw_score,
                     "score_details": self.score_components,
+                    "load_satisfaction": load_satisfaction,
                 }
             ),
         )
         return self
+
+
+class RankingDiagnostic(_Model):
+    code: str = Field(min_length=1)
+    message: str = Field(min_length=1)
+    details: dict[str, Any] = Field(default_factory=dict)
+
+
+class TimetableRankingResult(_Model):
+    ranked_candidates: list[RankingResult] = Field(default_factory=list)
+    template: RankingTemplate = RankingTemplate.BALANCED
+    total_candidate_count: int = Field(default=0, ge=0)
+    diagnostics: list[RankingDiagnostic] = Field(default_factory=list)

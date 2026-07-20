@@ -4,176 +4,38 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Iterable
-from dataclasses import dataclass
 
 from ..models.course import Category, ClassTime, Course, Day, time_to_minutes
 from ..models.preference import ExcludedTimeRange, PreferenceRules, PreferenceTemplate
-from ..models.timetable import RankingResult, ScoreComponent, Timetable, TimetableCandidate
+from ..models.timetable import (
+    RankingResult,
+    RankingTemplate,
+    ScoreComponent,
+    Timetable,
+    TimetableCandidate,
+)
+from .ranking_template_service import (
+    LEGACY_TEMPLATE_WEIGHT_PROFILES,
+    RankingTemplateService,
+    RankingWeights,
+    normalize_ranking_template,
+    weights_for_template as ranking_template_weights_for_template,
+)
 
 
-@dataclass(frozen=True)
-class RankingWeights:
-    """A complete evaluation profile for one timetable direction.
-
-    ``PreferenceRules`` stores concrete user preferences. ``PreferenceTemplate``
-    selects one timetable direction. ``RankingWeights`` defines the full set of
-    relative scoring priorities for that direction.
-    """
-
-    valid_candidate: float = 70
-    preferred_free_day: float = 8
-    preferred_free_day_missing: float = -5
-    preferred_free_time_range: float = 3
-    preferred_free_time_range_missing: float = -2
-    preferred_course: float = 4
-    preferred_course_missing: float = -1
-    avoided_course: float = -4
-    avoided_course_absent: float = 1
-    preferred_elective_area: float = 3
-    preferred_elective_area_missing: float = -1
-    no_consecutive_classes: float = 5
-    consecutive_class: float = -3
-    compact_idle_short: float = 4
-    compact_idle_medium: float = 2
-    compact_idle_long: float = -2
-    attendance_days_low: float = 6
-    attendance_days_medium: float = 2
-    attendance_days_high: float = -4
-    late_start_11_or_later: float = 6
-    late_start_10_or_later: float = 3
-    early_start_before_9: float = -4
+TEMPLATE_WEIGHT_PROFILES: dict[PreferenceTemplate, RankingWeights] = (
+    LEGACY_TEMPLATE_WEIGHT_PROFILES
+)
 
 
-TEMPLATE_WEIGHT_PROFILES: dict[PreferenceTemplate, RankingWeights] = {
-    PreferenceTemplate.PREFER_FREE_DAY: RankingWeights(
-        valid_candidate=70,
-        preferred_free_day=14,
-        preferred_free_day_missing=-11,
-        preferred_free_time_range=8,
-        preferred_free_time_range_missing=-7,
-        preferred_course=2,
-        preferred_course_missing=-0.5,
-        avoided_course=-2,
-        avoided_course_absent=0.5,
-        preferred_elective_area=2,
-        preferred_elective_area_missing=-0.5,
-        no_consecutive_classes=3,
-        consecutive_class=-2,
-        compact_idle_short=5,
-        compact_idle_medium=3,
-        compact_idle_long=-3,
-        attendance_days_low=6,
-        attendance_days_medium=3,
-        attendance_days_high=-4,
-        late_start_11_or_later=2,
-        late_start_10_or_later=1,
-        early_start_before_9=-1,
-    ),
-    PreferenceTemplate.MINIMIZE_ATTENDANCE_DAYS: RankingWeights(
-        valid_candidate=70,
-        preferred_free_day=6,
-        preferred_free_day_missing=-4,
-        preferred_free_time_range=3,
-        preferred_free_time_range_missing=-2,
-        preferred_course=2,
-        preferred_course_missing=-0.5,
-        avoided_course=-2,
-        avoided_course_absent=0.5,
-        preferred_elective_area=2,
-        preferred_elective_area_missing=-0.5,
-        no_consecutive_classes=3,
-        consecutive_class=-2,
-        compact_idle_short=5,
-        compact_idle_medium=3,
-        compact_idle_long=-3,
-        attendance_days_low=14,
-        attendance_days_medium=7,
-        attendance_days_high=-11,
-        late_start_11_or_later=2,
-        late_start_10_or_later=1,
-        early_start_before_9=-1,
-    ),
-    PreferenceTemplate.MINIMIZE_CONSECUTIVE_CLASSES: RankingWeights(
-        valid_candidate=70,
-        preferred_free_day=5,
-        preferred_free_day_missing=-3,
-        preferred_free_time_range=3,
-        preferred_free_time_range_missing=-2,
-        preferred_course=2,
-        preferred_course_missing=-0.5,
-        avoided_course=-2,
-        avoided_course_absent=0.5,
-        preferred_elective_area=2,
-        preferred_elective_area_missing=-0.5,
-        no_consecutive_classes=14,
-        consecutive_class=-10,
-        compact_idle_short=4,
-        compact_idle_medium=2,
-        compact_idle_long=-3,
-        attendance_days_low=5,
-        attendance_days_medium=3,
-        attendance_days_high=-4,
-        late_start_11_or_later=2,
-        late_start_10_or_later=1,
-        early_start_before_9=-1,
-    ),
-    PreferenceTemplate.COMPACT_SCHEDULE: RankingWeights(
-        valid_candidate=70,
-        preferred_free_day=5,
-        preferred_free_day_missing=-3,
-        preferred_free_time_range=3,
-        preferred_free_time_range_missing=-2,
-        preferred_course=2,
-        preferred_course_missing=-0.5,
-        avoided_course=-2,
-        avoided_course_absent=0.5,
-        preferred_elective_area=2,
-        preferred_elective_area_missing=-0.5,
-        no_consecutive_classes=5,
-        consecutive_class=-4,
-        compact_idle_short=14,
-        compact_idle_medium=8,
-        compact_idle_long=-11,
-        attendance_days_low=6,
-        attendance_days_medium=4,
-        attendance_days_high=-5,
-        late_start_11_or_later=2,
-        late_start_10_or_later=1,
-        early_start_before_9=-1,
-    ),
-    PreferenceTemplate.REQUIRED_FREE_DAY: RankingWeights(
-        valid_candidate=70,
-        preferred_free_day=12,
-        preferred_free_day_missing=-9,
-        preferred_free_time_range=7,
-        preferred_free_time_range_missing=-6,
-        preferred_course=2,
-        preferred_course_missing=-0.5,
-        avoided_course=-2,
-        avoided_course_absent=0.5,
-        preferred_elective_area=2,
-        preferred_elective_area_missing=-0.5,
-        no_consecutive_classes=4,
-        consecutive_class=-3,
-        compact_idle_short=5,
-        compact_idle_medium=3,
-        compact_idle_long=-3,
-        attendance_days_low=7,
-        attendance_days_medium=4,
-        attendance_days_high=-5,
-        late_start_11_or_later=2,
-        late_start_10_or_later=1,
-        early_start_before_9=-1,
-    ),
-}
-
-
-def weights_for_template(template: PreferenceTemplate | None) -> RankingWeights:
-    """Return the complete profile for one template, or defaults when absent."""
-
+def weights_for_template(
+    template: RankingTemplate | PreferenceTemplate | str | None,
+) -> RankingWeights:
     if template is None:
         return RankingWeights()
-    return TEMPLATE_WEIGHT_PROFILES[template]
+    if isinstance(template, PreferenceTemplate):
+        return TEMPLATE_WEIGHT_PROFILES[template]
+    return ranking_template_weights_for_template(template)
 
 
 def build_ranking_weights(preferences: PreferenceRules | None = None) -> RankingWeights:
@@ -191,18 +53,23 @@ class TimetableRanker:
         *,
         top_n: int = 3,
         weights: RankingWeights | None = None,
+        template_service: RankingTemplateService | None = None,
     ) -> None:
         if top_n <= 0:
             raise ValueError("top_n must be positive")
         self.top_n = top_n
         self._explicit_weights = weights
         self.weights = weights or RankingWeights()
+        self.template_service = template_service or RankingTemplateService()
+        self.template = RankingTemplate.BALANCED
+        self._explicit_template = False
 
     def rank(
         self,
         candidates: Iterable[TimetableCandidate],
         *,
         preferences: PreferenceRules | None = None,
+        template: RankingTemplate | PreferenceTemplate | str | None = None,
         top_n: int | None = None,
     ) -> list[RankingResult]:
         rules = preferences or PreferenceRules()
@@ -210,14 +77,24 @@ class TimetableRanker:
         if limit <= 0:
             raise ValueError("top_n must be positive")
 
-        self.weights = self._explicit_weights or build_ranking_weights(rules)
-        hard_filtered = self.apply_hard_filters(candidates, preferences=rules)
+        selected_template = template if template is not None else rules.selected_template
+        self.template = normalize_ranking_template(selected_template)
+        self._explicit_template = template is not None
+        self.weights = self._explicit_weights or self.template_service.get_weights(
+            selected_template
+        )
+        deduped = self._dedupe_candidates(candidates)
+        hard_filtered = self.apply_hard_filters(deduped, preferences=rules)
         scored = [self._score_candidate(candidate, rules) for candidate in hard_filtered]
         scored.sort(
             key=lambda item: (
+                -item.load_satisfaction.satisfied_required_group_count,
+                item.load_satisfaction.elective_count_gap,
+                item.load_satisfaction.credit_gap,
                 -item.raw_score,
-                item.timetable.total_credit or 0,
-                self._first_start_minutes(item.timetable),
+                self._idle_minutes(item.timetable.courses),
+                len(self._meetings_by_day(item.timetable.courses)),
+                self._morning_class_count(item.timetable.courses),
                 self._course_id_key(item.timetable),
             )
         )
@@ -319,13 +196,15 @@ class TimetableRanker:
         components.extend(self._avoided_course_components(candidate, preferences))
         components.extend(self._preferred_elective_area_components(candidate, preferences))
 
-        if preferences.minimize_attendance_days:
+        if self._explicit_template or preferences.minimize_attendance_days:
             components.append(self._attendance_days_component(candidate))
-        if preferences.minimize_consecutive_classes:
+        if self._explicit_template or preferences.minimize_consecutive_classes:
             components.append(self._consecutive_classes_component(candidate))
 
-        if preferences.compact_schedule:
+        if self._explicit_template or preferences.compact_schedule:
             components.append(self._compact_schedule_component(candidate))
+        if self._explicit_template:
+            components.append(self._late_start_component(candidate))
 
         for component in components[1:]:
             if component.value > 0:
@@ -342,6 +221,8 @@ class TimetableRanker:
         return RankingResult(
             score_components=components,
             timetable=Timetable.model_validate(data),
+            load_satisfaction=candidate.load_satisfaction,
+            template=self.template,
         )
 
     def _valid_candidate_component(self) -> ScoreComponent:
@@ -592,6 +473,22 @@ class TimetableRanker:
             reason=reason,
         )
 
+    def _late_start_component(self, candidate: TimetableCandidate) -> ScoreComponent:
+        first_start = self._first_meeting_start_minutes(candidate.courses)
+        value = self._late_start_value(first_start)
+        if value > 0:
+            reason = f"첫 수업이 {self._minutes_to_clock(first_start)}에 시작해 오전 부담이 낮습니다."
+        elif value < 0:
+            reason = f"첫 수업이 {self._minutes_to_clock(first_start)}에 시작해 오전 부담이 큽니다."
+        else:
+            reason = f"첫 수업이 {self._minutes_to_clock(first_start)}에 시작합니다."
+        return ScoreComponent(
+            key="late_start",
+            label=f"첫 수업 시작 {self._minutes_to_clock(first_start)}",
+            value=value,
+            reason=reason,
+        )
+
     @staticmethod
     def _overlaps_excluded_range(
         meeting: ClassTime, excluded: ExcludedTimeRange
@@ -642,6 +539,15 @@ class TimetableRanker:
             for previous, following in zip(meetings, meetings[1:]):
                 idle_minutes += max(0, following.start_minutes - previous.end_minutes)
         return idle_minutes
+
+    def _morning_class_count(self, courses: Iterable[Course]) -> int:
+        morning_end = time_to_minutes("12:00")
+        return sum(
+            1
+            for course in courses
+            for meeting in course.class_times
+            if meeting.start_minutes < morning_end
+        )
 
     def _compact_schedule_value(self, idle_minutes: int) -> float:
         if idle_minutes <= 60:
@@ -697,7 +603,22 @@ class TimetableRanker:
 
     @staticmethod
     def _course_id_key(candidate: Timetable) -> tuple[tuple[str, str], ...]:
-        return tuple((course.course_id, course.division) for course in candidate.courses)
+        return tuple(sorted((course.course_id, course.division) for course in candidate.courses))
+
+    @classmethod
+    def _dedupe_candidates(
+        cls,
+        candidates: Iterable[TimetableCandidate],
+    ) -> list[TimetableCandidate]:
+        deduped: list[TimetableCandidate] = []
+        seen: set[tuple[tuple[str, str], ...]] = set()
+        for candidate in candidates:
+            key = cls._course_id_key(candidate)
+            if key in seen:
+                continue
+            deduped.append(candidate)
+            seen.add(key)
+        return deduped
 
     @staticmethod
     def _minutes_to_clock(value: int) -> str:
@@ -725,6 +646,7 @@ def rank_timetables(
     candidates: Iterable[TimetableCandidate],
     *,
     preferences: PreferenceRules | None = None,
+    template: RankingTemplate | PreferenceTemplate | str | None = None,
     top_n: int = 3,
     weights: RankingWeights | None = None,
 ) -> list[RankingResult]:
@@ -733,5 +655,6 @@ def rank_timetables(
     return TimetableRanker(top_n=top_n, weights=weights).rank(
         candidates,
         preferences=preferences,
+        template=template,
         top_n=top_n,
     )

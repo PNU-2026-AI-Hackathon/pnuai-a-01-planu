@@ -14,6 +14,8 @@ from ..models.general_course_pool import (
     ExcludedCourseDiagnostic,
     GeneralCoursePoolResult,
 )
+from ..models.preference import PreferenceRules
+from ..models.timetable import TimetableCandidate, TimetableRankingResult
 
 
 def _utcnow() -> datetime:
@@ -61,6 +63,8 @@ class SessionStage(str, Enum):
     MAJOR_PREVIEW_CREATED = "major_preview_created"
     MAJOR_CONFIRMED = "major_confirmed"
     GENERAL_READY = "general_ready"
+    CANDIDATES_GENERATED = "candidates_generated"
+    RANKING_COMPLETED = "ranking_completed"
 
 
 @dataclass(slots=True)
@@ -74,6 +78,9 @@ class SessionData:
     general_elective_candidates: list[Course] = field(default_factory=list)
     general_pool_diagnostics: list[ExcludedCourseDiagnostic] = field(default_factory=list)
     general_pool_warnings: list[str] = field(default_factory=list)
+    generated_candidates: list[TimetableCandidate] = field(default_factory=list)
+    ranking_preferences: PreferenceRules = field(default_factory=PreferenceRules)
+    latest_ranking_result: TimetableRankingResult | None = None
     confirmed_major_credits: float = 0
     session_stage: SessionStage = SessionStage.CATALOG_PARSED
     confirmed_major_preview_id: str | None = None
@@ -94,6 +101,18 @@ class SessionData:
         self.general_elective_candidates = list(self.general_elective_candidates)
         self.general_pool_diagnostics = list(self.general_pool_diagnostics)
         self.general_pool_warnings = list(self.general_pool_warnings)
+        self.generated_candidates = list(self.generated_candidates)
+        if not isinstance(self.ranking_preferences, PreferenceRules):
+            self.ranking_preferences = PreferenceRules.model_validate(
+                self.ranking_preferences
+            )
+        if (
+            self.latest_ranking_result is not None
+            and not isinstance(self.latest_ranking_result, TimetableRankingResult)
+        ):
+            self.latest_ranking_result = TimetableRankingResult.model_validate(
+                self.latest_ranking_result
+            )
         if not isinstance(self.session_stage, SessionStage):
             self.session_stage = SessionStage(self.session_stage)
         if self.latest_major_preview is not None:
@@ -212,6 +231,9 @@ class SessionStore:
         session_stage: SessionStage | str | None = None,
         confirmed_major_preview_id: str | None = None,
         latest_major_preview: dict[str, Any] | None = None,
+        generated_candidates: Iterable[TimetableCandidate] | None = None,
+        ranking_preferences: PreferenceRules | None = None,
+        latest_ranking_result: TimetableRankingResult | None = None,
     ) -> SessionData:
         with self._lock:
             # get() performs expiry handling; the stored instance is then updated.
@@ -238,6 +260,12 @@ class SessionStore:
                 data.confirmed_major_preview_id = confirmed_major_preview_id
             if latest_major_preview is not None:
                 data.latest_major_preview = dict(latest_major_preview)
+            if generated_candidates is not None:
+                data.generated_candidates = list(generated_candidates)
+            if ranking_preferences is not None:
+                data.ranking_preferences = ranking_preferences
+            if latest_ranking_result is not None:
+                data.latest_ranking_result = latest_ranking_result
             data.updated_at = self._clock()
             return self._copy(data)
 
@@ -255,6 +283,35 @@ class SessionStore:
             data.general_pool_diagnostics = list(result.excluded_courses)
             data.general_pool_warnings = list(result.warnings)
             data.session_stage = SessionStage.GENERAL_READY
+            data.updated_at = self._clock()
+            return self._copy(data)
+
+    def update_generated_candidates(
+        self,
+        session_id: str,
+        *,
+        candidates: Iterable[TimetableCandidate],
+        preferences: PreferenceRules | None = None,
+    ) -> SessionData:
+        with self._lock:
+            data = self._get_live_locked(session_id, touch=False)
+            data.generated_candidates = list(candidates)
+            if preferences is not None:
+                data.ranking_preferences = preferences
+            data.session_stage = SessionStage.CANDIDATES_GENERATED
+            data.latest_ranking_result = None
+            data.updated_at = self._clock()
+            return self._copy(data)
+
+    def update_ranking_result(
+        self,
+        session_id: str,
+        result: TimetableRankingResult,
+    ) -> SessionData:
+        with self._lock:
+            data = self._get_live_locked(session_id, touch=False)
+            data.latest_ranking_result = result
+            data.session_stage = SessionStage.RANKING_COMPLETED
             data.updated_at = self._clock()
             return self._copy(data)
 
@@ -304,6 +361,13 @@ class SessionStore:
             general_elective_candidates=list(data.general_elective_candidates),
             general_pool_diagnostics=list(data.general_pool_diagnostics),
             general_pool_warnings=list(data.general_pool_warnings),
+            generated_candidates=list(data.generated_candidates),
+            ranking_preferences=data.ranking_preferences.model_copy(deep=True),
+            latest_ranking_result=(
+                data.latest_ranking_result.model_copy(deep=True)
+                if data.latest_ranking_result is not None
+                else None
+            ),
             session_stage=data.session_stage,
             latest_major_preview=(
                 dict(data.latest_major_preview)
