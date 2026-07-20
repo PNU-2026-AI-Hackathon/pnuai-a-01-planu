@@ -17,6 +17,7 @@ from .services.general_course_pool_service import (
     GeneralCoursePreparationService,
 )
 from .services.major_confirm_service import MajorConfirmService
+from .services.major_catalog_upload_service import MajorCatalogUploadService
 from .services.major_preview_service import MajorPreviewService
 from .services.major_selection_parser import MajorSelectionParser
 from .services.session_store import SessionStore, session_store
@@ -45,6 +46,10 @@ def get_major_preview_service() -> MajorPreviewService:
 
 def get_major_confirm_service() -> MajorConfirmService:
     return MajorConfirmService(store=get_session_store())
+
+
+def get_major_catalog_upload_service() -> MajorCatalogUploadService:
+    return MajorCatalogUploadService(store=get_session_store())
 
 
 def get_timetable_generation_service() -> TimetableGenerationService:

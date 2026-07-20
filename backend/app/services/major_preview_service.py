@@ -31,7 +31,6 @@ from .major_selection_parser import (
     MajorSelectionParser,
 )
 from .session_store import SessionNotFoundError, SessionStore, session_store
-from .session_store import SessionStage
 from .timetable_validator import TimetableValidator
 
 
@@ -86,13 +85,6 @@ class MajorPreviewService:
                 "세션에 파싱된 전공 수강편람 데이터가 없습니다.",
                 status_code=409,
             )
-        if session.fixed_courses:
-            raise AppError(
-                "INVALID_SESSION_STAGE",
-                "이미 전공 시간표가 확정된 세션에서는 미리보기를 생성할 수 없습니다.",
-                status_code=409,
-            )
-
         try:
             parse_result = await asyncio.to_thread(self.parser.parse, prompt)
         except EmptyMajorSelectionPromptError as exc:
@@ -156,27 +148,25 @@ class MajorPreviewService:
             ),
         )
 
+        preview = {
+            "session_id": session.session_id,
+            "preview_id": preview_id,
+            "matched_course_ids": [course.course_id for course in matched_courses],
+            "ambiguous_courses": [
+                item.model_dump(mode="json") for item in response.ambiguous_courses
+            ],
+            "unmatched_courses": [
+                item.model_dump(mode="json") for item in response.unmatched_courses
+            ],
+            "ambiguous_texts": list(response.ambiguous_texts),
+            "has_time_conflict": response.has_time_conflict,
+            "conflicts": [item.model_dump(mode="json") for item in response.conflicts],
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "prompt_hash": sha256(prompt.encode("utf-8")).hexdigest(),
+        }
+
         try:
-            self.store.update(
-                session.session_id,
-                session_stage=SessionStage.MAJOR_PREVIEW_CREATED,
-                latest_major_preview={
-                    "session_id": session.session_id,
-                    "preview_id": preview_id,
-                    "matched_course_ids": [course.course_id for course in matched_courses],
-                    "ambiguous_courses": [
-                        item.model_dump(mode="json") for item in response.ambiguous_courses
-                    ],
-                    "unmatched_courses": [
-                        item.model_dump(mode="json") for item in response.unmatched_courses
-                    ],
-                    "ambiguous_texts": list(response.ambiguous_texts),
-                    "has_time_conflict": response.has_time_conflict,
-                    "conflicts": [item.model_dump(mode="json") for item in response.conflicts],
-                    "created_at": datetime.now(timezone.utc).isoformat(),
-                    "prompt_hash": sha256(prompt.encode("utf-8")).hexdigest(),
-                },
-            )
+            self.store.save_major_preview(session.session_id, preview=preview)
         except Exception as exc:
             raise AppError(
                 "MAJOR_PREVIEW_SAVE_FAILED",
