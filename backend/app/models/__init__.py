@@ -6,6 +6,11 @@ from .course_load import (
     CourseLoadTarget,
     CourseLoadWarning,
 )
+from .general_course_pool import (
+    ExcludedCourseDiagnostic,
+    GeneralCoursePoolResult,
+    GeneralCoursePools,
+)
 from .input_timetable import InputTimetable
 from .major_selection import (
     AmbiguousMajorCourse,
@@ -45,6 +50,9 @@ __all__ = [
     "CourseLoadWarning",
     "Day",
     "ExcludedTimeRange",
+    "ExcludedCourseDiagnostic",
+    "GeneralCoursePoolResult",
+    "GeneralCoursePools",
     "InputTimetable",
     "AmbiguousMajorCourse",
     "MajorCourseMatchResult",
