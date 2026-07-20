@@ -29,19 +29,6 @@ class CourseFilter:
     parts of those rules and keeps ranking-only preferences for the ranker.
     """
 
-    def __init__(
-        self,
-        *,
-        restricted_course_ids_by_department: dict[str, set[str]] | None = None,
-        restricted_course_names_by_department: dict[str, set[str]] | None = None,
-    ) -> None:
-        self.restricted_course_ids_by_department = (
-            restricted_course_ids_by_department or {}
-        )
-        self.restricted_course_names_by_department = (
-            restricted_course_names_by_department or {}
-        )
-
     def filter(
         self,
         courses: Iterable[Course],
@@ -61,9 +48,6 @@ class CourseFilter:
                 Category.GENERAL_REQUIRED,
                 Category.GENERAL_ELECTIVE,
             }:
-                rejected_count += 1
-                continue
-            if self._is_restricted(course, department):
                 rejected_count += 1
                 continue
             if self._fails_preference_hard_filters(course, rules):
@@ -96,15 +80,6 @@ class CourseFilter:
         ]
         rejected = len(values) - len(required) - len(elective)
         return CourseFilterResult(required, elective, rejected)
-
-    def _is_restricted(self, course: Course, department: str | None) -> bool:
-        if not department:
-            return False
-        restricted_ids = self.restricted_course_ids_by_department.get(department, set())
-        restricted_names = self.restricted_course_names_by_department.get(
-            department, set()
-        )
-        return course.course_id in restricted_ids or course.course_name in restricted_names
 
     @staticmethod
     def _fails_preference_hard_filters(
@@ -162,15 +137,10 @@ def filter_general_courses(
     fixed_courses: Iterable[Course] = (),
     preferences: PreferenceRules | None = None,
     department: str | None = None,
-    restricted_course_ids_by_department: dict[str, set[str]] | None = None,
-    restricted_course_names_by_department: dict[str, set[str]] | None = None,
 ) -> CourseFilterResult:
     """Functional convenience API used by route handlers and tests."""
 
-    return CourseFilter(
-        restricted_course_ids_by_department=restricted_course_ids_by_department,
-        restricted_course_names_by_department=restricted_course_names_by_department,
-    ).filter(
+    return CourseFilter().filter(
         courses,
         fixed_courses=fixed_courses,
         preferences=preferences,

@@ -38,53 +38,54 @@ class EligibilityDecision:
         }
 
 
-class CourseRestrictionPolicy:
-    """Wrap existing department restriction maps with diagnostic statuses.
+@dataclass(frozen=True, slots=True)
+class DepartmentRestrictionRule:
+    course_code: str
+    division: str
+    allowed_departments: frozenset[str]
+    blocked_departments: frozenset[str]
 
-    The existing project-level filter stores per-department restricted course
-    IDs/names as deny lists. This wrapper keeps that behavior but exposes
-    richer statuses for pool diagnostics.
-    """
+
+class CourseRestrictionPolicy:
+    """Evaluate department restrictions keyed by course code and division."""
 
     def __init__(
         self,
         *,
-        restricted_course_ids_by_department: dict[str, set[str]] | None = None,
-        restricted_course_names_by_department: dict[str, set[str]] | None = None,
-        known_departments: Iterable[str] | None = None,
+        rules: Iterable[DepartmentRestrictionRule] = (),
     ) -> None:
-        self.restricted_course_ids_by_department = restricted_course_ids_by_department or {}
-        self.restricted_course_names_by_department = restricted_course_names_by_department or {}
-        self.known_departments = set(known_departments or [])
+        self.rules_by_course_section = {
+            (_normalized(rule.course_code), _normalized(rule.division)): rule
+            for rule in rules
+        }
 
     def evaluate(self, course: Course, *, department: str) -> EligibilityDecision:
-        if not department.strip():
+        department_name = department.strip()
+        if not department_name:
             return EligibilityDecision(
                 EligibilityStatus.UNKNOWN_DEPARTMENT,
                 "사용자 학과 정보가 없습니다.",
             )
 
-        if self.known_departments and department not in self.known_departments:
-            return EligibilityDecision(
-                EligibilityStatus.UNKNOWN_DEPARTMENT,
-                "학과명이 제한 규칙 데이터에서 인식되지 않습니다.",
-            )
-
-        if not self.restricted_course_ids_by_department and not self.restricted_course_names_by_department:
+        rule = self.rules_by_course_section.get(_course_key(course))
+        if rule is None:
             return EligibilityDecision(
                 EligibilityStatus.NOT_RESTRICTED,
-                "제한 규칙 데이터가 없어 제한 대상이 아닌 것으로 처리했습니다.",
+                "해당 과목·분반에 제한 규칙이 없습니다.",
             )
 
-        restricted_ids = self.restricted_course_ids_by_department.get(department)
-        restricted_names = self.restricted_course_names_by_department.get(department)
-        if restricted_ids is None and restricted_names is None:
+        if rule.allowed_departments:
+            if department_name in rule.allowed_departments:
+                return EligibilityDecision(
+                    EligibilityStatus.ELIGIBLE,
+                    "현재 학과에서 수강 가능한 분반입니다.",
+                )
             return EligibilityDecision(
-                EligibilityStatus.RULE_DATA_MISSING,
-                "현재 학과의 제한 규칙 데이터를 찾을 수 없습니다.",
+                EligibilityStatus.NOT_ELIGIBLE,
+                "현재 학과는 수강가능 학과 목록에 없습니다.",
             )
 
-        if course.course_id in (restricted_ids or set()) or course.course_name in (restricted_names or set()):
+        if department_name in rule.blocked_departments:
             return EligibilityDecision(
                 EligibilityStatus.NOT_ELIGIBLE,
                 "현재 학과에서 수강할 수 없는 분반입니다.",
@@ -104,34 +105,31 @@ class GeneralCoursePoolService:
         self,
         *,
         department: str,
-        internal_general_courses: Iterable[Course],
+        general_required_courses: Iterable[Course],
         uploaded_elective_courses: Iterable[Course] | None = None,
         fallback_elective_courses: Iterable[Course] | None = None,
     ) -> GeneralCoursePoolResult:
         if not department.strip():
             raise AppError("DEPARTMENT_NOT_FOUND", "사용자 학과 정보가 없습니다.", status_code=409)
 
-        internal_courses = list(internal_general_courses)
-        if not internal_courses:
+        required_candidates = list(general_required_courses)
+        if not required_candidates:
             raise AppError(
                 "RESTRICTED_COURSE_DATA_NOT_FOUND",
-                "내부 교양 및 제한 과목 데이터가 없습니다.",
+                "교양필수 후보 데이터가 없습니다.",
                 status_code=500,
             )
 
         uploaded = list(uploaded_elective_courses or [])
         fallback = list(fallback_elective_courses or [])
         result = GeneralCoursePoolResult()
-        internal_course_by_key = {_course_key(course): course for course in internal_courses}
 
         required = self._accept_courses(
-            internal_courses,
+            required_candidates,
             department=department,
             result=result,
-            internal_course_by_key=internal_course_by_key,
-            source="internal_general_courses",
+            source="general_required_courses",
             allowed_categories={Category.GENERAL_REQUIRED},
-            apply_restriction_to_all=True,
         )
 
         if uploaded:
@@ -149,10 +147,8 @@ class GeneralCoursePoolService:
             elective_source,
             department=department,
             result=result,
-            internal_course_by_key=internal_course_by_key,
             source=elective_source_name,
             allowed_categories={Category.GENERAL_ELECTIVE},
-            apply_restriction_to_all=False,
         )
 
         result.pools = GeneralCoursePools(
@@ -167,10 +163,8 @@ class GeneralCoursePoolService:
         *,
         department: str,
         result: GeneralCoursePoolResult,
-        internal_course_by_key: dict[tuple[str, str], Course],
         source: str,
         allowed_categories: set[Category],
-        apply_restriction_to_all: bool,
     ) -> list[Course]:
         accepted: list[Course] = []
         seen: set[tuple[str, str]] = set()
@@ -189,32 +183,20 @@ class GeneralCoursePoolService:
                 )
                 continue
 
-            restriction_course = internal_course_by_key.get(key)
-            # Uploaded elective rows are checked only when the same course
-            # section exists in the internal restriction-bearing data.
-            should_check_restriction = (
-                apply_restriction_to_all
-                or restriction_course is not None
+            decision = self.restriction_policy.evaluate(
+                course,
+                department=department,
             )
-            if should_check_restriction:
-                if restriction_course is not None and restriction_course != course:
-                    result.warnings.append(
-                        f"{course.course_id} 강의 정보가 내부 제한 데이터와 달라 실제 후보 정보는 {source} 값을 유지했습니다."
+            if not decision.allows_course:
+                result.excluded_courses.append(
+                    _diagnostic(
+                        course,
+                        _reason_code(decision.status),
+                        decision.reason,
+                        source,
                     )
-                decision = self.restriction_policy.evaluate(
-                    restriction_course or course,
-                    department=department,
                 )
-                if not decision.allows_course:
-                    result.excluded_courses.append(
-                        _diagnostic(
-                            course,
-                            _reason_code(decision.status),
-                            decision.reason,
-                            source,
-                        )
-                    )
-                    continue
+                continue
 
             accepted.append(course)
             seen.add(key)
@@ -228,12 +210,12 @@ class GeneralCoursePreparationService:
         *,
         store: SessionStore = session_store,
         pool_service: GeneralCoursePoolService | None = None,
-        internal_general_courses: Iterable[Course] = (),
+        general_required_courses: Iterable[Course] = (),
         fallback_elective_courses: Iterable[Course] | None = None,
     ) -> None:
         self.store = store
         self.pool_service = pool_service or GeneralCoursePoolService()
-        self.internal_general_courses = list(internal_general_courses)
+        self.general_required_courses = list(general_required_courses)
         self.fallback_elective_courses = (
             None if fallback_elective_courses is None else list(fallback_elective_courses)
         )
@@ -269,7 +251,7 @@ class GeneralCoursePreparationService:
 
         result = self.pool_service.build_pools(
             department=session.department,
-            internal_general_courses=self.internal_general_courses,
+            general_required_courses=self.general_required_courses,
             uploaded_elective_courses=session.elective_candidates,
             fallback_elective_courses=self.fallback_elective_courses,
         )
@@ -290,7 +272,7 @@ def _course_key(course: Course) -> tuple[str, str]:
         code = course.course_id.rsplit("-", 1)[0]
     else:
         code = _normalized(course.course_name)
-    return (code, _normalized(course.division))
+    return (_normalized(code), _normalized(course.division))
 
 
 def _normalized(value: str) -> str:
