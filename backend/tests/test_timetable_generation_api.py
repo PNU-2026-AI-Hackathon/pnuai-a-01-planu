@@ -166,7 +166,7 @@ def test_timetable_generation_api_returns_candidates_and_saves_session() -> None
     assert saved.generated_timetable_candidates
     assert saved.generation_course_load_target is not None
     assert saved.generation_hard_conditions is not None
-    assert saved.session_stage is SessionStage.GENERAL_READY
+    assert saved.session_stage is SessionStage.CANDIDATES_GENERATED
 
 
 def test_recommend_api_prompt_hard_conditions_reach_generator() -> None:

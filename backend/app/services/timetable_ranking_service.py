@@ -27,6 +27,10 @@ class NoGeneratedCandidatesError(TimetableRankingError):
     pass
 
 
+class NoRankableCandidatesError(TimetableRankingError):
+    pass
+
+
 class TimetableRankingService:
     """Rank already-generated candidates stored in a session."""
 
@@ -88,6 +92,10 @@ class TimetableRankingService:
                     message="하드 조건을 위반한 후보가 랭킹 대상에서 제외되었습니다.",
                     details={"removed_count": hard_removed_count},
                 )
+            )
+        if not hard_filtered:
+            raise NoRankableCandidatesError(
+                "all generated timetable candidates were removed by hard filters"
             )
 
         ranking_limit = len(hard_filtered) if top_n is None else top_n
