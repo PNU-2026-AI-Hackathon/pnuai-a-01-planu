@@ -88,6 +88,7 @@ class TimetableGenerationRequest(BaseModel):
 class TimetableGenerationResponse(TimetableGenerationResult):
     """Response returned by ``POST /recommend/generate``."""
 
+    session_stage: SessionStage
     hard_conditions: PreferenceRules = Field(default_factory=PreferenceRules)
     soft_conditions: PreferenceRules = Field(default_factory=PreferenceRules)
     unsupported_conditions: list[UnsupportedCondition] = Field(default_factory=list)
