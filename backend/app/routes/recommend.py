@@ -14,6 +14,7 @@ from ..schemas.recommend_schema import (
     TimetableRankingResponse,
 )
 from ..services.timetable_generation_service import TimetableGenerationService
+from ..services.ranking_template_service import normalize_ranking_template
 from ..services.session_store import SessionNotFoundError
 from ..services.timetable_ranking_service import (
     InvalidRankingSessionStageError,
@@ -47,17 +48,20 @@ def rank_timetable_candidates(
     request: TimetableRankingRequest,
     service: TimetableRankingService = Depends(get_timetable_ranking_service),
 ) -> TimetableRankingResponse:
-    if not 1 <= request.top_n <= 10:
+    _validate_top_n(request.top_n)
+    try:
+        template = normalize_ranking_template(request.template)
+    except ValueError as exc:
         raise AppError(
-            "INVALID_TOP_N",
-            "top_n은 1 이상 10 이하로 요청해 주세요.",
+            "UNKNOWN_RANKING_TEMPLATE",
+            "지원하지 않는 랭킹 템플릿입니다.",
             status_code=400,
-        )
+        ) from exc
 
     try:
         result = service.rank_for_session(
             session_id=request.session_id,
-            template=request.template,
+            template=template,
             top_n=request.top_n,
         )
         session = service.store.get(request.session_id, touch=False)
@@ -87,17 +91,10 @@ def rank_timetable_candidates(
             status_code=409,
         ) from exc
     except ValueError as exc:
-        message = str(exc)
-        if "top_n" in message:
-            raise AppError(
-                "INVALID_TOP_N",
-                "top_n은 1 이상 10 이하로 요청해 주세요.",
-                status_code=400,
-            ) from exc
         raise AppError(
-            "UNKNOWN_RANKING_TEMPLATE",
-            "지원하지 않는 랭킹 템플릿입니다.",
-            status_code=400,
+            "RANKING_FAILED",
+            "시간표 후보 랭킹에 실패했습니다.",
+            status_code=500,
         ) from exc
     except TimetableRankingError as exc:
         raise AppError(
@@ -130,3 +127,12 @@ def rank_timetable_candidates(
         warnings=session.preference_warnings,
         session_stage=session.session_stage,
     )
+
+
+def _validate_top_n(top_n: int) -> None:
+    if not 1 <= top_n <= 10:
+        raise AppError(
+            "INVALID_TOP_N",
+            "top_n은 1 이상 10 이하로 요청해 주세요.",
+            status_code=400,
+        )

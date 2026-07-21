@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 
 from backend.app.deps import get_timetable_ranking_service
@@ -173,7 +174,8 @@ def test_recommend_rank_api_honors_top_n_smaller_and_larger_than_candidates() ->
     assert many.json()["returned_count"] == 2
 
 
-def test_recommend_rank_api_rejects_invalid_top_n_with_standard_error() -> None:
+@pytest.mark.parametrize("top_n", [0, -1, 11])
+def test_recommend_rank_api_rejects_invalid_top_n_with_standard_error(top_n: int) -> None:
     store = SessionStore()
     session = store.create("컴퓨터공학과")
     store.update_generated_candidates(session.session_id, candidates=[_candidate("GEN-A")])
@@ -182,7 +184,7 @@ def test_recommend_rank_api_rejects_invalid_top_n_with_standard_error() -> None:
     try:
         response = client.post(
             "/recommend/rank",
-            json={"session_id": session.session_id, "top_n": 0},
+            json={"session_id": session.session_id, "top_n": top_n},
         )
     finally:
         app.dependency_overrides.clear()
@@ -207,6 +209,28 @@ def test_recommend_rank_api_rejects_unknown_template_with_standard_error() -> No
 
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "UNKNOWN_RANKING_TEMPLATE"
+
+
+def test_recommend_rank_api_accepts_explicit_supported_template() -> None:
+    store = SessionStore()
+    session = store.create("컴퓨터공학과")
+    store.update_generated_candidates(session.session_id, candidates=[_candidate("GEN-A")])
+    client = _client_for(store)
+
+    try:
+        response = client.post(
+            "/recommend/rank",
+            json={
+                "session_id": session.session_id,
+                "template": "free_day_priority",
+            },
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.json()["template"] == "free_day_priority"
+    assert response.json()["template_name"] == "공강일 우선형"
 
 
 def test_recommend_rank_api_uses_only_session_candidates_and_forbids_client_scores() -> None:
@@ -250,6 +274,24 @@ def test_recommend_rank_api_returns_no_generated_candidates_error() -> None:
     assert response.json()["error"]["code"] == "NO_GENERATED_CANDIDATES"
 
 
+def test_recommend_rank_api_rejects_general_ready_session_stage() -> None:
+    store = SessionStore()
+    session = store.create("컴퓨터공학과")
+    store.update(session.session_id, session_stage=SessionStage.GENERAL_READY)
+    client = _client_for(store)
+
+    try:
+        response = client.post(
+            "/recommend/rank",
+            json={"session_id": session.session_id},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "INVALID_SESSION_STAGE"
+
+
 def test_recommend_rank_api_returns_no_rankable_candidates_error() -> None:
     store = SessionStore()
     session = store.create("컴퓨터공학과")
@@ -270,6 +312,76 @@ def test_recommend_rank_api_returns_no_rankable_candidates_error() -> None:
 
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "NO_RANKABLE_CANDIDATES"
+
+
+def test_recommend_rank_api_returns_duplicate_candidate_diagnostic() -> None:
+    store = SessionStore()
+    session = store.create("컴퓨터공학과")
+    candidate = _candidate("GEN-A")
+    duplicate = _candidate("GEN-A")
+    store.update_generated_candidates(
+        session.session_id,
+        candidates=[candidate, duplicate],
+    )
+    client = _client_for(store)
+
+    try:
+        response = client.post(
+            "/recommend/rank",
+            json={"session_id": session.session_id},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total_candidate_count"] == 2
+    assert body["returned_count"] == 1
+    diagnostic = [
+        item
+        for item in body["diagnostics"]
+        if item["code"] == "DUPLICATE_CANDIDATE_REMOVED"
+    ][0]
+    assert diagnostic["details"]["removed_count"] == 1
+
+
+def test_recommend_rank_api_reranks_completed_session_with_different_template() -> None:
+    store = SessionStore()
+    session = store.create("컴퓨터공학과")
+    store.update_generated_candidates(
+        session.session_id,
+        candidates=[
+            _candidate("EARLY", day=Day.MON, start="08:00", end="09:00"),
+            _candidate("LATE", day=Day.TUE, start="11:00", end="12:00"),
+        ],
+    )
+    client = _client_for(store)
+
+    try:
+        first = client.post(
+            "/recommend/rank",
+            json={"session_id": session.session_id, "template": "balanced"},
+        )
+        second = client.post(
+            "/recommend/rank",
+            json={
+                "session_id": session.session_id,
+                "template": "no_morning_priority",
+            },
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert first.status_code == 200
+    assert first.json()["session_stage"] == "ranking_completed"
+    assert second.status_code == 200
+    body = second.json()
+    assert body["session_stage"] == "ranking_completed"
+    assert body["template"] == "no_morning_priority"
+    assert store.get(session.session_id).latest_ranking_result is not None
+    assert store.get(session.session_id).latest_ranking_result.template.value == (
+        "no_morning_priority"
+    )
 
 
 def test_recommend_rank_api_rejects_sessions_before_generation() -> None:

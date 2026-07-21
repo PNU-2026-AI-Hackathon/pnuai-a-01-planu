@@ -64,10 +64,6 @@ def get_ranking_template_service() -> RankingTemplateService:
     return RankingTemplateService()
 
 
-def get_timetable_ranker() -> TimetableRanker:
-    return TimetableRanker(template_service=get_ranking_template_service())
-
-
 def get_timetable_ranking_service() -> TimetableRankingService:
     template_service = get_ranking_template_service()
     return TimetableRankingService(
