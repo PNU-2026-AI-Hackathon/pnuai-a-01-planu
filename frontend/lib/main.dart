@@ -3,22 +3,18 @@ import 'package:flutter/material.dart';
 import 'screens/guide_screen.dart';
 
 void main() {
-  runApp(const MyApp());
+  runApp(const PlaNUApp());
 }
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+class PlaNUApp extends StatelessWidget {
+  const PlaNUApp({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
+    return const MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'PlaNU',
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF111111)),
-        useMaterial3: true,
-      ),
-      home: const GuideScreen(),
+      home: GuideScreen(),
     );
   }
 }
