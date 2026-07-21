@@ -15,7 +15,7 @@ from ..models.general_course_pool import (
     ExcludedCourseDiagnostic,
     GeneralCoursePoolResult,
 )
-from ..models.preference import PreferenceRules
+from ..models.preference import PreferenceRules, PreferenceWarning, UnsupportedCondition
 from ..models.timetable import (
     GenerationDiagnostic,
     TimetableCandidate,
@@ -84,6 +84,9 @@ class SessionData:
     general_elective_candidates: list[Course] = field(default_factory=list)
     general_pool_diagnostics: list[ExcludedCourseDiagnostic] = field(default_factory=list)
     general_pool_warnings: list[str] = field(default_factory=list)
+    general_pool_data_source: str | None = None
+    general_pool_elective_area: int | None = None
+    general_pool_prepared_at: datetime | None = None
     generated_candidates: list[TimetableCandidate] = field(default_factory=list)
     ranking_preferences: PreferenceRules = field(default_factory=PreferenceRules)
     latest_ranking_result: TimetableRankingResult | None = None
@@ -91,12 +94,15 @@ class SessionData:
     generation_diagnostics: list[GenerationDiagnostic] = field(default_factory=list)
     generation_course_load_target: CourseLoadTarget | None = None
     generation_hard_conditions: PreferenceRules | None = None
+    preference_unsupported_conditions: list[UnsupportedCondition] = field(default_factory=list)
+    preference_warnings: list[PreferenceWarning] = field(default_factory=list)
     generation_truncated: bool = False
     generated_at: datetime | None = None
     confirmed_major_credits: float = 0
     session_stage: SessionStage = SessionStage.CATALOG_PARSED
     confirmed_major_preview_id: str | None = None
     latest_major_preview: dict[str, Any] | None = None
+    pending_major_preview: dict[str, Any] | None = None
     created_at: datetime = field(default_factory=_utcnow)
     updated_at: datetime = field(default_factory=_utcnow)
 
@@ -134,10 +140,24 @@ class SessionData:
             self.generation_hard_conditions = PreferenceRules.model_validate(
                 self.generation_hard_conditions
             )
+        self.preference_unsupported_conditions = [
+            item
+            if isinstance(item, UnsupportedCondition)
+            else UnsupportedCondition.model_validate(item)
+            for item in self.preference_unsupported_conditions
+        ]
+        self.preference_warnings = [
+            item
+            if isinstance(item, PreferenceWarning)
+            else PreferenceWarning.model_validate(item)
+            for item in self.preference_warnings
+        ]
         if not isinstance(self.session_stage, SessionStage):
             self.session_stage = SessionStage(self.session_stage)
         if self.latest_major_preview is not None:
             self.latest_major_preview = dict(self.latest_major_preview)
+        if self.pending_major_preview is not None:
+            self.pending_major_preview = dict(self.pending_major_preview)
 
 
 class SessionStore:
@@ -193,6 +213,24 @@ class SessionStore:
 
     get_session = get
 
+    def save_major_preview(
+        self,
+        session_id: str,
+        *,
+        preview: dict[str, Any],
+    ) -> SessionData:
+        """Save a preview without invalidating confirmed downstream state."""
+
+        with self._lock:
+            data = self._get_live_locked(session_id, touch=False)
+            if data.fixed_courses:
+                data.pending_major_preview = dict(preview)
+            else:
+                data.latest_major_preview = dict(preview)
+                data.session_stage = SessionStage.MAJOR_PREVIEW_CREATED
+            data.updated_at = self._clock()
+            return self._copy(data)
+
     def confirm_major_preview(
         self,
         session_id: str,
@@ -240,6 +278,78 @@ class SessionStore:
             data.updated_at = self._clock()
             return self._copy(data)
 
+    def reconfirm_major_preview(
+        self,
+        session_id: str,
+        *,
+        preview_id: str,
+        fixed_courses: Iterable[Course],
+        confirmed_major_credits: float,
+        confirmed_preview: dict[str, Any],
+    ) -> SessionData:
+        """Atomically replace the confirmed major selection and clear descendants."""
+
+        with self._lock:
+            data = self._get_live_locked(session_id, touch=False)
+
+            if (
+                data.confirmed_major_preview_id == preview_id
+                and data.fixed_courses
+                and data.session_stage is SessionStage.MAJOR_CONFIRMED
+                and data.pending_major_preview is None
+                and (
+                    data.latest_major_preview is None
+                    or data.latest_major_preview.get("preview_id") == preview_id
+                )
+            ):
+                data.updated_at = self._clock()
+                return self._copy(data)
+
+            preview = data.pending_major_preview
+            if preview is None:
+                raise MajorPreviewNotFoundError("major preview not found")
+            if preview.get("session_id") not in (None, data.session_id):
+                raise InvalidPreviewSessionError("preview belongs to another session")
+            if preview.get("preview_id") != preview_id:
+                raise StaleMajorPreviewError("latest preview id does not match")
+
+            courses = list(fixed_courses)
+            preview_course_ids = list(preview.get("matched_course_ids") or [])
+            fixed_course_ids = [course.course_id for course in courses]
+            if preview_course_ids != fixed_course_ids:
+                raise MajorCourseReferenceMismatchError(
+                    "fixed courses do not match latest preview references"
+                )
+
+            data.fixed_courses = courses
+            data.confirmed_major_credits = confirmed_major_credits
+            data.confirmed_major_preview_id = preview_id
+            data.latest_major_preview = dict(confirmed_preview)
+            data.pending_major_preview = None
+            data.session_stage = SessionStage.MAJOR_CONFIRMED
+
+            data.general_required_candidates = []
+            data.general_elective_candidates = []
+            data.general_pool_diagnostics = []
+            data.general_pool_warnings = []
+            data.general_pool_data_source = None
+            data.general_pool_elective_area = None
+            data.general_pool_prepared_at = None
+            data.generated_candidates = []
+            data.generated_timetable_candidates = []
+            data.generation_diagnostics = []
+            data.generation_course_load_target = None
+            data.generation_hard_conditions = None
+            data.generation_truncated = False
+            data.generated_at = None
+            data.ranking_preferences = PreferenceRules()
+            data.latest_ranking_result = None
+            data.preference_unsupported_conditions = []
+            data.preference_warnings = []
+
+            data.updated_at = self._clock()
+            return self._copy(data)
+
     def update(
         self,
         session_id: str,
@@ -259,6 +369,8 @@ class SessionStore:
         generation_diagnostics: Iterable[GenerationDiagnostic] | None = None,
         generation_course_load_target: CourseLoadTarget | None = None,
         generation_hard_conditions: PreferenceRules | None = None,
+        preference_unsupported_conditions: Iterable[UnsupportedCondition] | None = None,
+        preference_warnings: Iterable[PreferenceWarning] | None = None,
         generation_truncated: bool | None = None,
         generated_at: datetime | None = None,
     ) -> SessionData:
@@ -301,6 +413,10 @@ class SessionStore:
                 data.generation_course_load_target = generation_course_load_target
             if generation_hard_conditions is not None:
                 data.generation_hard_conditions = generation_hard_conditions
+            if preference_unsupported_conditions is not None:
+                data.preference_unsupported_conditions = list(preference_unsupported_conditions)
+            if preference_warnings is not None:
+                data.preference_warnings = list(preference_warnings)
             if generation_truncated is not None:
                 data.generation_truncated = generation_truncated
             if generated_at is not None:
@@ -314,15 +430,33 @@ class SessionStore:
         self,
         session_id: str,
         result: GeneralCoursePoolResult,
+        *,
+        data_source: str | None = None,
+        elective_area: int | None = None,
     ) -> SessionData:
         with self._lock:
             data = self._get_live_locked(session_id, touch=False)
+            now = self._clock()
             data.general_required_candidates = list(result.pools.required_courses)
             data.general_elective_candidates = list(result.pools.elective_courses)
             data.general_pool_diagnostics = list(result.excluded_courses)
             data.general_pool_warnings = list(result.warnings)
+            data.general_pool_data_source = data_source
+            data.general_pool_elective_area = elective_area
+            data.general_pool_prepared_at = now
+            data.generated_candidates = []
+            data.generated_timetable_candidates = []
+            data.generation_diagnostics = []
+            data.generation_course_load_target = None
+            data.generation_hard_conditions = None
+            data.generation_truncated = False
+            data.generated_at = None
+            data.ranking_preferences = PreferenceRules()
+            data.latest_ranking_result = None
+            data.preference_unsupported_conditions = []
+            data.preference_warnings = []
             data.session_stage = SessionStage.GENERAL_READY
-            data.updated_at = self._clock()
+            data.updated_at = now
             return self._copy(data)
 
     def update_generated_candidates(
@@ -363,6 +497,9 @@ class SessionStore:
         course_load_target: CourseLoadTarget,
         hard_conditions: PreferenceRules | None,
         truncated: bool,
+        ranking_preferences: PreferenceRules | None = None,
+        unsupported_conditions: Iterable[UnsupportedCondition] = (),
+        warnings: Iterable[PreferenceWarning] = (),
     ) -> SessionData:
         with self._lock:
             data = self._get_live_locked(session_id, touch=False)
@@ -371,6 +508,8 @@ class SessionStore:
             data.generation_diagnostics = list(diagnostics)
             data.generation_course_load_target = course_load_target
             data.generation_hard_conditions = hard_conditions
+            data.preference_unsupported_conditions = list(unsupported_conditions)
+            data.preference_warnings = list(warnings)
             data.generation_truncated = truncated
             data.generated_candidates = [
                 candidate.timetable.model_copy(
@@ -378,9 +517,10 @@ class SessionStore:
                 )
                 for candidate in data.generated_timetable_candidates
             ]
-            data.ranking_preferences = hard_conditions or PreferenceRules()
+            data.ranking_preferences = ranking_preferences or hard_conditions or PreferenceRules()
             data.latest_ranking_result = None
             data.generated_at = now
+            data.session_stage = SessionStage.CANDIDATES_GENERATED
             data.updated_at = now
             return self._copy(data)
 
@@ -430,6 +570,9 @@ class SessionStore:
             general_elective_candidates=list(data.general_elective_candidates),
             general_pool_diagnostics=list(data.general_pool_diagnostics),
             general_pool_warnings=list(data.general_pool_warnings),
+            general_pool_data_source=data.general_pool_data_source,
+            general_pool_elective_area=data.general_pool_elective_area,
+            general_pool_prepared_at=data.general_pool_prepared_at,
             generated_candidates=list(data.generated_candidates),
             ranking_preferences=data.ranking_preferences.model_copy(deep=True),
             latest_ranking_result=(
@@ -445,12 +588,19 @@ class SessionStore:
                 if data.generation_hard_conditions is not None
                 else None
             ),
+            preference_unsupported_conditions=list(data.preference_unsupported_conditions),
+            preference_warnings=list(data.preference_warnings),
             generation_truncated=data.generation_truncated,
             generated_at=data.generated_at,
             session_stage=data.session_stage,
             latest_major_preview=(
                 dict(data.latest_major_preview)
                 if data.latest_major_preview is not None
+                else None
+            ),
+            pending_major_preview=(
+                dict(data.pending_major_preview)
+                if data.pending_major_preview is not None
                 else None
             ),
         )

@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from enum import Enum
+import os
+from pathlib import Path
 import re
 from collections.abc import Iterable
+from typing import Protocol
+
+from fastapi import UploadFile
 
 from ..core.errors import AppError
 from ..models.course import Category, Course
@@ -14,7 +20,17 @@ from ..models.general_course_pool import (
     GeneralCoursePoolResult,
     GeneralCoursePools,
 )
+from ..schemas.general_schema import GeneralPreparationResponse
+from .major_catalog_upload_service import write_limited_upload_to_temp
 from .session_store import SessionNotFoundError, SessionStage, SessionStore, session_store
+from .uploaded_catalog_parser import (
+    MAX_UPLOAD_SIZE,
+    UploadedCatalogError,
+    UploadedCatalogParser,
+)
+
+
+FALLBACK_WARNING = "교양선택 수강편람이 업로드되지 않아 서버 기본 데이터를 사용했습니다."
 
 
 class EligibilityStatus(str, Enum):
@@ -22,6 +38,7 @@ class EligibilityStatus(str, Enum):
     NOT_ELIGIBLE = "not_eligible"
     NOT_RESTRICTED = "not_restricted"
     UNKNOWN_DEPARTMENT = "unknown_department"
+    RULE_NOT_FOUND = "rule_not_found"
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,6 +90,11 @@ class CourseRestrictionPolicy:
             )
 
         rule = self.rules_by_course_section.get(_course_key(course))
+        if rule is None and course.category is Category.GENERAL_REQUIRED:
+            return EligibilityDecision(
+                EligibilityStatus.RULE_NOT_FOUND,
+                "교양필수 과목의 학과별 수강 제한 규칙을 찾지 못했습니다.",
+            )
         if rule is None:
             return EligibilityDecision(
                 EligibilityStatus.NOT_RESTRICTED,
@@ -209,6 +231,11 @@ class GeneralCoursePoolService:
         return accepted
 
 
+class ElectiveCatalogParserProtocol(Protocol):
+    def parse_elective(self, path: str | Path, *, area: int | None = None) -> list[Course]:
+        ...
+
+
 class GeneralCoursePreparationService:
     def __init__(
         self,
@@ -217,6 +244,8 @@ class GeneralCoursePreparationService:
         pool_service: GeneralCoursePoolService | None = None,
         general_required_courses: Iterable[Course] = (),
         fallback_elective_courses: Iterable[Course] | None = None,
+        elective_parser: ElectiveCatalogParserProtocol | None = None,
+        max_upload_size: int = MAX_UPLOAD_SIZE,
     ) -> None:
         self.store = store
         self.pool_service = pool_service or GeneralCoursePoolService()
@@ -224,8 +253,36 @@ class GeneralCoursePreparationService:
         self.fallback_elective_courses = (
             None if fallback_elective_courses is None else list(fallback_elective_courses)
         )
+        self.elective_parser = elective_parser or UploadedCatalogParser()
+        self.max_upload_size = max_upload_size
 
-    def prepare_for_session(self, session_id: str) -> GeneralCoursePoolResult:
+    async def prepare_for_session(
+        self,
+        session_id: str,
+        *,
+        elective_catalog: UploadFile | None = None,
+        elective_area: int | None = None,
+    ) -> GeneralPreparationResponse:
+        session_id = session_id.strip()
+        if not session_id:
+            raise AppError("SESSION_ID_REQUIRED", "session_id는 비어 있을 수 없습니다.", status_code=400)
+        if elective_area is None:
+            raise AppError(
+                "ELECTIVE_AREA_REQUIRED",
+                "교양선택 후보 준비 시 교양 영역을 선택해주세요.",
+                status_code=400,
+            )
+        if not 1 <= elective_area <= 7:
+            raise AppError(
+                "INVALID_ELECTIVE_AREA",
+                "교양 영역은 1~7 사이의 정수여야 합니다.",
+                status_code=400,
+            )
+
+        has_upload = _has_upload(elective_catalog)
+        if has_upload:
+            self._validate_upload_name(elective_catalog)
+
         try:
             session = self.store.get(session_id)
         except SessionNotFoundError as exc:
@@ -235,17 +292,19 @@ class GeneralCoursePreparationService:
                 status_code=404,
             ) from exc
 
-        if session.session_stage is SessionStage.GENERAL_READY:
-            return GeneralCoursePoolResult(
-                pools=GeneralCoursePools(
-                    required_courses=session.general_required_candidates,
-                    elective_courses=session.general_elective_candidates,
-                ),
-                excluded_courses=session.general_pool_diagnostics,
-                warnings=session.general_pool_warnings,
-            )
+        if (
+            session.session_stage is SessionStage.GENERAL_READY
+            and not has_upload
+            and session.general_pool_elective_area == elective_area
+        ):
+            return _response_from_session(session)
 
-        if session.session_stage is not SessionStage.MAJOR_CONFIRMED:
+        if session.session_stage not in {
+            SessionStage.MAJOR_CONFIRMED,
+            SessionStage.GENERAL_READY,
+            SessionStage.CANDIDATES_GENERATED,
+            SessionStage.RANKING_COMPLETED,
+        }:
             raise AppError(
                 "INVALID_SESSION_STAGE",
                 "전공 시간표 확정 이후에만 교양 후보 풀을 생성할 수 있습니다.",
@@ -254,22 +313,140 @@ class GeneralCoursePreparationService:
         if not session.department.strip():
             raise AppError("DEPARTMENT_NOT_FOUND", "사용자 학과 정보가 없습니다.", status_code=409)
 
-        result = self.pool_service.build_pools(
-            department=session.department,
-            general_required_courses=self.general_required_courses,
-            uploaded_elective_courses=session.elective_candidates,
-            fallback_elective_courses=self.fallback_elective_courses,
-        )
+        uploaded_elective_courses: list[Course] | None = None
+        data_source = "fallback_catalog"
+        warnings: list[str] = []
+        if has_upload:
+            uploaded_elective_courses = await self._parse_uploaded_elective_catalog(
+                elective_catalog,
+                elective_area=elective_area,
+            )
+            uploaded_elective_courses = _filter_electives_by_area(
+                uploaded_elective_courses,
+                elective_area=elective_area,
+            )
+            if not uploaded_elective_courses:
+                raise AppError(
+                    "EMPTY_ELECTIVE_CATALOG",
+                    "선택한 교양 영역에 해당하는 업로드 교양선택 과목을 찾지 못했습니다.",
+                    status_code=422,
+                )
+            data_source = "uploaded_catalog"
+        else:
+            warnings.append(FALLBACK_WARNING)
+
+        fallback_elective_courses = self.fallback_elective_courses
+        if not has_upload and fallback_elective_courses is None:
+            fallback_elective_courses = session.elective_candidates
+        if not has_upload and not fallback_elective_courses:
+            raise AppError(
+                "FALLBACK_ELECTIVE_DATA_NOT_FOUND",
+                "서버 기본 교양선택 데이터가 준비되어 있지 않습니다.",
+                status_code=500,
+            )
+        if not has_upload:
+            fallback_elective_courses = _filter_electives_by_area(
+                fallback_elective_courses,
+                elective_area=elective_area,
+            )
+            if not fallback_elective_courses:
+                raise AppError(
+                    "FALLBACK_ELECTIVE_AREA_NOT_FOUND",
+                    "선택한 교양 영역에 해당하는 서버 기본 교양선택 데이터가 없습니다.",
+                    status_code=404,
+                    details={"elective_area": elective_area},
+                )
 
         try:
-            self.store.update_general_course_pool(session.session_id, result)
+            result = self.pool_service.build_pools(
+                department=session.department,
+                general_required_courses=self.general_required_courses,
+                uploaded_elective_courses=uploaded_elective_courses,
+                fallback_elective_courses=fallback_elective_courses,
+            )
+        except AppError:
+            raise
+        except Exception as exc:
+            raise AppError(
+                "GENERAL_COURSE_POOL_BUILD_FAILED",
+                "교양 후보 풀을 생성하지 못했습니다.",
+                status_code=500,
+            ) from exc
+        result.warnings = [*warnings, *result.warnings]
+
+        try:
+            saved = self.store.update_general_course_pool(
+                session.session_id,
+                result,
+                data_source=data_source,
+                elective_area=elective_area,
+            )
         except (TypeError, ValueError) as exc:
             raise AppError(
                 "GENERAL_COURSE_POOL_SAVE_FAILED",
                 "교양 후보 풀을 세션에 저장하지 못했습니다.",
                 status_code=500,
             ) from exc
-        return result
+        return _response_from_session(saved)
+
+    @staticmethod
+    def _validate_upload_name(upload_file: UploadFile | None) -> None:
+        filename = ((upload_file.filename if upload_file else None) or "").strip()
+        if not filename:
+            raise AppError(
+                "INVALID_EXCEL_FILE",
+                "유효한 .xlsx 파일이 아닙니다.",
+                status_code=400,
+            )
+        if Path(filename).suffix.lower() != ".xlsx":
+            raise AppError(
+                "INVALID_FILE_EXTENSION",
+                "교양선택 수강편람은 .xlsx 파일만 업로드할 수 있습니다.",
+                status_code=400,
+            )
+
+    async def _parse_uploaded_elective_catalog(
+        self,
+        upload_file: UploadFile,
+        *,
+        elective_area: int | None,
+    ) -> list[Course]:
+        temp_path: Path | None = None
+        try:
+            temp_path = await write_limited_upload_to_temp(
+                upload_file,
+                suffix=".xlsx",
+                prefix="planu-elective-catalog-",
+                max_upload_size=self.max_upload_size,
+            )
+            try:
+                courses = await asyncio.to_thread(
+                    self.elective_parser.parse_elective,
+                    temp_path,
+                    area=elective_area,
+                )
+            except UploadedCatalogError as exc:
+                raise _elective_catalog_app_error(exc) from exc
+            except Exception as exc:
+                raise AppError(
+                    "ELECTIVE_CATALOG_PARSE_FAILED",
+                    "교양선택 수강편람을 파싱하지 못했습니다.",
+                    status_code=422,
+                ) from exc
+        finally:
+            if temp_path is not None:
+                try:
+                    os.unlink(temp_path)
+                except OSError:
+                    pass
+
+        if not courses:
+            raise AppError(
+                "EMPTY_ELECTIVE_CATALOG",
+                "시간 정보가 있는 교양선택 과목을 찾지 못했습니다.",
+                status_code=422,
+            )
+        return courses
 
 
 def _course_key(course: Course) -> tuple[str, str]:
@@ -299,6 +476,73 @@ def _reason_code(status: EligibilityStatus) -> str:
     return {
         EligibilityStatus.NOT_ELIGIBLE: "DEPARTMENT_NOT_ELIGIBLE",
         EligibilityStatus.UNKNOWN_DEPARTMENT: "UNKNOWN_DEPARTMENT",
+        EligibilityStatus.RULE_NOT_FOUND: "RESTRICTION_RULE_NOT_FOUND",
         EligibilityStatus.ELIGIBLE: "ELIGIBLE",
         EligibilityStatus.NOT_RESTRICTED: "NOT_RESTRICTED",
     }[status]
+
+
+def _filter_electives_by_area(
+    courses: Iterable[Course],
+    *,
+    elective_area: int,
+) -> list[Course]:
+    return [
+        course
+        for course in courses
+        if course.category is Category.GENERAL_ELECTIVE and course.area == elective_area
+    ]
+
+
+def _has_upload(upload_file: UploadFile | None) -> bool:
+    return upload_file is not None and bool((upload_file.filename or "").strip())
+
+
+def _elective_catalog_app_error(exc: UploadedCatalogError) -> AppError:
+    message = str(exc) or "교양선택 수강편람을 처리하지 못했습니다."
+    if "파일 크기" in message:
+        return AppError(
+            "FILE_TOO_LARGE",
+            "업로드 파일은 5MB 이하여야 합니다.",
+            status_code=413,
+            details={"max_size_bytes": MAX_UPLOAD_SIZE},
+        )
+    if "유효한 .xlsx" in message or "엑셀 파일을 열 수 없습니다" in message:
+        return AppError(
+            "INVALID_EXCEL_FILE",
+            "유효한 .xlsx 파일이 아닙니다.",
+            status_code=400,
+        )
+    if ".xlsx" in message:
+        return AppError(
+            "INVALID_FILE_EXTENSION",
+            "교양선택 수강편람은 .xlsx 파일만 업로드할 수 있습니다.",
+            status_code=400,
+        )
+    if "교양 영역" in message:
+        return AppError(
+            "INVALID_ELECTIVE_AREA",
+            "교양 영역은 1~7 사이의 정수여야 합니다.",
+            status_code=400,
+        )
+    if "비어 있습니다" in message or "찾지 못했습니다" in message:
+        return AppError("EMPTY_ELECTIVE_CATALOG", message, status_code=422)
+    if "필수 열" in message:
+        return AppError("INVALID_CATALOG_FORMAT", message, status_code=422)
+    return AppError("ELECTIVE_CATALOG_PARSE_FAILED", message, status_code=422)
+
+
+def _response_from_session(session) -> GeneralPreparationResponse:
+    data_source = session.general_pool_data_source or (
+        "uploaded_catalog" if session.elective_candidates else "fallback_catalog"
+    )
+    return GeneralPreparationResponse(
+        session_id=session.session_id,
+        session_stage=session.session_stage,
+        required_course_count=len(session.general_required_candidates),
+        elective_course_count=len(session.general_elective_candidates),
+        excluded_course_count=len(session.general_pool_diagnostics),
+        data_source=data_source,
+        elective_area=session.general_pool_elective_area,
+        warnings=list(session.general_pool_warnings),
+    )

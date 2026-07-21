@@ -38,3 +38,14 @@ async def confirm_major_selection(
         session_id=request.session_id,
         preview_id=request.preview_id,
     )
+
+
+@router.post("/reconfirm", response_model=MajorConfirmResponse)
+async def reconfirm_major_selection(
+    request: MajorConfirmRequest,
+    service: MajorConfirmService = Depends(get_major_confirm_service),
+) -> MajorConfirmResponse:
+    return await service.reconfirm(
+        session_id=request.session_id,
+        preview_id=request.preview_id,
+    )

@@ -112,6 +112,23 @@ def test_hard_condition_filters_candidate_before_ranking() -> None:
     assert len(ranked) == 1
 
 
+@pytest.mark.parametrize(
+    "preferences",
+    [
+        PreferenceRules(excluded_days=[Day.FRI]),
+        PreferenceRules(required_free_days=[Day.FRI]),
+    ],
+)
+def test_excluded_days_and_required_free_days_share_filter_semantics(
+    preferences: PreferenceRules,
+) -> None:
+    candidate = Timetable(courses=[_course("GEN-FRI", day=Day.FRI)])
+
+    ranked = rank_timetables([candidate], preferences=preferences)
+
+    assert ranked == []
+
+
 def test_ui_and_llm_duplicate_conditions_are_applied_once() -> None:
     preferences = merge_preference_rules(
         PreferenceRules(preferred_first_class_time="10:00"),

@@ -1,6 +1,8 @@
-"""Request and response schemas for catalog upload APIs."""
+"""Request/response schemas for general-course preparation."""
 
 from __future__ import annotations
+
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -15,8 +17,12 @@ class _Model(BaseModel):
     )
 
 
-class MajorCatalogUploadResponse(_Model):
+class GeneralPreparationResponse(_Model):
     session_id: str = Field(min_length=1)
     session_stage: SessionStage
-    parsed_course_count: int = Field(ge=1)
+    required_course_count: int = Field(ge=0)
+    elective_course_count: int = Field(ge=0)
+    excluded_course_count: int = Field(ge=0)
+    data_source: Literal["uploaded_catalog", "fallback_catalog"]
+    elective_area: int | None = Field(default=None, ge=1, le=7)
     warnings: list[str] = Field(default_factory=list)

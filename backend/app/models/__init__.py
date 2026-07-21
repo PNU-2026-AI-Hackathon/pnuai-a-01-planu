@@ -22,6 +22,9 @@ from .major_selection import (
 )
 from .preference import (
     ExcludedTimeRange,
+    GeneralPreferenceLLMOutput,
+    GeneralPreferenceParseResult,
+    HardPreferenceConditions,
     PreferenceParseResult,
     PreferenceParseStatus,
     PreferenceRules,
@@ -29,7 +32,10 @@ from .preference import (
     PreferenceToolStatus,
     PreferenceToolUsage,
     PreferenceTraceEvent,
+    PreferenceWarning,
+    SoftPreferenceConditions,
     TimeRange,
+    UnsupportedCondition,
     merge_preference_rules,
 )
 from .timetable import (
@@ -59,6 +65,9 @@ __all__ = [
     "Day",
     "ExcludedTimeRange",
     "ExcludedCourseDiagnostic",
+    "GeneralPreferenceLLMOutput",
+    "GeneralPreferenceParseResult",
+    "HardPreferenceConditions",
     "GeneralCoursePoolResult",
     "GeneralCoursePools",
     "GenerationDiagnostic",
@@ -75,6 +84,8 @@ __all__ = [
     "PreferenceToolStatus",
     "PreferenceToolUsage",
     "PreferenceTraceEvent",
+    "PreferenceWarning",
+    "SoftPreferenceConditions",
     "RankingDiagnostic",
     "RankingResult",
     "RankingTemplate",
@@ -88,6 +99,7 @@ __all__ = [
     "TimetableGenerationResult",
     "TimetableRankingResult",
     "UnmatchedMajorCourse",
+    "UnsupportedCondition",
     "merge_preference_rules",
     "normalize_course_category",
     "time_to_minutes",

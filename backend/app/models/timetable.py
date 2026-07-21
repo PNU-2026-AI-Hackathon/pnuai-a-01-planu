@@ -8,6 +8,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .course import Category, Course, Day, time_to_minutes
+from .preference import PreferenceRules, PreferenceWarning, UnsupportedCondition
 
 
 class _Model(BaseModel):
@@ -168,6 +169,10 @@ class TimetableGenerationResult(_Model):
     candidates: list[TimetableGenerationCandidate] = Field(default_factory=list)
     diagnostics: list[GenerationDiagnostic] = Field(default_factory=list)
     truncated: bool = False
+    hard_conditions: PreferenceRules = Field(default_factory=PreferenceRules)
+    soft_conditions: PreferenceRules = Field(default_factory=PreferenceRules)
+    unsupported_conditions: list[UnsupportedCondition] = Field(default_factory=list)
+    warnings: list[PreferenceWarning] = Field(default_factory=list)
 
 
 class RankingResult(_Model):
