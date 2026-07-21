@@ -86,6 +86,14 @@ def parse_input_timetable(
 def parse_input_timetable_workbook(path: str | Path) -> InputTimetable:
     """Parse an uploaded fixed timetable; leading title rows are permitted."""
 
+    courses = _parse_fixed_course_workbook_courses(path)
+    try:
+        return InputTimetable(courses=courses)
+    except Exception as exc:
+        raise InputTimetableParseError(f"고정 시간표가 유효하지 않습니다: {exc}") from exc
+
+
+def _parse_fixed_course_workbook_courses(path: str | Path) -> list[Course]:
     source = Path(path)
     if source.suffix.lower() != ".xlsx":
         raise InputTimetableParseError(".xlsx 파일만 지원합니다.")
@@ -131,13 +139,10 @@ def parse_input_timetable_workbook(path: str | Path) -> InputTimetable:
         workbook.close()
     if not courses:
         raise InputTimetableParseError("시간 정보가 있는 고정 과목을 찾지 못했습니다.")
-    try:
-        return InputTimetable(courses=courses)
-    except Exception as exc:
-        raise InputTimetableParseError(f"고정 시간표가 유효하지 않습니다: {exc}") from exc
+    return courses
 
 
 def parse_fixed_course_workbook(path: str | Path) -> list[Course]:
     """Compatibility helper for upload routes that store courses separately."""
 
-    return parse_input_timetable_workbook(path).courses
+    return _parse_fixed_course_workbook_courses(path)

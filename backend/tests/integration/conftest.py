@@ -141,7 +141,7 @@ def integration_app() -> Iterator[IntegrationApp]:
                 DepartmentRestrictionRule(
                     course_code="GR102",
                     division="001",
-                    allowed_departments=frozenset({"컴퓨터공학과", "전자공학과"}),
+                    allowed_departments=frozenset({"컴퓨터공학과"}),
                     blocked_departments=frozenset(),
                 ),
             ]
@@ -210,6 +210,19 @@ def second_major_catalog_path(tmp_path: Path) -> Path:
         [
             ["전공필수", "자료구조", "MA300", "001", 3, "최교수", "월 13:00-14:15 609-301"],
             ["전공필수", "컴퓨터구조", "MA400", "003", 3, "정교수", "화 13:00-14:15 609-401"],
+        ],
+    )
+    return path
+
+
+@pytest.fixture
+def conflicting_major_catalog_path(tmp_path: Path) -> Path:
+    path = tmp_path / "major-conflict.xlsx"
+    _write_catalog(
+        path,
+        [
+            ["전공필수", "자료구조", "MA100", "001", 3, "김교수", "월 09:00-10:15 609-101"],
+            ["전공필수", "컴퓨터구조", "MA200", "003", 3, "박교수", "월 09:30-10:45 609-201"],
         ],
     )
     return path
@@ -339,10 +352,14 @@ def _course(
     )
 
 
-def _write_catalog(path: Path, rows: list[list[object]]) -> None:
+def write_catalog(path: Path, rows: list[list[object]]) -> None:
     workbook = Workbook()
     sheet = workbook.active
     sheet.append(["교과구분", "교과목명", "교과목번호", "분반", "학점", "담당교수", "시간/강의실"])
     for row in rows:
         sheet.append(row)
     workbook.save(path)
+
+
+def _write_catalog(path: Path, rows: list[list[object]]) -> None:
+    write_catalog(path, rows)

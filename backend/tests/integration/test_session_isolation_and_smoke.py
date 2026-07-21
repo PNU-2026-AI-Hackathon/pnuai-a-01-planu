@@ -76,6 +76,31 @@ def test_expired_session_returns_standard_error_without_affecting_other_session(
     assert live.status_code == 200, live.text
 
 
+def test_only_session_older_than_ttl_expires_when_sessions_have_different_access_times(
+    integration_app,
+    major_catalog_path: Path,
+) -> None:
+    client = integration_app.client
+    old_session = upload_major(client, major_catalog_path)["session_id"]
+    integration_app.clock.advance(timedelta(minutes=20))
+    recent_session = upload_major(client, major_catalog_path)["session_id"]
+
+    integration_app.clock.advance(timedelta(minutes=15))
+    old_response = client.post(
+        "/major/preview",
+        json={"session_id": old_session, "prompt": "자료구조 001분반과 컴퓨터구조 003분반"},
+    )
+    recent_response = client.post(
+        "/major/preview",
+        json={"session_id": recent_session, "prompt": "자료구조 001분반과 컴퓨터구조 003분반"},
+    )
+
+    assert old_response.status_code == 404
+    assert old_response.json()["error"]["code"] == "SESSION_NOT_FOUND"
+    assert recent_response.status_code == 200, recent_response.text
+    assert integration_app.store.get(recent_session).session_id == recent_session
+
+
 def test_upload_failures_use_standard_error_and_do_not_create_session(integration_app) -> None:
     client = integration_app.client
 

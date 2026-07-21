@@ -257,6 +257,8 @@ $ npm run dev
 cd C:\hackerton
 python -m pytest backend\tests -v
 python -m pytest backend\tests\integration -v
+python -m pytest backend\tests -m "not llm_live" -v
+python -m pytest backend\tests -m llm_live -v
 ```
 
 <br/>
