@@ -17,6 +17,7 @@ class CatalogFile {
 }
 
 typedef CatalogFilePicker = Future<CatalogFile?> Function();
+typedef CatalogContinueCallback = Future<String?> Function(CatalogFile file);
 
 class FileUploadScreen2 extends StatefulWidget {
   const FileUploadScreen2({
@@ -27,7 +28,7 @@ class FileUploadScreen2 extends StatefulWidget {
   });
 
   final CatalogFilePicker onPickMajorCatalog;
-  final ValueChanged<CatalogFile>? onContinue;
+  final CatalogContinueCallback? onContinue;
   final int maxFileSizeInBytes;
 
   @override
@@ -46,8 +47,10 @@ class _FileUploadScreen2State extends State<FileUploadScreen2> {
   CatalogFile? _majorCatalog;
   String? _errorText;
   bool _isPicking = false;
+  bool _isSubmitting = false;
 
-  bool get _canContinue => _majorCatalog != null && !_isPicking;
+  bool get _canContinue =>
+      _majorCatalog != null && !_isPicking && !_isSubmitting;
 
   @override
   Widget build(BuildContext context) {
@@ -145,7 +148,9 @@ class _FileUploadScreen2State extends State<FileUploadScreen2> {
                         else
                           _SelectedFile(
                             file: _majorCatalog!,
-                            onRemove: _isPicking ? null : _removeFile,
+                            onRemove: _isPicking || _isSubmitting
+                                ? null
+                                : _removeFile,
                           ),
                         if (_errorText != null) ...<Widget>[
                           const SizedBox(height: 12),
@@ -201,7 +206,15 @@ class _FileUploadScreen2State extends State<FileUploadScreen2> {
                       borderRadius: BorderRadius.circular(8),
                     ),
                   ),
-                  child: const Text('전공 수강편람 확인하기'),
+                  child: _isSubmitting
+                      ? const SizedBox.square(
+                          dimension: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Text('전공 수강편람 확인하기'),
                 ),
               ],
             ),
@@ -258,12 +271,21 @@ class _FileUploadScreen2State extends State<FileUploadScreen2> {
     });
   }
 
-  void _continue() {
+  Future<void> _continue() async {
     final file = _majorCatalog;
     if (file == null) return;
     final callback = widget.onContinue;
     if (callback != null) {
-      callback(file);
+      setState(() {
+        _isSubmitting = true;
+        _errorText = null;
+      });
+      final error = await callback(file);
+      if (!mounted) return;
+      setState(() {
+        _isSubmitting = false;
+        _errorText = error;
+      });
       return;
     }
     ScaffoldMessenger.of(
@@ -295,7 +317,7 @@ class _StepPill extends StatelessWidget {
       child: const Padding(
         padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         child: Text(
-          '3 / 6',
+          '전공 파일 · 3 / 9',
           style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
         ),
       ),

@@ -30,8 +30,10 @@ class _DepartmentSelectScreenState extends State<DepartmentSelectScreen> {
   late bool _isLoadingDepartments;
   String? _departmentLoadError;
   String? _selectedDepartment;
+  String _typedDepartment = '';
 
-  bool get _canContinue => _selectedDepartment != null;
+  bool get _canContinue =>
+      (_selectedDepartment ?? _typedDepartment).trim().isNotEmpty;
 
   @override
   void initState() {
@@ -240,7 +242,7 @@ class _DepartmentSelectScreenState extends State<DepartmentSelectScreen> {
     return TextField(
       controller: textEditingController,
       focusNode: focusNode,
-      enabled: !_isLoadingDepartments && _departmentLoadError == null,
+      enabled: true,
       textInputAction: TextInputAction.search,
       decoration: InputDecoration(
         hintText: '예시: 컴퓨터',
@@ -273,6 +275,7 @@ class _DepartmentSelectScreenState extends State<DepartmentSelectScreen> {
         ),
       ),
       onChanged: (value) {
+        _typedDepartment = value;
         if (value != _selectedDepartment) {
           setState(() {
             _selectedDepartment = null;
@@ -316,12 +319,16 @@ class _DepartmentSelectScreenState extends State<DepartmentSelectScreen> {
   }
 
   void _continue() {
-    final selectedDepartment = _selectedDepartment;
-    if (selectedDepartment == null) {
+    final selectedDepartment = (_selectedDepartment ?? _typedDepartment).trim();
+    if (selectedDepartment.isEmpty) {
       return;
     }
 
-    widget.onDepartmentSelected?.call(selectedDepartment);
+    if (widget.onDepartmentSelected != null) {
+      widget.onDepartmentSelected!(selectedDepartment);
+    } else {
+      Navigator.of(context).pop(selectedDepartment);
+    }
   }
 }
 
@@ -342,7 +349,7 @@ class _StepPill extends StatelessWidget {
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
           child: Text(
-            '2 / 6',
+            '학과 선택 · 2 / 9',
             style: theme.textTheme.labelMedium?.copyWith(
               color: _DepartmentSelectScreenState._ink,
               fontWeight: FontWeight.w600,

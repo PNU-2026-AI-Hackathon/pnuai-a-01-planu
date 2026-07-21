@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models/major_models.dart';
 import '../state/major_flow_controller.dart';
+import '../widgets/flow_step_badge.dart';
 
 class MajorPreviewScreen extends StatefulWidget {
   const MajorPreviewScreen({
@@ -75,6 +76,8 @@ class _MajorPreviewScreenState extends State<MajorPreviewScreen> {
               child: ListView(
                 padding: const EdgeInsets.fromLTRB(24, 24, 24, 40),
                 children: [
+                  const FlowStepBadge(label: '전공 검증', current: 5),
+                  const SizedBox(height: 24),
                   Text(
                     '이 시간표가 맞습니까?',
                     style: Theme.of(context).textTheme.headlineMedium?.copyWith(

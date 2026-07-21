@@ -42,6 +42,8 @@ def _course(
     start: str = "09:00",
     end: str = "10:15",
     professor: str = "김교수",
+    classroom: str = "제6공학관 6201",
+    building_code: str = "6201",
 ) -> Course:
     return Course(
         course_id=course_id,
@@ -56,8 +58,8 @@ def _course(
                 day=Day.MON,
                 start=start,
                 end=end,
-                classroom="제6공학관 6201",
-                building_code="6201",
+                classroom=classroom,
+                building_code=building_code,
             )
         ],
     )
@@ -147,6 +149,29 @@ def test_build_pools_keeps_electives_separate_and_rejects_unsupported_category()
         item.course_key == "MA100-001" and item.reason_code == "UNSUPPORTED_CATEGORY"
         for item in result.excluded_courses
     )
+
+
+def test_build_pools_excludes_miryang_and_yangsan_courses() -> None:
+    required = _course("ZE100-001", "고전읽기와토론", Category.GENERAL_REQUIRED, "001")
+    jangjeon = _course("ZE200-001", "장전 교양", Category.GENERAL_ELECTIVE, "001", area=2)
+    miryang = _course(
+        "ZE201-001", "밀양 교양", Category.GENERAL_ELECTIVE, "001", area=2,
+        classroom="밀양M03-3451", building_code="M03",
+    )
+    yangsan = _course(
+        "ZE202-001", "양산 교양", Category.GENERAL_ELECTIVE, "001", area=2,
+        classroom="양산Y15-312", building_code="Y15",
+    )
+
+    result = GeneralCoursePoolService(
+        restriction_policy=_required_allowed_policy(required),
+    ).build_pools(
+        department="컴퓨터공학과",
+        general_required_courses=[required],
+        uploaded_elective_courses=[jangjeon, miryang, yangsan],
+    )
+
+    assert result.pools.elective_courses == [jangjeon]
 
 
 def test_department_restrictions_exclude_only_matching_restricted_courses() -> None:

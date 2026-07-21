@@ -139,7 +139,9 @@ class GeneralCoursePoolService:
         if not department.strip():
             raise AppError("DEPARTMENT_NOT_FOUND", "사용자 학과 정보가 없습니다.", status_code=409)
 
-        required_candidates = list(general_required_courses)
+        required_candidates = [
+            course for course in general_required_courses if _is_jangjeon_course(course)
+        ]
         if not required_candidates:
             raise AppError(
                 "RESTRICTED_COURSE_DATA_NOT_FOUND",
@@ -147,8 +149,12 @@ class GeneralCoursePoolService:
                 status_code=500,
             )
 
-        uploaded = list(uploaded_elective_courses or [])
-        fallback = list(fallback_elective_courses or [])
+        uploaded = [
+            course for course in (uploaded_elective_courses or []) if _is_jangjeon_course(course)
+        ]
+        fallback = [
+            course for course in (fallback_elective_courses or []) if _is_jangjeon_course(course)
+        ]
         result = GeneralCoursePoolResult()
 
         required = self._accept_courses(
@@ -272,10 +278,10 @@ class GeneralCoursePreparationService:
                 "교양선택 후보 준비 시 교양 영역을 선택해주세요.",
                 status_code=400,
             )
-        if not 1 <= elective_area <= 7:
+        if not 1 <= elective_area <= 9:
             raise AppError(
                 "INVALID_ELECTIVE_AREA",
-                "교양 영역은 1~7 사이의 정수여야 합니다.",
+                "교양 영역은 1~9 사이의 정수여야 합니다.",
                 status_code=400,
             )
 
@@ -461,6 +467,16 @@ def _normalized(value: str) -> str:
     return re.sub(r"\s+", "", value).casefold()
 
 
+def _is_jangjeon_course(course: Course) -> bool:
+    """Return false for sections explicitly marked as Miryang or Yangsan."""
+    for meeting in course.class_times:
+        classroom = meeting.classroom.strip().lower()
+        building = meeting.building_code.strip().lower()
+        if classroom.startswith(("밀양", "양산")) or building.startswith(("m", "y")):
+            return False
+    return True
+
+
 def _diagnostic(course: Course, reason_code: str, reason: str, source: str) -> ExcludedCourseDiagnostic:
     return ExcludedCourseDiagnostic(
         course_key=course.course_id,
@@ -522,7 +538,7 @@ def _elective_catalog_app_error(exc: UploadedCatalogError) -> AppError:
     if "교양 영역" in message:
         return AppError(
             "INVALID_ELECTIVE_AREA",
-            "교양 영역은 1~7 사이의 정수여야 합니다.",
+            "교양 영역은 1~9 사이의 정수여야 합니다.",
             status_code=400,
         )
     if "비어 있습니다" in message or "찾지 못했습니다" in message:

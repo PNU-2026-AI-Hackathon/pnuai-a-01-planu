@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'catalog_download_guide_screen.dart';
+import 'department_select_screen.dart';
+import '../widgets/flow_step_badge.dart';
 
 class GuideScreen extends StatelessWidget {
   const GuideScreen({super.key, this.onPrepareFiles, this.onNext});
@@ -23,6 +25,7 @@ class GuideScreen extends StatelessWidget {
                   sliver: SliverList(
                     delegate: SliverChildListDelegate.fixed([
                       const _TopNav(),
+                      const FlowStepBadge(label: '이용 안내', current: 1),
                       const SizedBox(height: 56),
                       const _HeroBand(),
                       const SizedBox(height: 32),
@@ -189,7 +192,13 @@ class _GuideActions extends StatelessWidget {
     );
     final nextButton = ElevatedButton.icon(
       style: buttonStyle,
-      onPressed: onNext ?? () {},
+      onPressed:
+          onNext ??
+          () => Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => const DepartmentSelectScreen(),
+            ),
+          ),
       icon: const Icon(Icons.arrow_forward_rounded, size: 18),
       label: const Text('다음'),
     );

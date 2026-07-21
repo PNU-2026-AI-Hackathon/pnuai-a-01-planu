@@ -434,7 +434,7 @@ class _StepPill extends StatelessWidget {
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
           child: Text(
-            '5 / 6',
+            '전공 직접 선택 · 5 / 9',
             style: Theme.of(context).textTheme.labelMedium?.copyWith(
               color: _MajorSelectScreenState._ink,
               fontWeight: FontWeight.w600,

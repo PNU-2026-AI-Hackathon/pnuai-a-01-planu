@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:frontend/screens/file_upload_screen2.dart';
@@ -40,5 +42,37 @@ void main() {
       find.byKey(const Key('continue-button')),
     );
     expect(button.onPressed, isNull);
+  });
+
+  testWidgets('업로드가 끝날 때까지 현재 화면을 유지하고 중복 제출을 막는다', (tester) async {
+    final upload = Completer<String?>();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: FileUploadScreen2(
+          onPickMajorCatalog: () async =>
+              const CatalogFile(name: '전공수강편람.xlsx', sizeInBytes: 2048),
+          onContinue: (_) => upload.future,
+        ),
+      ),
+    );
+
+    await tester.tap(find.byKey(const Key('major-file-picker')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('continue-button')));
+    await tester.pump();
+
+    expect(find.byType(FileUploadScreen2), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(
+      tester
+          .widget<FilledButton>(find.byKey(const Key('continue-button')))
+          .onPressed,
+      isNull,
+    );
+
+    upload.complete('업로드 오류');
+    await tester.pump();
+    expect(find.text('업로드 오류'), findsOneWidget);
+    expect(find.byType(FileUploadScreen2), findsOneWidget);
   });
 }

@@ -24,5 +24,5 @@ class GeneralPreparationResponse(_Model):
     elective_course_count: int = Field(ge=0)
     excluded_course_count: int = Field(ge=0)
     data_source: Literal["uploaded_catalog", "fallback_catalog"]
-    elective_area: int | None = Field(default=None, ge=1, le=7)
+    elective_area: int | None = Field(default=None, ge=1, le=9)
     warnings: list[str] = Field(default_factory=list)

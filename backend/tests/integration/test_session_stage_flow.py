@@ -174,7 +174,7 @@ def test_additional_http_error_boundaries_use_standard_error_shape(
     )
     too_high_area = client.post(
         "/general/prepare",
-        data={"session_id": session_id, "elective_area": "8"},
+        data={"session_id": session_id, "elective_area": "10"},
     )
     damaged_elective = client.post(
         "/general/prepare",
