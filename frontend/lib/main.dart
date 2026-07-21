@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import 'screens/guide_screen.dart';
+import 'screens/timetable_result_screen.dart';
 
 void main() {
   runApp(const MyApp());
@@ -18,7 +18,7 @@ class MyApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF111111)),
         useMaterial3: true,
       ),
-      home: const GuideScreen(),
+      home: const TimetableResultScreen(),
     );
   }
 }
