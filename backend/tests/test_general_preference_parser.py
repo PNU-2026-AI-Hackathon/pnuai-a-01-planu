@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from backend.app.core.errors import AppError
@@ -64,6 +66,42 @@ def test_concrete_course_names_keep_hard_and_soft_strength() -> None:
     assert result.soft_conditions.avoided_course_names == ["경제학원론"]
 
 
+def test_omitted_soft_course_preference_is_recovered_from_prompt() -> None:
+    result = parse_general_preferences(
+        "고전읽기와토론을 우선하고 싶고 경제학원론은 가능하면 피하고 싶어.",
+        llm=FakeStructuredLLM(
+            {
+                "soft_conditions": {
+                    "avoided_course_names": ["경제학원론"],
+                },
+            }
+        ),
+    )
+
+    assert result.soft_conditions.preferred_course_names == ["고전읽기와토론"]
+    assert result.soft_conditions.avoided_course_names == ["경제학원론"]
+
+
+def test_soft_course_preference_is_demoted_from_hard_output() -> None:
+    result = parse_general_preferences(
+        "고전읽기와토론을 우선하고 싶고 경제학원론은 가능하면 피하고 싶어.",
+        llm=FakeStructuredLLM(
+            {
+                "hard_conditions": {
+                    "required_course_names": ["고전읽기와토론"],
+                },
+                "soft_conditions": {
+                    "avoided_course_names": ["경제학원론"],
+                },
+            }
+        ),
+    )
+
+    assert result.hard_conditions.required_course_names == []
+    assert result.soft_conditions.preferred_course_names == ["고전읽기와토론"]
+    assert result.soft_conditions.avoided_course_names == ["경제학원론"]
+
+
 def test_unsupported_conditions_are_not_silently_ignored() -> None:
     result = parse_general_preferences(
         "과제가 적고 에브리타임 평점이 높은 교수 수업을 듣고 싶어.",
@@ -113,6 +151,24 @@ def test_ambiguous_strength_stays_soft_with_warning() -> None:
     assert result.hard_conditions.earliest_start_time is None
     assert result.soft_conditions.preferred_first_class_time == "10:00"
     assert result.warnings[0].code == "AMBIGUOUS_CONDITION_STRENGTH"
+
+
+def test_ambiguous_morning_hard_output_is_softened() -> None:
+    result = parse_general_preferences(
+        "오전 수업은 싫어.",
+        llm=FakeStructuredLLM(
+            {
+                "hard_conditions": {"earliest_start_time": "10:00"},
+            }
+        ),
+    )
+
+    assert result.hard_conditions.earliest_start_time is None
+    assert result.soft_conditions.preferred_first_class_time == "10:00"
+    assert any(
+        warning.code == "AMBIGUOUS_CONDITION_STRENGTH"
+        for warning in result.warnings
+    )
 
 
 def test_hard_soft_duplicate_target_keeps_hard_only() -> None:
@@ -204,6 +260,120 @@ def test_unknown_structured_field_is_rejected() -> None:
         )
 
     assert exc_info.value.code == "INVALID_PREFERENCE_OUTPUT"
+
+
+def test_openai_tool_call_response_extracts_general_preference_arguments() -> None:
+    output = GeneralPreferenceParser._result_from_chat_completions_response(
+        {
+            "choices": [
+                {
+                    "message": {
+                        "tool_calls": [
+                            {
+                                "function": {
+                                    "name": "general_preference_from_prompt",
+                                    "arguments": json.dumps(
+                                        {
+                                            "preference_result": {
+                                                "hard_conditions": {
+                                                    "earliest_start_time": "10:00",
+                                                },
+                                                "soft_conditions": {
+                                                    "preferred_free_days": ["FRI"],
+                                                },
+                                                "unsupported_conditions": [],
+                                                "warnings": [],
+                                            },
+                                        },
+                                        ensure_ascii=False,
+                                    ),
+                                }
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+    )
+
+    assert output["hard_conditions"]["earliest_start_time"] == "10:00"
+    assert output["soft_conditions"]["preferred_free_days"] == ["FRI"]
+
+
+def test_openai_tool_call_response_defers_domain_conflict_validation() -> None:
+    output = GeneralPreferenceParser._result_from_chat_completions_response(
+        {
+            "choices": [
+                {
+                    "message": {
+                        "tool_calls": [
+                            {
+                                "function": {
+                                    "name": "general_preference_from_prompt",
+                                    "arguments": json.dumps(
+                                        {
+                                            "preference_result": {
+                                                "hard_conditions": {
+                                                    "required_course_names": ["대학영어"],
+                                                    "excluded_course_names": ["대학영어"],
+                                                }
+                                            },
+                                        },
+                                        ensure_ascii=False,
+                                    ),
+                                }
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+    )
+
+    assert output["hard_conditions"]["required_course_names"] == ["대학영어"]
+    assert output["hard_conditions"]["excluded_course_names"] == ["대학영어"]
+
+
+def test_near_schema_live_output_is_normalized_before_validation() -> None:
+    output = GeneralPreferenceParser._result_from_chat_completions_response(
+        {
+            "choices": [
+                {
+                    "message": {
+                        "tool_calls": [
+                            {
+                                "function": {
+                                    "name": "general_preference_from_prompt",
+                                    "arguments": json.dumps(
+                                        {
+                                            "preference_result": {
+                                                "soft_conditions": {
+                                                    "preferred_days": ["FRI"],
+                                                },
+                                                "unsupported_conditions": [
+                                                    "발표 없는 수업은 현재 지원하지 않습니다.",
+                                                ],
+                                            },
+                                        },
+                                        ensure_ascii=False,
+                                    ),
+                                }
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+    )
+
+    assert output["soft_conditions"]["preferred_free_days"] == ["FRI"]
+    assert output["unsupported_conditions"] == [
+        {
+            "source_text": "발표 없는 수업은 현재 지원하지 않습니다.",
+            "reason_code": "UNSUPPORTED_CONDITION",
+            "reason": "현재 PlaNU 데이터와 규칙으로 적용할 수 없는 조건입니다.",
+        }
+    ]
 
 
 def test_wrong_scope_field_is_rejected_by_structured_schema() -> None:

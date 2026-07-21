@@ -331,8 +331,20 @@ class HardPreferenceConditions(BaseModel):
     latest_end_time: str | None = None
     excluded_time_ranges: list[ExcludedTimeRange] = Field(default_factory=list)
     excluded_professors: list[str] = Field(default_factory=list)
-    required_course_names: list[str] = Field(default_factory=list)
-    excluded_course_names: list[str] = Field(default_factory=list)
+    required_course_names: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Concrete course names explicitly stated as hard requirements. "
+            "Use for Korean expressions such as 꼭, 반드시, 무조건, 필수."
+        ),
+    )
+    excluded_course_names: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Concrete course names explicitly stated as hard exclusions. "
+            "Use for expressions such as 절대 넣지 마, 제외해, 듣지 않을래."
+        ),
+    )
     max_consecutive_classes: int | None = Field(default=None, ge=1)
 
     @field_validator("earliest_start_time", "latest_end_time")
@@ -383,10 +395,30 @@ class SoftPreferenceConditions(BaseModel):
 
     preferred_first_class_time: str | None = None
     preferred_free_time_ranges: list[TimeRange] = Field(default_factory=list)
-    preferred_free_days: list[Day] = Field(default_factory=list)
+    preferred_free_days: list[Day] = Field(
+        default_factory=list,
+        description=(
+            "Weekdays the user softly prefers to keep free. Use this exact field "
+            "for soft free-day requests; do not create preferred_days."
+        ),
+    )
     preferred_elective_areas: list[int] = Field(default_factory=list)
-    preferred_course_names: list[str] = Field(default_factory=list)
-    avoided_course_names: list[str] = Field(default_factory=list)
+    preferred_course_names: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Concrete course names explicitly stated as positive soft preferences, "
+            "not requirements. Use for expressions such as 듣고 싶어, 우선하고 "
+            "싶어, 선호해, 가능하면 듣고 싶어."
+        ),
+    )
+    avoided_course_names: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Concrete course names explicitly stated as negative soft preferences, "
+            "not hard exclusions. Use for expressions such as 가능하면 피하고 "
+            "싶어, 별로 듣고 싶지 않아, 별로 선호하지 않아."
+        ),
+    )
     minimize_attendance_days: bool = False
     minimize_consecutive_classes: bool = False
     compact_schedule: bool = False
@@ -437,7 +469,13 @@ class GeneralPreferenceLLMOutput(BaseModel):
 
     hard_conditions: HardPreferenceConditions = Field(default_factory=HardPreferenceConditions)
     soft_conditions: SoftPreferenceConditions = Field(default_factory=SoftPreferenceConditions)
-    unsupported_conditions: list[UnsupportedCondition] = Field(default_factory=list)
+    unsupported_conditions: list[UnsupportedCondition] = Field(
+        default_factory=list,
+        description=(
+            "Unsupported requests. Each item must be an object with source_text, "
+            "reason_code, and reason; never return plain strings here."
+        ),
+    )
     warnings: list[PreferenceWarning] = Field(default_factory=list)
 
 
