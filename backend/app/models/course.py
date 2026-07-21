@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from enum import Enum
+import re
+from typing import Any
+
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
@@ -24,6 +27,41 @@ class Category(str, Enum):
         }[self]
 
 
+_CATEGORY_ALIASES = {
+    "전공기초": Category.MAJOR_BASIC,
+    "전기": Category.MAJOR_BASIC,
+    "MAJOR_BASIC": Category.MAJOR_BASIC,
+    "MAJORBASIC": Category.MAJOR_BASIC,
+    "전공필수": Category.MAJOR_REQUIRED,
+    "전필": Category.MAJOR_REQUIRED,
+    "MAJOR_REQUIRED": Category.MAJOR_REQUIRED,
+    "MAJORREQUIRED": Category.MAJOR_REQUIRED,
+    "교양필수": Category.GENERAL_REQUIRED,
+    "효원핵심교양": Category.GENERAL_REQUIRED,
+    "GENERAL_REQUIRED": Category.GENERAL_REQUIRED,
+    "GENERALREQUIRED": Category.GENERAL_REQUIRED,
+    "교양선택": Category.GENERAL_ELECTIVE,
+    "GENERAL_ELECTIVE": Category.GENERAL_ELECTIVE,
+    "GENERALELECTIVE": Category.GENERAL_ELECTIVE,
+}
+
+
+def normalize_course_category(value: Any) -> Category:
+    """Convert source category labels into PlaNU's internal Category enum."""
+
+    if isinstance(value, Category):
+        return value
+    if value is None:
+        raise ValueError("course category is required")
+    text = re.sub(r"\s+", "", str(value).strip()).upper()
+    if not text:
+        raise ValueError("course category is required")
+    try:
+        return _CATEGORY_ALIASES[text]
+    except KeyError as exc:
+        raise ValueError(f"unknown course category: {value}") from exc
+
+
 class Day(str, Enum):
     """Weekdays supported by the MVP, in timetable display order."""
 
@@ -32,10 +70,8 @@ class Day(str, Enum):
     WED = "WED"
     THU = "THU"
     FRI = "FRI"
-
-    @property
-    def order(self) -> int:
-        return list(Day).index(self)
+    SAT = "SAT"
+    SUN = "SUN"
 
 
 def time_to_minutes(value: str) -> int:
@@ -114,6 +150,11 @@ class Course(_Model):
     division: str = Field(min_length=1) # 분반
     professor: str = Field(min_length=1)
     class_times: list[ClassTime] = Field(min_length=1) # 수업 시간 목록
+
+    @field_validator("category", mode="before")
+    @classmethod
+    def validate_category(cls, value: Any) -> Category:
+        return normalize_course_category(value)
 
     @model_validator(mode="after")
     def validate_course(self) -> "Course":

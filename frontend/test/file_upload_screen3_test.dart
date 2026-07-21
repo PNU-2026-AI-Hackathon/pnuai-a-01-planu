@@ -1,22 +1,22 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:frontend/screens/file_upload_screen2.dart';
+import 'package:frontend/screens/file_upload_screen3.dart';
 
 void main() {
-  testWidgets('전공 수강편람을 선택하면 파일 정보와 활성화된 버튼을 표시한다', (tester) async {
+  testWidgets('교양 수강편람을 선택하면 파일 정보와 활성화된 버튼을 표시한다', (tester) async {
     await tester.pumpWidget(
       MaterialApp(
-        home: FileUploadScreen2(
-          onPickMajorCatalog: () async =>
-              const CatalogFile(name: '전공수강편람.xlsx', sizeInBytes: 2048),
+        home: FileUploadScreen3(
+          onPickElectiveCatalog: () async =>
+              const CatalogFile(name: '교양수강편람.xlsx', sizeInBytes: 2048),
         ),
       ),
     );
 
-    await tester.tap(find.byKey(const Key('major-file-picker')));
+    await tester.tap(find.byKey(const Key('elective-file-picker')));
     await tester.pump();
 
-    expect(find.text('전공수강편람.xlsx'), findsOneWidget);
+    expect(find.text('교양수강편람.xlsx'), findsOneWidget);
     expect(find.text('2KB'), findsOneWidget);
     final button = tester.widget<FilledButton>(
       find.byKey(const Key('continue-button')),
@@ -27,15 +27,15 @@ void main() {
   testWidgets('파일 선택을 취소하면 오류 없이 선택 전 상태를 유지한다', (tester) async {
     await tester.pumpWidget(
       MaterialApp(
-        home: FileUploadScreen2(onPickMajorCatalog: () async => null),
+        home: FileUploadScreen3(onPickElectiveCatalog: () async => null),
       ),
     );
 
-    await tester.tap(find.byKey(const Key('major-file-picker')));
+    await tester.tap(find.byKey(const Key('elective-file-picker')));
     await tester.pump();
 
     expect(find.text('파일을 선택하지 못했습니다. 다시 시도해 주세요.'), findsNothing);
-    expect(find.byKey(const Key('major-file-picker')), findsOneWidget);
+    expect(find.byKey(const Key('elective-file-picker')), findsOneWidget);
     final button = tester.widget<FilledButton>(
       find.byKey(const Key('continue-button')),
     );

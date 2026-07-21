@@ -1,0 +1,74 @@
+"""Models for recommendation course-load target interpretation.
+
+These models describe the credit goals and constraints that the future
+backtracking engine should use. They do not represent a concrete timetable or
+an already-selected set of general courses.
+"""
+
+from __future__ import annotations
+
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class _Model(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+        str_strip_whitespace=True,
+        validate_assignment=True,
+    )
+
+
+class CourseLoadTarget(_Model):
+    """Optional user targets for backtracking-based recommendation.
+
+    ``target_total_credits`` is the total-credit upper bound that generated
+    candidates must not exceed. Among candidates within that limit, generation
+    metadata lets later stages compare how close each candidate gets to the
+    target credit count.
+
+    ``additional_elective_count`` is the desired number of elective general
+    courses to add after required general courses are accounted for.
+    """
+
+    target_total_credits: float | None = Field(default=None, gt=0)
+    additional_elective_count: int | None = Field(default=None, ge=0)
+
+    @classmethod
+    def mvp_default_policy(cls) -> "CourseLoadTarget":
+        """PlaNU MVP default: required generals only, no automatic electives.
+
+        When both target fields are absent, the generator may still include
+        required general courses but does not add elective general courses on
+        the user's behalf.
+        """
+
+        return cls()
+
+
+class CourseLoadWarning(_Model):
+    """Structured warning emitted when interpreted load goals conflict."""
+
+    code: str = Field(min_length=1)
+    message: str = Field(min_length=1)
+    requested_elective_count: int | None = None
+    actual_elective_count: int | None = None
+    reason: str | None = None
+
+
+class CourseLoadCalculationResult(_Model):
+    """Credit-capacity summary for the backtracking engine.
+
+    The result intentionally contains no selected ``Course`` objects. Actual
+    general-course combination generation, required-general section selection,
+    time-conflict checks, campus travel checks, and choosing one section among
+    duplicate course divisions belong to the backtracking engine.
+    """
+
+    target: CourseLoadTarget = Field(default_factory=CourseLoadTarget)
+    fixed_major_credits: float = Field(ge=0)
+    required_general_credits: float = Field(ge=0)
+    base_total_credits: float = Field(ge=0)
+    target_total_credits: float | None = None
+    remaining_elective_credit_capacity: float | None = Field(default=None, ge=0)
+    additional_elective_count: int | None = Field(default=None, ge=0)
+    warnings: list[CourseLoadWarning] = Field(default_factory=list)

@@ -11,9 +11,11 @@ import openpyxl
 ROOT = Path(__file__).resolve().parents[4]
 RAW_DIR = ROOT / "backend" / "data" / "raw"
 CATALOG_PATH = ROOT / "backend" / "data" / "course_catalog.json"
+RESTRICTIONS_PATH = ROOT / "backend" / "data" / "course_restrictions.json"
 DEPARTMENTS_PATH = ROOT / "frontend" / "src" / "data" / "departments.json"
 
-EXCLUDED_FILES = {"course_restriction.xlsx"}
+RESTRICTION_FILE = "course_restriction.xlsx"
+EXCLUDED_FILES = {RESTRICTION_FILE}
 DAY_PATTERN = r"[월화수목금토일]"
 TIME_PATTERN = r"\d{1,2}:\d{2}"
 RANGE_RE = re.compile(
@@ -114,6 +116,80 @@ def meaningful(value: Any) -> bool:
     return bool(clean_text(value))
 
 
+def is_excel_data_file(path: Path) -> bool:
+    return path.suffix.lower() == ".xlsx" and not path.name.startswith("~$")
+
+
+def unique_headers(row: tuple[Any, ...]) -> list[str]:
+    counts: dict[str, int] = {}
+    headers: list[str] = []
+    for index, value in enumerate(row, 1):
+        header = clean_text(value) or f"column_{index}"
+        counts[header] = counts.get(header, 0) + 1
+        if counts[header] > 1:
+            header = f"{header}_{counts[header]}"
+        headers.append(header)
+    return headers
+
+
+def clean_cell(value: Any) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value.strip()
+    return value
+
+
+def build_restriction_data(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+
+    workbook = openpyxl.load_workbook(path, read_only=True, data_only=True)
+    restrictions: list[dict[str, Any]] = []
+    for sheet in workbook.worksheets:
+        rows = list(sheet.iter_rows(values_only=True))
+        header_index = next(
+            (
+                index
+                for index, row in enumerate(rows)
+                if "교과목번호" in {clean_text(value) for value in row}
+            ),
+            None,
+        )
+        if header_index is None:
+            header_index = next(
+                (
+                    index
+                    for index, row in enumerate(rows)
+                    if sum(bool(clean_text(value)) for value in row) >= 3
+                ),
+                None,
+            )
+        if header_index is None:
+            continue
+        header_row = rows[header_index]
+        if header_row is None:
+            continue
+        headers = unique_headers(header_row)
+        for row_number, row in enumerate(rows[header_index + 1 :], header_index + 2):
+            if not any(value not in (None, "") for value in row):
+                continue
+            values = list(row) + [None] * max(0, len(headers) - len(row))
+            record = {
+                headers[index]: clean_cell(values[index])
+                for index in range(len(headers))
+            }
+            restrictions.append(
+                {
+                    "sourceFile": path.name,
+                    "sheet": sheet.title,
+                    "rowNumber": row_number,
+                    "data": record,
+                }
+            )
+    return restrictions
+
+
 def build_course(row: tuple[Any, ...], category: str, area: int | None) -> dict[str, Any]:
     capacity, raw_capacity = parse_capacity(row[9])
     raw_target = clean_text(row[12])
@@ -146,7 +222,9 @@ def build_course(row: tuple[Any, ...], category: str, area: int | None) -> dict[
 
 def main() -> None:
     files = sorted(
-        path for path in RAW_DIR.glob("*.xlsx") if path.name not in EXCLUDED_FILES
+        path
+        for path in RAW_DIR.glob("*.xlsx")
+        if is_excel_data_file(path) and path.name not in EXCLUDED_FILES
     )
     courses: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
@@ -174,9 +252,14 @@ def main() -> None:
     ]
 
     CATALOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    RESTRICTIONS_PATH.parent.mkdir(parents=True, exist_ok=True)
     DEPARTMENTS_PATH.parent.mkdir(parents=True, exist_ok=True)
     CATALOG_PATH.write_text(
         json.dumps(courses, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    restrictions = build_restriction_data(RAW_DIR / RESTRICTION_FILE)
+    RESTRICTIONS_PATH.write_text(
+        json.dumps(restrictions, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
     DEPARTMENTS_PATH.write_text(
         json.dumps(department_data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
@@ -186,6 +269,8 @@ def main() -> None:
         "inputFiles": [path.name for path in files],
         "excludedFiles": sorted(EXCLUDED_FILES),
         "coursesWritten": len(courses),
+        "restrictionsWritten": len(restrictions),
+        "restrictionsOutput": str(RESTRICTIONS_PATH.relative_to(ROOT)),
         "departmentsWritten": len(department_data),
         "rowsSkipped": skipped,
         "timeParsingFailed": sum(

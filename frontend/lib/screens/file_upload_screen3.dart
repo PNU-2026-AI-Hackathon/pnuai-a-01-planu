@@ -18,23 +18,23 @@ class CatalogFile {
 
 typedef CatalogFilePicker = Future<CatalogFile?> Function();
 
-class FileUploadScreen2 extends StatefulWidget {
-  const FileUploadScreen2({
+class FileUploadScreen3 extends StatefulWidget {
+  const FileUploadScreen3({
     super.key,
-    required this.onPickMajorCatalog,
+    required this.onPickElectiveCatalog,
     this.onContinue,
     this.maxFileSizeInBytes = 10 * 1024 * 1024,
   });
 
-  final CatalogFilePicker onPickMajorCatalog;
+  final CatalogFilePicker onPickElectiveCatalog;
   final ValueChanged<CatalogFile>? onContinue;
   final int maxFileSizeInBytes;
 
   @override
-  State<FileUploadScreen2> createState() => _FileUploadScreen2State();
+  State<FileUploadScreen3> createState() => _FileUploadScreen3State();
 }
 
-class _FileUploadScreen2State extends State<FileUploadScreen2> {
+class _FileUploadScreen3State extends State<FileUploadScreen3> {
   static const Color _ink = Color(0xFF111111);
   static const Color _body = Color(0xFF374151);
   static const Color _muted = Color(0xFF6B7280);
@@ -43,11 +43,11 @@ class _FileUploadScreen2State extends State<FileUploadScreen2> {
   static const Color _surfaceCard = Color(0xFFF5F5F5);
   static const Color _error = Color(0xFFEF4444);
 
-  CatalogFile? _majorCatalog;
+  CatalogFile? _electiveCatalog;
   String? _errorText;
   bool _isPicking = false;
 
-  bool get _canContinue => _majorCatalog != null && !_isPicking;
+  bool get _canContinue => _electiveCatalog != null && !_isPicking;
 
   @override
   Widget build(BuildContext context) {
@@ -75,7 +75,7 @@ class _FileUploadScreen2State extends State<FileUploadScreen2> {
                 ),
                 const SizedBox(height: 24),
                 Text(
-                  '전공 수강편람 업로드',
+                  '교양 수강편람 업로드',
                   style: theme.textTheme.displaySmall?.copyWith(
                     color: _ink,
                     fontWeight: FontWeight.w600,
@@ -85,7 +85,7 @@ class _FileUploadScreen2State extends State<FileUploadScreen2> {
                 ),
                 const SizedBox(height: 12),
                 Text(
-                  '학생지원시스템에서 내려받은 전공 수강편람 파일을 선택해 주세요.',
+                  '학생지원시스템에서 내려받은 교양 수강편람 파일을 선택해 주세요.',
                   style: theme.textTheme.bodyLarge?.copyWith(
                     color: _body,
                     height: 1.5,
@@ -103,7 +103,7 @@ class _FileUploadScreen2State extends State<FileUploadScreen2> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: <Widget>[
                         Text(
-                          '1학년 전공 수강편람',
+                          '교양과목 수강편람',
                           style: theme.textTheme.titleMedium?.copyWith(
                             color: _ink,
                             fontWeight: FontWeight.w600,
@@ -111,16 +111,16 @@ class _FileUploadScreen2State extends State<FileUploadScreen2> {
                         ),
                         const SizedBox(height: 8),
                         Text(
-                          '전공기초와 전공필수 과목이 포함된 파일이 필요합니다.',
+                          '교양과목이 포함된 수강편람 파일이 필요합니다.',
                           style: theme.textTheme.bodyMedium?.copyWith(
                             color: _muted,
                             height: 1.5,
                           ),
                         ),
                         const SizedBox(height: 20),
-                        if (_majorCatalog == null)
+                        if (_electiveCatalog == null)
                           OutlinedButton.icon(
-                            key: const Key('major-file-picker'),
+                            key: const Key('elective-file-picker'),
                             onPressed: _isPicking ? null : _pickFile,
                             icon: _isPicking
                                 ? const SizedBox.square(
@@ -144,7 +144,7 @@ class _FileUploadScreen2State extends State<FileUploadScreen2> {
                           )
                         else
                           _SelectedFile(
-                            file: _majorCatalog!,
+                            file: _electiveCatalog!,
                             onRemove: _isPicking ? null : _removeFile,
                           ),
                         if (_errorText != null) ...<Widget>[
@@ -201,7 +201,7 @@ class _FileUploadScreen2State extends State<FileUploadScreen2> {
                       borderRadius: BorderRadius.circular(8),
                     ),
                   ),
-                  child: const Text('전공 수강편람 확인하기'),
+                  child: const Text('교양 수강편람 확인하기'),
                 ),
               ],
             ),
@@ -219,7 +219,7 @@ class _FileUploadScreen2State extends State<FileUploadScreen2> {
 
     CatalogFile? selectedFile;
     try {
-      selectedFile = await widget.onPickMajorCatalog();
+      selectedFile = await widget.onPickElectiveCatalog();
     } on Object {
       if (mounted) {
         setState(() {
@@ -236,7 +236,7 @@ class _FileUploadScreen2State extends State<FileUploadScreen2> {
     final validationError = _validate(selectedFile);
     setState(() {
       _errorText = validationError;
-      if (validationError == null) _majorCatalog = selectedFile;
+      if (validationError == null) _electiveCatalog = selectedFile;
     });
   }
 
@@ -253,13 +253,13 @@ class _FileUploadScreen2State extends State<FileUploadScreen2> {
 
   void _removeFile() {
     setState(() {
-      _majorCatalog = null;
+      _electiveCatalog = null;
       _errorText = null;
     });
   }
 
   void _continue() {
-    final file = _majorCatalog;
+    final file = _electiveCatalog;
     if (file == null) return;
     final callback = widget.onContinue;
     if (callback != null) {
@@ -268,7 +268,7 @@ class _FileUploadScreen2State extends State<FileUploadScreen2> {
     }
     ScaffoldMessenger.of(
       context,
-    ).showSnackBar(const SnackBar(content: Text('전공 수강편람 파일이 준비되었습니다.')));
+    ).showSnackBar(const SnackBar(content: Text('교양 수강편람 파일이 준비되었습니다.')));
   }
 
   static String _formatFileSize(int bytes) {
@@ -289,7 +289,7 @@ class _StepPill extends StatelessWidget {
   Widget build(BuildContext context) {
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: _FileUploadScreen2State._surfaceSoft,
+        color: _FileUploadScreen3State._surfaceSoft,
         borderRadius: BorderRadius.circular(999),
       ),
       child: const Padding(
@@ -314,7 +314,7 @@ class _SelectedFile extends StatelessWidget {
     return DecoratedBox(
       decoration: BoxDecoration(
         color: Colors.white,
-        border: Border.all(color: _FileUploadScreen2State._hairline),
+        border: Border.all(color: _FileUploadScreen3State._hairline),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Padding(
@@ -332,16 +332,16 @@ class _SelectedFile extends StatelessWidget {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
-                      color: _FileUploadScreen2State._ink,
+                      color: _FileUploadScreen3State._ink,
                       fontSize: 14,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    _FileUploadScreen2State._formatFileSize(file.sizeInBytes),
+                    _FileUploadScreen3State._formatFileSize(file.sizeInBytes),
                     style: const TextStyle(
-                      color: _FileUploadScreen2State._muted,
+                      color: _FileUploadScreen3State._muted,
                       fontSize: 13,
                     ),
                   ),

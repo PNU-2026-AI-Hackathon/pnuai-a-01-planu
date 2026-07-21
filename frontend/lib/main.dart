@@ -1,7 +1,7 @@
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
-import 'screens/file_upload_screen2.dart';
+import 'screens/file_upload_screen3.dart';
 
 void main() {
   runApp(const PlaNUApp());
@@ -19,12 +19,12 @@ class PlaNUApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF111111)),
         useMaterial3: true,
       ),
-      home: FileUploadScreen2(onPickMajorCatalog: _pickMajorCatalog),
+      home: FileUploadScreen3(onPickElectiveCatalog: _pickElectiveCatalog),
     );
   }
 }
 
-Future<CatalogFile?> _pickMajorCatalog() async {
+Future<CatalogFile?> _pickElectiveCatalog() async {
   final result = await FilePicker.pickFiles(
     type: FileType.custom,
     allowedExtensions: const <String>['xlsx', 'xls'],
