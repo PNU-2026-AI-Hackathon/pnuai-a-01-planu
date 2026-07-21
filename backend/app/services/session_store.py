@@ -520,6 +520,7 @@ class SessionStore:
             data.ranking_preferences = ranking_preferences or hard_conditions or PreferenceRules()
             data.latest_ranking_result = None
             data.generated_at = now
+            data.session_stage = SessionStage.CANDIDATES_GENERATED
             data.updated_at = now
             return self._copy(data)
 

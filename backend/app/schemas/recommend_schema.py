@@ -6,7 +6,16 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ..models.course_load import CourseLoadTarget
 from ..models.preference import PreferenceRules, PreferenceWarning, UnsupportedCondition
-from ..models.timetable import RankingResult, TimetableGenerationResult
+from ..models.timetable import (
+    CourseLoadSatisfaction,
+    RankingDiagnostic,
+    RankingResult,
+    RankingTemplate,
+    ScoreComponent,
+    Timetable,
+    TimetableGenerationResult,
+)
+from ..services.session_store import SessionStage
 
 
 class RecommendRequest(BaseModel):
@@ -83,3 +92,54 @@ class TimetableGenerationResponse(TimetableGenerationResult):
     soft_conditions: PreferenceRules = Field(default_factory=PreferenceRules)
     unsupported_conditions: list[UnsupportedCondition] = Field(default_factory=list)
     warnings: list[PreferenceWarning] = Field(default_factory=list)
+
+
+class TimetableRankingRequest(BaseModel):
+    """Input for ranking candidates already stored in a session."""
+
+    model_config = ConfigDict(
+        extra="forbid",
+        str_strip_whitespace=True,
+        validate_assignment=True,
+    )
+
+    session_id: str = Field(min_length=1)
+    template: RankingTemplate | str = RankingTemplate.BALANCED
+    top_n: int = 3
+
+
+class RankedTimetableResponse(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+        str_strip_whitespace=True,
+        validate_assignment=True,
+    )
+
+    rank: int = Field(ge=1)
+    timetable: Timetable
+    raw_score: float
+    score_components: list[ScoreComponent]
+    load_satisfaction: CourseLoadSatisfaction
+
+
+class TimetableRankingResponse(BaseModel):
+    """Response returned by ``POST /recommend/rank``."""
+
+    model_config = ConfigDict(
+        extra="forbid",
+        str_strip_whitespace=True,
+        validate_assignment=True,
+    )
+
+    session_id: str
+    template: RankingTemplate
+    template_name: str
+    template_description: str
+    ranked_candidates: list[RankedTimetableResponse]
+    requested_top_n: int
+    returned_count: int
+    total_candidate_count: int
+    diagnostics: list[RankingDiagnostic]
+    unsupported_conditions: list[UnsupportedCondition]
+    warnings: list[PreferenceWarning]
+    session_stage: SessionStage
