@@ -1,13 +1,14 @@
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
-import 'screens/guide_screen.dart';
+import 'screens/file_upload_screen3.dart';
 
 void main() {
-  runApp(const MyApp());
+  runApp(const PlaNUApp());
 }
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+class PlaNUApp extends StatelessWidget {
+  const PlaNUApp({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -18,7 +19,26 @@ class MyApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF111111)),
         useMaterial3: true,
       ),
-      home: const GuideScreen(),
+      home: FileUploadScreen3(onPickElectiveCatalog: _pickElectiveCatalog),
     );
   }
+}
+
+Future<CatalogFile?> _pickElectiveCatalog() async {
+  final result = await FilePicker.pickFiles(
+    type: FileType.custom,
+    allowedExtensions: const <String>['xlsx', 'xls'],
+    allowMultiple: false,
+    withData: true,
+  );
+
+  if (result == null || result.files.isEmpty) return null;
+
+  final file = result.files.single;
+  return CatalogFile(
+    name: file.name,
+    sizeInBytes: file.size,
+    path: file.path,
+    bytes: file.bytes,
+  );
 }
