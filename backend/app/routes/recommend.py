@@ -40,7 +40,10 @@ def generate_timetable_candidates(
         preference_prompt=request.preference_prompt,
         max_candidates=request.max_candidates,
     )
-    return TimetableGenerationResponse.model_validate(result.model_dump())
+    session = service.store.get(request.session_id, touch=False)
+    return TimetableGenerationResponse.model_validate(
+        {**result.model_dump(), "session_stage": session.session_stage}
+    )
 
 
 @router.post("/rank", response_model=TimetableRankingResponse)

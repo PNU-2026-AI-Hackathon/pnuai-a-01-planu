@@ -56,7 +56,11 @@ class TimetableGenerationService:
                 "세션을 찾을 수 없거나 만료되었습니다.",
                 status_code=404,
             ) from exc
-        if data.session_stage is not SessionStage.GENERAL_READY:
+        if data.session_stage not in {
+            SessionStage.GENERAL_READY,
+            SessionStage.CANDIDATES_GENERATED,
+            SessionStage.RANKING_COMPLETED,
+        }:
             raise AppError(
                 "INVALID_SESSION_STAGE",
                 "전공 확정과 교양 후보 준비가 완료된 세션에서만 시간표를 생성할 수 있습니다.",
