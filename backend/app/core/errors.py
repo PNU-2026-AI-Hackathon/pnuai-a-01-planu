@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from fastapi import Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 
@@ -33,6 +34,23 @@ async def app_error_handler(_: Request, exc: AppError) -> JSONResponse:
                 "message": exc.message,
                 "hint": exc.hint,
                 "details": exc.details,
+            }
+        },
+    )
+
+
+async def request_validation_error_handler(
+    _: Request,
+    exc: RequestValidationError,
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=422,
+        content={
+            "error": {
+                "code": "REQUEST_VALIDATION_ERROR",
+                "message": "요청 형식이 올바르지 않습니다.",
+                "hint": None,
+                "details": {"error_count": len(exc.errors())},
             }
         },
     )

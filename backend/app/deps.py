@@ -17,9 +17,15 @@ from .services.general_course_pool_service import (
     GeneralCoursePreparationService,
 )
 from .services.major_confirm_service import MajorConfirmService
+from .services.major_catalog_upload_service import MajorCatalogUploadService
+from .services.uploaded_catalog_parser import UploadedCatalogParser
 from .services.major_preview_service import MajorPreviewService
 from .services.major_selection_parser import MajorSelectionParser
 from .services.session_store import SessionStore, session_store
+from .services.timetable_generation_service import TimetableGenerationService
+from .services.ranking_template_service import RankingTemplateService
+from .services.timetable_ranker import TimetableRanker
+from .services.timetable_ranking_service import TimetableRankingService
 
 
 _BACKEND_DIR = Path(__file__).resolve().parents[1]
@@ -44,6 +50,27 @@ def get_major_preview_service() -> MajorPreviewService:
 
 def get_major_confirm_service() -> MajorConfirmService:
     return MajorConfirmService(store=get_session_store())
+
+
+def get_major_catalog_upload_service() -> MajorCatalogUploadService:
+    return MajorCatalogUploadService(store=get_session_store())
+
+
+def get_timetable_generation_service() -> TimetableGenerationService:
+    return TimetableGenerationService(store=get_session_store())
+
+
+def get_ranking_template_service() -> RankingTemplateService:
+    return RankingTemplateService()
+
+
+def get_timetable_ranking_service() -> TimetableRankingService:
+    template_service = get_ranking_template_service()
+    return TimetableRankingService(
+        store=get_session_store(),
+        template_service=template_service,
+        ranker=TimetableRanker(template_service=template_service),
+    )
 
 
 def get_course_restriction_policy() -> CourseRestrictionPolicy:
@@ -86,4 +113,5 @@ def get_general_course_preparation_service() -> GeneralCoursePreparationService:
         pool_service=get_general_course_pool_service(),
         general_required_courses=general_required_courses,
         fallback_elective_courses=fallback_elective_courses,
+        elective_parser=UploadedCatalogParser(),
     )

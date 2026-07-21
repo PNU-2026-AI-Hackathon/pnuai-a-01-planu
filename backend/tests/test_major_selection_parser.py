@@ -77,8 +77,10 @@ def test_prompt_limits_major_parser_role() -> None:
     assert "분반이 명시되지 않았다면" in SYSTEM_PROMPT
     assert "교수명이나 수업 시간을 근거로" in SYSTEM_PROMPT
     assert "실제 과목 또는 분반의 존재 여부는 판단하지 마세요" in SYSTEM_PROMPT
+    assert "추천 과목을 요청하면" in SYSTEM_PROMPT
     assert payload["prompt"] == "자료구조 001분반이랑 컴퓨터구조 003분반 들을 거야"
     assert "Do not infer a section" in payload["instruction"]
+    assert "recommended additional major courses" in payload["instruction"]
 
 
 def test_parse_multiple_courses_and_sections() -> None:

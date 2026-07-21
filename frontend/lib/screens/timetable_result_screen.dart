@@ -737,10 +737,15 @@ class _BottomActions extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final buttonStyle = ButtonStyle(
+      backgroundColor: const WidgetStatePropertyAll(Colors.white),
+      foregroundColor: const WidgetStatePropertyAll(_Palette.ink),
+      side: const WidgetStatePropertyAll(BorderSide(color: _Palette.hairline)),
+    );
     final actions = [
-      OutlinedButton.icon(onPressed: onReuploadFiles ?? () {}, icon: const Icon(Icons.upload_file_outlined, size: 18), label: const Text('파일 다시 업로드')),
-      OutlinedButton.icon(onPressed: onReselectMajor ?? () {}, icon: const Icon(Icons.school_outlined, size: 18), label: const Text('전공 다시 선택')),
-      FilledButton.icon(onPressed: onEditPreferences ?? () {}, icon: const Icon(Icons.tune_rounded, size: 18), label: const Text('교양 조건 수정')),
+      OutlinedButton.icon(style: buttonStyle, onPressed: onReuploadFiles ?? () {}, icon: const Icon(Icons.upload_file_outlined, size: 18), label: const Text('파일 다시 업로드')),
+      OutlinedButton.icon(style: buttonStyle, onPressed: onReselectMajor ?? () {}, icon: const Icon(Icons.school_outlined, size: 18), label: const Text('전공 다시 선택')),
+      FilledButton.icon(style: buttonStyle, onPressed: onEditPreferences ?? () {}, icon: const Icon(Icons.tune_rounded, size: 18), label: const Text('교양 조건 수정')),
     ];
     return LayoutBuilder(builder: (context, constraints) {
       if (constraints.maxWidth < 680) return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: actions.expand((button) => [SizedBox(height: 48, child: button), const SizedBox(height: 12)]).toList());

@@ -191,6 +191,110 @@ $ npm run dev
 
 <br/>
 
+#### 4.1. PlaNU 백엔드 API 흐름
+
+프론트엔드는 아래 순서로 하나의 `session_id`를 이어서 사용합니다. 세션이 만료되어 `SESSION_NOT_FOUND`가 반환되면 전공 수강편람 업로드부터 다시 시작해야 합니다.
+
+1. `GET /health`
+   - 서버 상태 확인용입니다.
+   - 성공 응답 예: `{"status":"ok"}`
+
+2. `POST /catalog/major`
+   - Content-Type: `multipart/form-data`
+   - 필수 필드: `department`, `major_catalog` (`.xlsx`)
+   - 다음 단계에서 `session_id`를 재사용합니다.
+   - 주요 성공 필드: `session_id`, `session_stage="catalog_parsed"`, `parsed_course_count`, `warnings`
+
+3. `POST /major/preview`
+   - Content-Type: `application/json`
+   - 필수 필드: `session_id`, `prompt`
+   - 다음 단계에서 `preview_id`를 재사용합니다.
+   - `can_confirm=false`이면 `/major/confirm`을 호출하지 말고 사용자가 프롬프트를 수정해야 합니다.
+
+4. `POST /major/confirm`
+   - Content-Type: `application/json`
+   - 필수 필드: `session_id`, `preview_id`
+   - 성공 시 세션 단계는 `major_confirmed`입니다.
+
+5. `POST /general/prepare`
+   - Content-Type: `multipart/form-data`
+   - 필수 필드: `session_id`, `elective_area`
+   - 선택 필드: `elective_catalog` (`.xlsx`). 파일이 없으면 서버 fallback 교양선택 데이터를 사용합니다.
+   - 성공 시 세션 단계는 `general_ready`입니다.
+
+6. `POST /recommend/generate`
+   - Content-Type: `application/json`
+   - 필수 필드: `session_id`
+   - 선택 필드: `target_total_credits`, `additional_elective_count`, `hard_conditions`, `preference_prompt`, `max_candidates`
+   - 프롬프트나 학점 목표가 바뀌면 이 단계부터 다시 호출합니다.
+   - 성공 시 세션 단계는 `candidates_generated`이고, `unsupported_conditions`, `warnings`, `truncated`, `diagnostics`를 함께 확인합니다.
+
+7. `POST /recommend/rank`
+   - Content-Type: `application/json`
+   - 필수 필드: `session_id`
+   - 선택 필드: `template` (`balanced`, `free_day_priority`, `no_morning_priority`, `compact_schedule`), `top_n`
+   - 템플릿만 바뀌면 `/recommend/generate`를 다시 호출하지 않고 이 API만 다시 호출합니다.
+   - 성공 시 세션 단계는 `ranking_completed`이며, `ranked_candidates`의 각 항목은 `rank`, `raw_score`, `score_components`, `load_satisfaction`을 포함합니다.
+
+대표 오류 응답 형식:
+
+```json
+{
+  "error": {
+    "code": "INVALID_SESSION_STAGE",
+    "message": "전공 확정과 교양 후보 준비가 완료된 세션에서만 시간표를 생성할 수 있습니다.",
+    "hint": null,
+    "details": {}
+  }
+}
+```
+
+주요 오류 코드: `MAJOR_CATALOG_REQUIRED`, `INVALID_FILE_EXTENSION`, `INVALID_EXCEL_FILE`, `FILE_TOO_LARGE`, `SESSION_NOT_FOUND`, `INVALID_SESSION_STAGE`, `MAJOR_PREVIEW_NOT_CONFIRMABLE`, `INVALID_ELECTIVE_AREA`, `UNKNOWN_RANKING_TEMPLATE`, `INVALID_TOP_N`.
+
+테스트 실행:
+
+```bash
+cd C:\hackerton
+python -m pytest backend\tests -v
+python -m pytest backend\tests\integration -v
+python -m pytest backend\tests -m "not llm_live" -v
+python -m pytest backend\tests -m llm_live -v
+```
+
+실제 LLM 파서 테스트는 비용과 네트워크 상태의 영향을 받으므로 기본 테스트에서 제외됩니다. 운영 경로와 같은 LLM/proxy를 호출하려면 명시적으로 환경 변수를 설정한 뒤 `live_llm` marker만 실행합니다. 인증값은 로그에 출력하지 않으며, trace에는 모델명, proxy 사용 여부, case 이름, latency, 성공/실패 요약만 남깁니다.
+
+```bash
+cd C:\hackerton
+set RUN_LIVE_LLM_TESTS=1
+set PROXY_TOKEN=...
+set OPENAI_MODEL=openai/gpt-4.1-mini
+set CHAT_PROXY_URL=https://mlapi.run/.../v1
+python -m pytest backend\tests\live_llm -m live_llm -v -s
+```
+
+PowerShell을 쓰는 경우:
+
+```powershell
+cd C:\hackerton
+$env:RUN_LIVE_LLM_TESTS = "1"
+$env:PROXY_TOKEN = "..."
+$env:OPENAI_MODEL = "openai/gpt-4.1-mini"
+$env:CHAT_PROXY_URL = "https://mlapi.run/.../v1"
+python -m pytest backend\tests\live_llm -m live_llm -v -s
+```
+
+특정 parser만 실행:
+
+```bash
+python -m pytest backend\tests\live_llm\test_major_selection_live.py -m live_llm -v -s
+python -m pytest backend\tests\live_llm\test_general_preference_live.py -m live_llm -v -s
+python -m pytest backend\tests\live_llm\test_live_llm_smoke.py -m live_llm -v -s
+```
+
+`RUN_LIVE_LLM_TESTS=1`이 없거나 `PROXY_TOKEN`이 설정되지 않은 경우 실제 호출 없이 skip됩니다. timeout은 기본 60초이며 필요하면 `LIVE_LLM_TIMEOUT_SECONDS`로 조정할 수 있습니다.
+
+<br/>
+
 ### 5. 소개 및 시연영상
 
 [<img width="700px" alt="소개 및 시연영상" src="https://github.com/pnuswedu/SW-Hackathon-2024/assets/34933690/162132cd-9af5-4154-9b9a-41c96cf5e8fd" />](https://www.youtube.com/watch?v=EfEgTrm5_u4)

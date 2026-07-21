@@ -26,6 +26,7 @@ SYSTEM_PROMPT = """당신은 사용자가 이미 선택한 전공 과목명과 �
 역할 제한:
 - 전공 과목을 추천하거나 사용자가 말하지 않은 과목과 분반을 추가하지 마세요.
 - 사용자의 자연어에서 course_name과 section만 추출하세요.
+- 사용자가 명시한 과목을 듣고 싶다고 말하면서 함께 들을 추천 과목을 요청하면, 명시한 과목만 selected_courses에 넣고 추천 요청은 무시하세요.
 - 분반이 명시되지 않았다면 추론하지 말고 null로 반환하세요.
 - 교수명이나 수업 시간을 근거로 분반을 추론하지 마세요.
 - 실제 과목 또는 분반의 존재 여부는 판단하지 마세요.
@@ -259,8 +260,12 @@ def build_major_selection_parse_payload(*, prompt: str) -> dict[str, str]:
             "write a section. Do not infer a section from professor, time, "
             "course existence, or context. Put uncertain or non-final selection "
             "phrases into ambiguous_texts. Do not include courses the user says "
-            "they will not take. If the user cancels or changes a previous "
-            "selection, return only the final confirmed selection. Treat phrases "
+            "they will not take. "
+            "If the prompt asks for recommended additional major courses, ignore "
+            "the recommendation request and return only the course names the user "
+            "explicitly said they want to take. "
+            "If the user cancels or changes a previous selection, return only "
+            "the final confirmed selection. Treat phrases "
             "like 'A 또는 B', '둘 중 하나', '고민 중', and '들을 수도 있다' "
             "as ambiguous_texts, not selected_courses. Do not attach one section "
             "expression to multiple courses. Do not automatically fill in "
