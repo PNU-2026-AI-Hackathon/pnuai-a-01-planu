@@ -42,6 +42,16 @@ void main() {
                   'professor': '박교수',
                   'classroom': '202',
                 },
+                {
+                  'day': 'TUE',
+                  'start': '13',
+                  'end': '14',
+                  'course_name': '자료구조',
+                  'category': 'major',
+                  'division': '001',
+                  'professor': '이교수',
+                  'classroom': '301',
+                },
               ],
               'courses': [
                 {
@@ -49,6 +59,13 @@ void main() {
                   'category': 'major',
                   'division': '001',
                   'professor': '김교수',
+                  'credit': 3,
+                },
+                {
+                  'course_name': '자료구조',
+                  'category': 'major',
+                  'division': '001',
+                  'professor': '이교수',
                   'credit': 3,
                 },
               ],
@@ -72,5 +89,14 @@ void main() {
     expect(find.text('금요일 공강 선호 만족'), findsOneWidget);
     expect(find.text('연강이 1회 포함되어 있습니다.'), findsOneWidget);
     expect(find.text('연강이 없습니다.'), findsNothing);
+
+    final mondayClass = find.text('[전공]\n컴퓨터프로그래밍\n201');
+    final tuesdayClass = find.text('[전공]\n자료구조\n301');
+    expect(mondayClass, findsOneWidget);
+    expect(tuesdayClass, findsOneWidget);
+    expect(
+      tester.getTopLeft(tuesdayClass).dy,
+      greaterThan(tester.getTopLeft(mondayClass).dy),
+    );
   });
 }

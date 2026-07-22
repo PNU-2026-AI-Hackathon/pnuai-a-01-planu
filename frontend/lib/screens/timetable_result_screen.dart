@@ -249,14 +249,18 @@ class _CandidateView extends StatelessWidget {
   Widget build(BuildContext context) {
     final first = schedule.isEmpty
         ? '-'
-        : schedule
-              .map((e) => '${e['start']}')
-              .reduce((a, b) => a.compareTo(b) < 0 ? a : b);
+        : _formatMinutes(
+            schedule
+                .map((e) => _minutes('${e['start']}'))
+                .reduce((a, b) => a < b ? a : b),
+          );
     final last = schedule.isEmpty
         ? '-'
-        : schedule
-              .map((e) => '${e['end']}')
-              .reduce((a, b) => a.compareTo(b) > 0 ? a : b);
+        : _formatMinutes(
+            schedule
+                .map((e) => _minutes('${e['end']}'))
+                .reduce((a, b) => a > b ? a : b),
+          );
     final days = schedule.map((e) => e['day']).toSet().length;
     final components = (candidate['score_components'] as List? ?? const [])
         .whereType<Map>()
@@ -495,6 +499,13 @@ class _TimetableGrid extends StatelessWidget {
   const _TimetableGrid({required this.items});
   final List<Map<String, dynamic>> items;
   static const days = ['MON', 'TUE', 'WED', 'THU', 'FRI'];
+  static const _timeColumnWidth = 52.0;
+  static const _dayColumnWidth = 140.0;
+  static const _itemHorizontalPadding = 4.0;
+  static const _hourHeight = 48.0;
+  static const _startHour = 0;
+  static const _endHour = 24;
+  static const _gridHeight = (_endHour - _startHour) * _hourHeight;
   @override
   Widget build(BuildContext context) => SingleChildScrollView(
     scrollDirection: Axis.horizontal,
@@ -504,10 +515,10 @@ class _TimetableGrid extends StatelessWidget {
         children: [
           Row(
             children: [
-              const SizedBox(width: 52),
+              const SizedBox(width: _timeColumnWidth),
               for (final day in ['월', '화', '수', '목', '금'])
                 SizedBox(
-                  width: 140,
+                  width: _dayColumnWidth,
                   child: Center(
                     child: Text(
                       day,
@@ -519,12 +530,12 @@ class _TimetableGrid extends StatelessWidget {
           ),
           const Divider(),
           SizedBox(
-            height: 640,
+            height: _gridHeight,
             child: Stack(
               children: [
-                for (var hour = 9; hour <= 18; hour++) ...[
+                for (var hour = _startHour; hour < _endHour; hour++) ...[
                   Positioned(
-                    top: (hour - 9) * 64,
+                    top: (hour - _startHour) * _hourHeight,
                     left: 0,
                     child: Text(
                       '${hour.toString().padLeft(2, '0')}:00',
@@ -535,8 +546,8 @@ class _TimetableGrid extends StatelessWidget {
                     ),
                   ),
                   Positioned(
-                    top: (hour - 9) * 64,
-                    left: 52,
+                    top: (hour - _startHour) * _hourHeight,
+                    left: _timeColumnWidth,
                     right: 0,
                     child: const Divider(height: 1),
                   ),
@@ -544,15 +555,24 @@ class _TimetableGrid extends StatelessWidget {
                 for (final item in items)
                   if (days.contains('${item['day']}'))
                     Positioned(
-                      left: 52 + days.indexOf('${item['day']}') * 140 + 4,
-                      top: (_minutes('${item['start']}') - 540) / 60 * 64,
-                      width: 132,
+                      left:
+                          _timeColumnWidth +
+                          days.indexOf('${item['day']}') * _dayColumnWidth +
+                          _itemHorizontalPadding,
+                      top:
+                          ((_minutes('${item['start']}') - _startHour * 60) /
+                                  60 *
+                                  _hourHeight)
+                              .clamp(0, _gridHeight - 32)
+                              .toDouble(),
+                      width: _dayColumnWidth - _itemHorizontalPadding * 2,
                       height:
                           ((_minutes('${item['end']}') -
                                       _minutes('${item['start']}')) /
                                   60 *
-                                  64)
-                              .clamp(32, 300),
+                                  _hourHeight)
+                              .clamp(32, 300)
+                              .toDouble(),
                       child: Container(
                         padding: const EdgeInsets.all(7),
                         decoration: BoxDecoration(
@@ -740,9 +760,13 @@ class _EmptyResult extends StatelessWidget {
 }
 
 int _minutes(String value) {
-  final parts = value.split(':');
-  if (parts.length < 2) return 540;
-  return (int.tryParse(parts[0]) ?? 9) * 60 + (int.tryParse(parts[1]) ?? 0);
+  final match = RegExp(r'(\d{1,2})(?::(\d{1,2}))?').firstMatch(value.trim());
+  if (match == null) return 0;
+  final hour = (int.tryParse(match.group(1) ?? '') ?? 0).clamp(0, 24);
+  final minute = hour == 24
+      ? 0
+      : (int.tryParse(match.group(2) ?? '') ?? 0).clamp(0, 59);
+  return hour * 60 + minute;
 }
 
 List<String> _derivedReasons(List<Map<String, dynamic>> schedule) {
