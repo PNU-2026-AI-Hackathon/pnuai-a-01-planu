@@ -64,6 +64,11 @@ Rules:
   avoided_course_names for explicit course-name requests.
 - Course-name preference rules:
   - Extract only concrete course names explicitly stated by the user.
+  - Treat a clearly stated course nickname or abbreviation as an explicit
+    course-name mention when the user uses it as a course request. Return the
+    nickname or abbreviation as written; downstream catalog matching may resolve
+    it to the official course name. For example, "컴프입 듣고 싶어" is a
+    preferred course-name request for "컴프입".
   - Preserve a contiguous course-name phrase before Korean particles such as
     은, 는, 을, 를, 만은, and 만. Do not split a course name merely because it
     contains connectors such as 와, 과, and, or &, when they are written without
@@ -1035,7 +1040,8 @@ def build_preference_parse_payload(
             "stated in free_text and are not already represented in "
             "selected_preferences. Supported rules include timetable constraints, "
             "free-day preferences, time-range preferences, concrete course-name "
-            "preferences, professor exclusions, and elective-area preferences. "
+            "preferences, including clear course nicknames or abbreviations, "
+            "professor exclusions, and elective-area preferences. "
             "A positive soft preference for a concrete course name must be "
             "returned in preferred_course_names. Do not omit it merely because it "
             "is optional. Keep required_course_names for hard requirements only. "

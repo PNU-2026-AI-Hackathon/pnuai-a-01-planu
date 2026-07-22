@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 
 from ..deps import get_major_confirm_service, get_major_preview_service
 from ..schemas.major_schema import (
+    MajorCourseListResponse,
     MajorConfirmRequest,
     MajorConfirmResponse,
+    MajorManualPreviewRequest,
     MajorPreviewRequest,
     MajorPreviewResponse,
 )
@@ -18,6 +20,14 @@ from ..services.major_preview_service import MajorPreviewService
 router = APIRouter(prefix="/major", tags=["major"])
 
 
+@router.get("/courses", response_model=MajorCourseListResponse)
+async def list_major_courses(
+    session_id: str = Query(min_length=1),
+    service: MajorPreviewService = Depends(get_major_preview_service),
+) -> MajorCourseListResponse:
+    return await service.list_uploaded_courses(session_id=session_id)
+
+
 @router.post("/preview", response_model=MajorPreviewResponse)
 async def preview_major_selection(
     request: MajorPreviewRequest,
@@ -26,6 +36,17 @@ async def preview_major_selection(
     return await service.create_preview(
         session_id=request.session_id,
         prompt=request.prompt,
+    )
+
+
+@router.post("/manual-preview", response_model=MajorPreviewResponse)
+async def manual_preview_major_selection(
+    request: MajorManualPreviewRequest,
+    service: MajorPreviewService = Depends(get_major_preview_service),
+) -> MajorPreviewResponse:
+    return await service.create_manual_preview(
+        session_id=request.session_id,
+        course_ids=request.course_ids,
     )
 
 

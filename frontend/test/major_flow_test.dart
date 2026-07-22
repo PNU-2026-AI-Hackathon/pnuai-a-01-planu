@@ -10,14 +10,39 @@ import 'package:frontend/services/major_api.dart';
 import 'package:frontend/state/major_flow_controller.dart';
 
 class FakeMajorApi implements MajorApi {
+  final listRequests = <String>[];
   final previewRequests = <MajorPreviewRequest>[];
+  final manualPreviewRequests = <MajorManualPreviewRequest>[];
   final confirmRequests = <MajorConfirmRequest>[];
+  Completer<MajorCourseListResponse>? listCompleter;
   Completer<MajorPreviewResponse>? previewCompleter;
+  Completer<MajorPreviewResponse>? manualPreviewCompleter;
   Completer<MajorConfirmResponse>? confirmCompleter;
+
+  @override
+  Future<MajorCourseListResponse> listCourses(String sessionId) {
+    listRequests.add(sessionId);
+    return listCompleter?.future ??
+        Future.value(
+          const MajorCourseListResponse(
+            sessionId: 'session-1',
+            courses: [course],
+          ),
+        );
+  }
+
   @override
   Future<MajorPreviewResponse> preview(MajorPreviewRequest request) {
     previewRequests.add(request);
     return previewCompleter?.future ?? Future.value(samplePreview);
+  }
+
+  @override
+  Future<MajorPreviewResponse> manualPreview(
+    MajorManualPreviewRequest request,
+  ) {
+    manualPreviewRequests.add(request);
+    return manualPreviewCompleter?.future ?? Future.value(samplePreview);
   }
 
   @override
@@ -188,6 +213,42 @@ void main() {
     expect(api.previewRequests.single.prompt, contains('기존 요청: 자료구조 001분반'));
     expect(api.previewRequests.single.prompt, contains('추가 수정 요청: 002분반으로 변경'));
     expect(c.preview!.previewId, 'preview-1');
+  });
+
+  testWidgets('manual selection builds preview from checked uploaded courses', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(800, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final api = FakeMajorApi();
+    final c = controller(api);
+    await tester.pumpWidget(
+      MaterialApp(home: MajorPromptScreen(controller: c)),
+    );
+
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('majorManualSelectButton')),
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.tap(find.byKey(const Key('majorManualSelectButton')));
+    await tester.pumpAndSettle();
+
+    expect(api.listRequests, ['session-1']);
+    expect(
+      find.byKey(const Key('majorManualCourse-MA100-001')),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byKey(const Key('majorManualCourse-MA100-001')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('majorManualPreviewButton')));
+    await tester.pumpAndSettle();
+
+    expect(api.manualPreviewRequests.single.courseIds, ['MA100-001']);
+    expect(find.byType(MajorPreviewScreen), findsOneWidget);
   });
 
   testWidgets('confirm blocks duplicate calls and stores result', (

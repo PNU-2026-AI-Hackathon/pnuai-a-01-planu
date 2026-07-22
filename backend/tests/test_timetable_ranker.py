@@ -202,6 +202,24 @@ def test_required_and_excluded_course_names_are_hard_filters() -> None:
     assert ranked[0].timetable.courses[0].course_name == "고전읽기와토론"
 
 
+def test_course_name_hard_filters_accept_roman_suffix_normalization() -> None:
+    required = Timetable(
+        courses=[_course("GEN-REQ", course_name="일반물리학(I)")]
+    )
+    other = Timetable(
+        courses=[_course("GEN-OTHER", course_name="대학영어")]
+    )
+
+    ranked = rank_timetables(
+        [required, other],
+        preferences=PreferenceRules(required_course_names=["일반물리학"]),
+        top_n=2,
+    )
+
+    assert len(ranked) == 1
+    assert ranked[0].timetable.courses[0].course_name == "일반물리학(I)"
+
+
 def test_same_input_always_produces_same_sort_order() -> None:
     first = Timetable(courses=[_course("GEN-B", start="11:00", end="12:00")])
     second = Timetable(courses=[_course("GEN-A", start="11:00", end="12:00")])
@@ -244,6 +262,22 @@ def test_preferred_course_names_raise_matching_candidate_rank() -> None:
     )
 
     assert ranked[0].timetable.courses[0].course_name == "대학영어"
+    assert ranked[0].raw_score > ranked[1].raw_score
+
+
+def test_preferred_course_names_accept_clear_abbreviation_alias() -> None:
+    preferred = Timetable(
+        courses=[_course("GEN-A", course_name="컴퓨터및프로그래밍입문")]
+    )
+    other = Timetable(courses=[_course("GEN-B", course_name="대학영어")])
+
+    ranked = rank_timetables(
+        [other, preferred],
+        preferences=PreferenceRules(preferred_course_names=["컴프입"]),
+        top_n=2,
+    )
+
+    assert ranked[0].timetable.courses[0].course_name == "컴퓨터및프로그래밍입문"
     assert ranked[0].raw_score > ranked[1].raw_score
 
 

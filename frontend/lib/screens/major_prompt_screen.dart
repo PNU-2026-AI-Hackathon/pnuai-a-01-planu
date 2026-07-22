@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models/major_models.dart';
 import '../state/major_flow_controller.dart';
+import 'major_manual_select_screen.dart';
 import 'major_preview_screen.dart';
 
 class MajorPromptScreen extends StatefulWidget {
@@ -46,6 +47,27 @@ class _MajorPromptScreenState extends State<MajorPromptScreen> {
     setState(() => _validation = null);
     final ok = await widget.controller.requestPreview(_prompt.text);
     if (!mounted || !ok) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => MajorPreviewScreen(
+          controller: widget.controller,
+          onSessionExpired: widget.onSessionExpired,
+          onConfirmed: widget.onConfirmed,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openManualSelection() async {
+    final ok = await Navigator.of(context).push<bool>(
+      MaterialPageRoute<bool>(
+        builder: (_) => MajorManualSelectScreen(
+          controller: widget.controller,
+          onSessionExpired: widget.onSessionExpired,
+        ),
+      ),
+    );
+    if (!mounted || ok != true) return;
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => MajorPreviewScreen(
@@ -129,6 +151,7 @@ class _MajorPromptScreenState extends State<MajorPromptScreen> {
                   _PromptError(
                     error: widget.controller.error!,
                     retry: _submit,
+                    manualSelect: _openManualSelection,
                     onSessionExpired: widget.onSessionExpired,
                   ),
                 ],
@@ -152,6 +175,18 @@ class _MajorPromptScreenState extends State<MajorPromptScreen> {
                           ),
                         )
                       : const Text('전공 시간표 미리보기'),
+                ),
+                const SizedBox(height: 12),
+                OutlinedButton(
+                  key: const Key('majorManualSelectButton'),
+                  onPressed: busy ? null : _openManualSelection,
+                  style: OutlinedButton.styleFrom(
+                    minimumSize: const Size.fromHeight(48),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                  child: const Text('직접 선택하기'),
                 ),
               ],
             ),
@@ -185,10 +220,12 @@ class _PromptError extends StatelessWidget {
   const _PromptError({
     required this.error,
     required this.retry,
+    required this.manualSelect,
     this.onSessionExpired,
   });
   final dynamic error;
   final VoidCallback retry;
+  final VoidCallback manualSelect;
   final VoidCallback? onSessionExpired;
   @override
   Widget build(BuildContext context) {
@@ -213,6 +250,8 @@ class _PromptError extends StatelessWidget {
             onPressed: expired ? onSessionExpired : retry,
             child: Text(expired ? '처음 화면으로 이동' : '다시 시도'),
           ),
+          if (!expired)
+            TextButton(onPressed: manualSelect, child: const Text('직접 선택하기')),
         ],
       ),
     );

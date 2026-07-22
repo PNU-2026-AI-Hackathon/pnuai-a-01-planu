@@ -58,11 +58,13 @@ def test_prompt_and_schema_describe_soft_course_name_preferences() -> None:
     assert "Soft course-name preferences are valid parser results and must not be ignored" in SYSTEM_PROMPT
     assert "가능하면 대학영어를 듣고 싶어" in SYSTEM_PROMPT
     assert "required_course_names" in SYSTEM_PROMPT
+    assert "nickname or abbreviation" in SYSTEM_PROMPT
     assert "positive soft preferences" in preferred_description
     assert "가능하면 대학영어를 듣고 싶어" in preferred_description
     assert "hard requirements" in required_description
     assert "preferred_course_names" in payload["instruction"]
     assert "Do not omit it merely because it is optional" in payload["instruction"]
+    assert "nicknames or abbreviations" in payload["instruction"]
 
 
 def test_soft_course_name_phrases_map_to_preferred_course_names() -> None:

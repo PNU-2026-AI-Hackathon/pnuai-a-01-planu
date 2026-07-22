@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../models/major_models.dart';
 import '../state/major_flow_controller.dart';
 import '../widgets/flow_step_badge.dart';
+import 'major_manual_select_screen.dart';
 
 class MajorPreviewScreen extends StatefulWidget {
   const MajorPreviewScreen({
@@ -52,6 +53,17 @@ class _MajorPreviewScreenState extends State<MajorPreviewScreen> {
         const SnackBar(content: Text('전공 시간표가 확정되었습니다. 다음 교양 선택 단계로 이동해 주세요.')),
       );
     }
+  }
+
+  Future<void> _openManualSelection() async {
+    await Navigator.of(context).push<bool>(
+      MaterialPageRoute<bool>(
+        builder: (_) => MajorManualSelectScreen(
+          controller: widget.controller,
+          onSessionExpired: widget.onSessionExpired,
+        ),
+      ),
+    );
   }
 
   @override
@@ -131,6 +143,20 @@ class _MajorPreviewScreenState extends State<MajorPreviewScreen> {
                         ? null
                         : () => setState(() => _showFeedback = !_showFeedback),
                     child: const Text('수정 요청하기'),
+                  ),
+                  const SizedBox(height: 12),
+                  OutlinedButton(
+                    key: const Key('majorManualSelectButton'),
+                    onPressed: feedbackBusy || confirmBusy
+                        ? null
+                        : _openManualSelection,
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size.fromHeight(48),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
+                    child: const Text('직접 선택하기'),
                   ),
                   if (_showFeedback) ...[
                     const SizedBox(height: 12),

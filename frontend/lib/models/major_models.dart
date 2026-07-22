@@ -115,6 +115,33 @@ class MajorPreviewRequest {
   Map<String, dynamic> toJson() => {'session_id': sessionId, 'prompt': prompt};
 }
 
+class MajorManualPreviewRequest {
+  const MajorManualPreviewRequest(this.sessionId, this.courseIds);
+  final String sessionId;
+  final List<String> courseIds;
+  Map<String, dynamic> toJson() => {
+    'session_id': sessionId,
+    'course_ids': courseIds,
+  };
+}
+
+class MajorCourseListResponse {
+  const MajorCourseListResponse({
+    required this.sessionId,
+    required this.courses,
+  });
+  final String sessionId;
+  final List<MajorCourse> courses;
+  factory MajorCourseListResponse.fromJson(Map<String, dynamic> json) =>
+      MajorCourseListResponse(
+        sessionId: json['session_id'] as String? ?? '',
+        courses: (json['courses'] as List? ?? const [])
+            .whereType<Map<String, dynamic>>()
+            .map(MajorCourse.fromJson)
+            .toList(),
+      );
+}
+
 class MajorPreviewResponse {
   const MajorPreviewResponse({
     required this.sessionId,
