@@ -127,13 +127,24 @@ class TimetableValidator:
                 if not self.campus_rule_engine.can_travel(
                     previous.building_code, following.building_code, gap
                 ):
-                    required = self.campus_rule_engine.required_travel_minutes(
+                    if self.campus_rule_engine.has_blocked_building_prefix_distance(
                         previous.building_code, following.building_code
-                    )
+                    ):
+                        message = (
+                            f"{previous_course.course_name}에서 {following_course.course_name}까지 "
+                            "강의실 번호 앞자리 차이가 3 이상이라 이동할 수 없습니다."
+                        )
+                    else:
+                        required = self.campus_rule_engine.required_travel_minutes(
+                            previous.building_code, following.building_code
+                        )
+                        message = (
+                            f"{previous_course.course_name}에서 {following_course.course_name}까지 "
+                            f"이동에 {required}분이 필요하지만 공백은 {gap}분입니다."
+                        )
                     issues.append(ValidationIssue(
                         "TRAVEL_NOT_POSSIBLE",
-                        f"{previous_course.course_name}에서 {following_course.course_name}까지 "
-                        f"이동에 {required}분이 필요하지만 공백은 {gap}분입니다.",
+                        message,
                         (previous_course.course_id, following_course.course_id),
                     ))
         return issues
