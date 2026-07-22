@@ -9,6 +9,28 @@ import 'package:frontend/screens/general_preference_screen.dart';
 import 'package:frontend/services/planu_api.dart';
 
 void main() {
+  testWidgets('교양 파일 없이도 교양 조건 단계로 진행할 수 있다', (tester) async {
+    bool continued = false;
+    CatalogFile? continuedFile;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: FileUploadScreen3(
+          onPickElectiveCatalog: () async => null,
+          onContinue: (file) {
+            continued = true;
+            continuedFile = file;
+          },
+        ),
+      ),
+    );
+
+    await tester.tap(find.byKey(const Key('elective-continue-button')));
+    await tester.pump();
+
+    expect(continued, isTrue);
+    expect(continuedFile, isNull);
+  });
+
   testWidgets('교양 파일 선택 후 교양 조건 단계로 값을 전달한다', (tester) async {
     CatalogFile? continuedFile;
     await tester.pumpWidget(

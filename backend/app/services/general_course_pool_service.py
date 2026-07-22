@@ -80,6 +80,11 @@ class CourseRestrictionPolicy:
                 raise ValueError(f"duplicate restriction rule: {rule.course_code}-{rule.division}")
             rules_by_course_section[key] = rule
         self.rules_by_course_section = rules_by_course_section
+        self.known_departments = frozenset(
+            department
+            for rule in rules_by_course_section.values()
+            for department in [*rule.allowed_departments, *rule.blocked_departments]
+        )
 
     def evaluate(self, course: Course, *, department: str) -> EligibilityDecision:
         department_name = department.strip()
@@ -87,6 +92,12 @@ class CourseRestrictionPolicy:
             return EligibilityDecision(
                 EligibilityStatus.UNKNOWN_DEPARTMENT,
                 "사용자 학과 정보가 없습니다.",
+            )
+
+        if self.known_departments and department_name not in self.known_departments:
+            return EligibilityDecision(
+                EligibilityStatus.NOT_RESTRICTED,
+                "제한 데이터에 없는 학과이므로 학과 제한을 적용하지 않습니다.",
             )
 
         rule = self.rules_by_course_section.get(_course_key(course))

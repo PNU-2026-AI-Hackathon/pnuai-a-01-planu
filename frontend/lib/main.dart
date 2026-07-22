@@ -129,8 +129,8 @@ class _PlaNUAppState extends State<PlaNUApp> {
                 ),
           onPickElectiveCatalog: _pickCatalog,
           onContinue: (file) {
-            _flow.electiveCatalogName = file.name;
-            _flow.electiveCatalogBytes = file.bytes;
+            _flow.electiveCatalogName = file?.name;
+            _flow.electiveCatalogBytes = file?.bytes;
             Navigator.of(uploadContext).push<void>(
               MaterialPageRoute<void>(
                 settings: const RouteSettings(name: '/general-preference'),

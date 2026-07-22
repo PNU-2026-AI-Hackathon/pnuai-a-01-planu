@@ -60,17 +60,18 @@ class _DepartmentSelectScreenState extends State<DepartmentSelectScreen> {
       }
 
       final departments = decoded
-          .whereType<Map<String, dynamic>>()
-          .map((item) => item['department'])
+          .map((item) {
+            if (item is String) return item;
+            if (item is Map<String, dynamic>) {
+              return item['department'] ?? item['name'] ?? item['학과명'];
+            }
+            return null;
+          })
           .whereType<String>()
           .map((department) => department.trim())
           .where((department) => department.isNotEmpty)
           .toSet()
           .toList(growable: false);
-
-      if (departments.isEmpty) {
-        throw const FormatException('No departments found in JSON data.');
-      }
 
       if (!mounted) return;
       setState(() {
@@ -165,7 +166,7 @@ class _DepartmentSelectScreenState extends State<DepartmentSelectScreen> {
                             children: <Widget>[
                               const Expanded(
                                 child: Text(
-                                  '\uD559\uACFC \uBAA9\uB85D\uC744 \uBD88\uB7EC\uC624\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4.',
+                                  '학과 후보 목록을 불러오지 못했습니다. 학과명을 직접 입력해도 됩니다.',
                                 ),
                               ),
                               TextButton(
@@ -180,7 +181,9 @@ class _DepartmentSelectScreenState extends State<DepartmentSelectScreen> {
                           duration: const Duration(milliseconds: 180),
                           child: _selectedDepartment == null
                               ? Text(
-                                  '검색 결과에서 학과를 선택하면 다음 단계로 넘어갈 수 있습니다.',
+                                  _departments.isEmpty
+                                      ? '학과명을 직접 입력하면 다음 단계로 넘어갈 수 있습니다.'
+                                      : '검색 결과에서 선택하거나 학과명을 직접 입력해도 됩니다.',
                                   key: const ValueKey<String>('empty'),
                                   style: theme.textTheme.bodySmall?.copyWith(
                                     color: _muted,

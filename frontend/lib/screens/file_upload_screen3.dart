@@ -12,7 +12,7 @@ class FileUploadScreen3 extends StatefulWidget {
   });
 
   final CatalogFilePicker onPickElectiveCatalog;
-  final ValueChanged<CatalogFile> onContinue;
+  final ValueChanged<CatalogFile?> onContinue;
   final CatalogFile? initialFile;
   final int maxFileSizeInBytes;
 
@@ -91,7 +91,7 @@ class _FileUploadScreen3State extends State<FileUploadScreen3> {
                 ).textTheme.displaySmall?.copyWith(fontWeight: FontWeight.w600),
               ),
               const SizedBox(height: 12),
-              const Text('학생지원시스템에서 내려받은 교양 수강편람 파일을 선택해 주세요.'),
+              const Text('교양 수강편람 파일이 있으면 업로드하고, 없으면 서버 기본 데이터로 진행합니다.'),
               const SizedBox(height: 32),
               Container(
                 padding: const EdgeInsets.all(24),
@@ -111,7 +111,7 @@ class _FileUploadScreen3State extends State<FileUploadScreen3> {
                     ),
                     const SizedBox(height: 8),
                     const Text(
-                      '교양과목이 포함된 수강편람 파일이 필요합니다.',
+                      '업로드하면 해당 파일의 교양 과목을 우선 사용합니다.',
                       style: TextStyle(color: _muted),
                     ),
                     const SizedBox(height: 20),
@@ -149,15 +149,13 @@ class _FileUploadScreen3State extends State<FileUploadScreen3> {
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(
-                  '지원 형식은 .xlsx이며 파일 크기는 최대 ${_formatSize(widget.maxFileSizeInBytes)}입니다.',
+                  '지원 형식은 .xlsx이며 파일 크기는 최대 ${_formatSize(widget.maxFileSizeInBytes)}입니다. 파일을 선택하지 않으면 서버 기본 교양 데이터를 사용합니다.',
                 ),
               ),
               const SizedBox(height: 24),
               FilledButton(
                 key: const Key('elective-continue-button'),
-                onPressed: _file == null || _isPicking
-                    ? null
-                    : () => widget.onContinue(_file!),
+                onPressed: _isPicking ? null : () => widget.onContinue(_file),
                 style: FilledButton.styleFrom(
                   backgroundColor: _ink,
                   minimumSize: const Size.fromHeight(48),

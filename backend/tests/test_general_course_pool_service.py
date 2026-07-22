@@ -275,9 +275,14 @@ def test_allowed_department_is_accepted() -> None:
     assert result.pools.required_courses == [course]
 
 
-def test_department_missing_from_allowed_list_is_excluded() -> None:
+def test_department_missing_from_allowed_list_but_known_elsewhere_is_excluded() -> None:
     course = _course("ZE100-001", "고전읽기와토론", Category.GENERAL_REQUIRED, "001")
-    policy = CourseRestrictionPolicy(rules=[_rule("ZE100", "001", allowed={"전자공학과"})])
+    policy = CourseRestrictionPolicy(
+        rules=[
+            _rule("ZE100", "001", allowed={"전자공학과"}),
+            _rule("ZE200", "001", blocked={"컴퓨터공학과"}),
+        ]
+    )
 
     result = GeneralCoursePoolService(restriction_policy=policy).build_pools(
         department="컴퓨터공학과",
@@ -286,6 +291,21 @@ def test_department_missing_from_allowed_list_is_excluded() -> None:
 
     assert result.pools.required_courses == []
     assert result.excluded_courses[0].reason_code == "DEPARTMENT_NOT_ELIGIBLE"
+
+
+def test_department_absent_from_restriction_data_is_not_excluded() -> None:
+    course = _course("ZE100-001", "고전읽기와토론", Category.GENERAL_REQUIRED, "001")
+    policy = CourseRestrictionPolicy(
+        rules=[_rule("ZE100", "001", allowed={"전자공학과"})]
+    )
+
+    result = GeneralCoursePoolService(restriction_policy=policy).build_pools(
+        department="새로운학과",
+        general_required_courses=[course],
+    )
+
+    assert result.pools.required_courses == [course]
+    assert result.excluded_courses == []
 
 
 def test_duplicate_restriction_rule_for_same_course_section_raises() -> None:
