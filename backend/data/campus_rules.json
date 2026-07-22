@@ -1,0 +1,129 @@
+{
+  "description": "부산대 연강 가능 여부 파서 트리 (Rule Engine)",
+  "global_rule": {
+    "max_zone_difference": 2,
+    "rule_explanation": "건물 앞자리 숫자의 차이가 2 이하이면 연강 가능, 3 이상이면 연강 불가로 기본 판정한다."
+  },
+  "rule_tree": [
+    {
+      "from_prefix": 4,
+      "to_prefix": 4,
+      "description": "4구역 이동 규칙",
+      "conditions": [
+        {
+          "from_suffix_range": [1, 8], 
+          "to_suffix_range": [17, 22], 
+          "can_connect": false,
+          "reason": "401~408에서 417~422는 거리가 너무 멀어 불가능"
+        }
+      ]
+    },
+    {
+      "from_prefix": 4,
+      "to_prefix": 4,
+      "description": "4구역 이동 규칙",
+      "conditions": [
+        {
+          "from_suffix_range": [17, 22], 
+          "to_suffix_range": [1, 8], 
+          "can_connect": false,
+          "reason": "417~422에서 401~408는 거리가 너무 멀어 불가능"
+        }
+      ]
+    },
+    {
+      "from_prefix": 3,
+      "to_prefix": 3,
+      "description": "3구역 이동 규칙",
+      "conditions": [
+        {
+          "from_suffix_range": [1, 3], 
+          "to_suffix_range": [16, 18], 
+          "can_connect": false,
+          "reason": "301~303에서 316~318는 거리가 너무 멀어 불가능"
+        }
+      ]
+    },
+    {
+      "from_prefix": 3,
+      "to_prefix": 3,
+      "description": "3구역 이동 규칙",
+      "conditions": [
+        {
+          "from_suffix_range": [16, 18], 
+          "to_suffix_range": [1, 3], 
+          "can_connect": false,
+          "reason": "316~318에서 301~303는 거리가 너무 멀어 불가능"
+        }
+      ]
+    },
+    {
+      "from_prefix": 6,
+      "to_prefix": 7,
+      "description": "6구역 -> 7구역 이동 규칙",
+      "conditions": [
+        {
+          "from_suffix_range": [5, 9],
+          "to_suffix_range": [1, 99],
+          "can_connect": false,
+          "reason": "6구역에서 7구역은 경사가 가파르기에 불가능"
+        }
+      ]
+    },
+    {
+      "from_prefix": 5,
+      "to_prefix": 7,
+      "description": "5구역 -> 7구역 이동 규칙",
+      "conditions": [
+        {
+          "from_suffix_range": [1, 99],
+          "to_suffix_range": [1, 99],
+          "can_connect": false,
+          "reason": "5구역에서 7구역은 경사가 가파르기에 불가능"
+        }
+      ]
+    },
+    {
+      "from_prefix": 2,
+      "to_prefix": 4,
+      "description": "2구역 -> 4구역 이동 규칙",
+      "conditions": [
+        {
+          "from_suffix_range": [1, 99],
+          "to_suffix_range": [1, 99],
+          "can_connect": false,
+          "reason": "2구역에서 4구역은 경사가 가파르기에 불가능"
+        }
+      ]
+    },
+    
+    {
+      "from_prefix": 3,
+      "to_prefix": 4,
+      "description": "3구역 -> 4구역 이동 규칙",
+      "conditions": [
+        {
+          "from_suffix_range": [1, 7],
+          "to_suffix_range": [20, 22],
+          "can_connect": false,
+          "reason": "301~307에서 420~422는 거리가 너무 멀어 불가능"
+        }
+      ]
+    },
+    {
+      "from_prefix": 4,
+      "to_prefix": 3,
+      "description": "4구역 -> 3구역 이동 규칙",
+      "conditions": [
+        {
+          "from_suffix_range": [20, 22],
+          "to_suffix_range": [1, 7],
+          "can_connect": false,
+          "reason": "420~422에서 301~307는 거리가 너무 멀어 불가능"
+        }
+      ]
+    }
+    
+  ]
+}
+
