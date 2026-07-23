@@ -86,6 +86,8 @@ class CampusRuleEngine:
     ) -> bool:
         if available_minutes < 0:
             return False
+        if self.has_blocked_building_prefix_distance(from_building, to_building):
+            return False
         return available_minutes >= self.required_travel_minutes(
             from_building, to_building
         )
@@ -99,6 +101,15 @@ class CampusRuleEngine:
             return True
         gap = following.start_minutes - previous.end_minutes
         return self.can_travel(previous.building_code, following.building_code, gap)
+
+    def has_blocked_building_prefix_distance(
+        self, from_building: str | None, to_building: str | None
+    ) -> bool:
+        """Return whether the temporary first-digit distance rule blocks travel."""
+
+        origin = self._first_digit(from_building)
+        destination = self._first_digit(to_building)
+        return origin is not None and destination is not None and abs(origin - destination) >= 3
 
     def _load_travel_times(self, values: Any) -> None:
         if isinstance(values, Mapping):
@@ -121,3 +132,8 @@ class CampusRuleEngine:
     @staticmethod
     def _code(value: object) -> str:
         return str(value).strip().upper().replace(" ", "")
+
+    @staticmethod
+    def _first_digit(value: object) -> int | None:
+        match = re.search(r"\d", str(value or ""))
+        return int(match.group(0)) if match else None

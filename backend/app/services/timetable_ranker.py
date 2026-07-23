@@ -23,6 +23,7 @@ from .ranking_template_service import (
     normalize_ranking_template,
     weights_for_template as ranking_template_weights_for_template,
 )
+from .course_name_matcher import course_name_matches
 
 
 TEMPLATE_WEIGHT_PROFILES: dict[PreferenceTemplate, RankingWeights] = (
@@ -211,13 +212,15 @@ class TimetableRanker:
         ):
             return True
 
-        course_names = {course.course_name for _, course in meetings}
-        if preferences.required_course_names and not set(
-            preferences.required_course_names
-        ).issubset(course_names):
+        course_names = [course.course_name for _, course in meetings]
+        if preferences.required_course_names and not all(
+            self._has_matching_course(name, course_names)
+            for name in preferences.required_course_names
+        ):
             return True
         if preferences.excluded_course_names and any(
-            name in course_names for name in preferences.excluded_course_names
+            self._has_matching_course(name, course_names)
+            for name in preferences.excluded_course_names
         ):
             return True
 
@@ -405,12 +408,16 @@ class TimetableRanker:
         if not preferences.preferred_course_names:
             return []
 
-        course_names = {course.course_name for course in candidate.courses}
+        course_names = [course.course_name for course in candidate.courses]
         preferred_courses = [
-            name for name in preferences.preferred_course_names if name in course_names
+            name
+            for name in preferences.preferred_course_names
+            if self._has_matching_course(name, course_names)
         ]
         missing_courses = [
-            name for name in preferences.preferred_course_names if name not in course_names
+            name
+            for name in preferences.preferred_course_names
+            if not self._has_matching_course(name, course_names)
         ]
         components: list[ScoreComponent] = []
         if preferred_courses:
@@ -441,12 +448,16 @@ class TimetableRanker:
         if not preferences.avoided_course_names:
             return []
 
-        course_names = {course.course_name for course in candidate.courses}
+        course_names = [course.course_name for course in candidate.courses]
         avoided_courses = [
-            name for name in preferences.avoided_course_names if name in course_names
+            name
+            for name in preferences.avoided_course_names
+            if self._has_matching_course(name, course_names)
         ]
         absent_courses = [
-            name for name in preferences.avoided_course_names if name not in course_names
+            name
+            for name in preferences.avoided_course_names
+            if not self._has_matching_course(name, course_names)
         ]
         components: list[ScoreComponent] = []
         if avoided_courses:
@@ -467,6 +478,10 @@ class TimetableRanker:
                 reason=f"회피 선호 과목이 포함되지 않았습니다: {', '.join(absent_courses)}.",
             ))
         return components
+
+    @staticmethod
+    def _has_matching_course(name: str, course_names: Iterable[str]) -> bool:
+        return any(course_name_matches(name, course_name) for course_name in course_names)
 
     def _preferred_elective_area_components(
         self,

@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 
 from ..models.course import Category, Course, time_to_minutes
 from ..models.preference import ExcludedTimeRange, PreferenceRules
+from .course_name_matcher import course_name_matches
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,7 +118,10 @@ class CourseFilter:
         if excluded_professors and course.professor.casefold() in excluded_professors:
             return True
 
-        return course.course_name in preferences.excluded_course_names
+        return any(
+            course_name_matches(name, course.course_name)
+            for name in preferences.excluded_course_names
+        )
 
     @staticmethod
     def _overlaps_excluded_range(

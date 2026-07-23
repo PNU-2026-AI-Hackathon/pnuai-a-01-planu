@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../widgets/flow_step_badge.dart';
 
 class CatalogDownloadGuideScreen extends StatelessWidget {
   const CatalogDownloadGuideScreen({super.key});
@@ -44,7 +45,11 @@ class CatalogDownloadGuideScreen extends StatelessWidget {
               constraints: const BoxConstraints(maxWidth: 1200),
               child: const Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [_DownloadGuideCard(steps: _steps)],
+                children: [
+                  FlowStepBadge(label: '이용 안내', current: 1),
+                  SizedBox(height: 24),
+                  _DownloadGuideCard(steps: _steps),
+                ],
               ),
             ),
           ),

@@ -11,9 +11,10 @@ from uuid import uuid4
 
 from ..core.errors import AppError
 from ..models.course import ClassTime, Course, Day
-from ..models.major_selection import MajorSelectionParseResult
+from ..models.major_selection import MajorCourseReference, MajorSelectionParseResult
 from ..schemas.major_schema import (
     AmbiguousMajorPreviewCourse,
+    MajorCourseListResponse,
     MajorPreviewClassTime,
     MajorPreviewConflict,
     MajorPreviewCourse,
@@ -175,6 +176,118 @@ class MajorPreviewService:
             ) from exc
 
         return response
+
+    async def list_uploaded_courses(self, session_id: str) -> MajorCourseListResponse:
+        session = self._get_session_with_major_catalog(session_id)
+        courses = sorted(
+            session.major_candidates,
+            key=lambda course: (
+                course.course_name,
+                course.division,
+                course.course_id,
+            ),
+        )
+        return MajorCourseListResponse(
+            session_id=session.session_id,
+            courses=[_preview_course(course) for course in courses],
+        )
+
+    async def create_manual_preview(
+        self,
+        session_id: str,
+        course_ids: list[str],
+    ) -> MajorPreviewResponse:
+        session = self._get_session_with_major_catalog(session_id)
+        selected_ids = list(dict.fromkeys(course_id.strip() for course_id in course_ids))
+        if not selected_ids:
+            raise AppError(
+                "EMPTY_MAJOR_SELECTION",
+                "선택된 전공 과목이 없습니다.",
+                status_code=400,
+            )
+
+        by_id = {course.course_id: course for course in session.major_candidates}
+        missing_ids = [course_id for course_id in selected_ids if course_id not in by_id]
+        if missing_ids:
+            raise AppError(
+                "MAJOR_COURSE_REFERENCE_INVALID",
+                "업로드된 전공 과목에 없는 항목이 포함되어 있습니다.",
+                status_code=422,
+                details={"course_ids": missing_ids},
+            )
+
+        matched_courses = [by_id[course_id] for course_id in selected_ids]
+        has_time_conflict = self.validator.has_time_conflict(matched_courses)
+        conflicts = _time_conflicts(matched_courses) if has_time_conflict else []
+        preview_id = str(uuid4())
+
+        response = MajorPreviewResponse(
+            session_id=session.session_id,
+            preview_id=preview_id,
+            matched_courses=[
+                MatchedMajorPreviewCourse(
+                    reference=MajorCourseReference(
+                        course_name=course.course_name,
+                        section=course.division,
+                    ),
+                    course=_preview_course(course),
+                )
+                for course in matched_courses
+            ],
+            ambiguous_courses=[],
+            unmatched_courses=[],
+            ambiguous_texts=[],
+            timetable_entries=_timetable_entries(matched_courses),
+            has_time_conflict=has_time_conflict,
+            conflicts=conflicts,
+            can_confirm=bool(matched_courses) and not has_time_conflict,
+        )
+
+        preview = {
+            "session_id": session.session_id,
+            "preview_id": preview_id,
+            "matched_course_ids": [course.course_id for course in matched_courses],
+            "ambiguous_courses": [],
+            "unmatched_courses": [],
+            "ambiguous_texts": [],
+            "has_time_conflict": response.has_time_conflict,
+            "conflicts": [item.model_dump(mode="json") for item in response.conflicts],
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "source": "manual",
+        }
+
+        try:
+            self.store.save_major_preview(session.session_id, preview=preview)
+        except Exception as exc:
+            raise AppError(
+                "MAJOR_PREVIEW_SAVE_FAILED",
+                "전공 미리보기 결과를 저장하지 못했습니다.",
+                status_code=500,
+            ) from exc
+
+        return response
+
+    def _get_session_with_major_catalog(self, session_id: str):
+        session_id = session_id.strip()
+        if not session_id:
+            raise AppError("SESSION_NOT_FOUND", "세션 ID가 비어 있습니다.", status_code=400)
+
+        try:
+            session = self.store.get(session_id)
+        except SessionNotFoundError as exc:
+            raise AppError(
+                "SESSION_NOT_FOUND",
+                "세션을 찾을 수 없거나 만료되었습니다.",
+                status_code=404,
+            ) from exc
+
+        if not session.major_candidates:
+            raise AppError(
+                "MAJOR_CATALOG_NOT_FOUND",
+                "세션에 파싱된 전공 수강편람 데이터가 없습니다.",
+                status_code=409,
+            )
+        return session
 
 
 def _preview_course(course: Course) -> MajorPreviewCourse:

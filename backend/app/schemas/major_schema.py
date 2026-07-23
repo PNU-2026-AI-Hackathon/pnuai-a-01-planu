@@ -44,6 +44,29 @@ class MajorConfirmRequest(_Model):
         return value
 
 
+class MajorManualPreviewRequest(_Model):
+    session_id: str = Field(min_length=1)
+    course_ids: list[str] = Field(min_length=1)
+
+    @field_validator("session_id")
+    @classmethod
+    def reject_blank_text(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("must not be blank")
+        return value
+
+    @field_validator("course_ids")
+    @classmethod
+    def reject_blank_course_ids(cls, values: list[str]) -> list[str]:
+        cleaned: list[str] = []
+        for value in values:
+            if not value.strip():
+                raise ValueError("course_ids must not contain blank values")
+            if value not in cleaned:
+                cleaned.append(value)
+        return cleaned
+
+
 class MajorPreviewClassTime(_Model):
     day: Day
     start: str
@@ -61,6 +84,11 @@ class MajorPreviewCourse(_Model):
     division: str
     professor: str
     class_times: list[MajorPreviewClassTime]
+
+
+class MajorCourseListResponse(_Model):
+    session_id: str
+    courses: list[MajorPreviewCourse] = Field(default_factory=list)
 
 
 class MajorPreviewTimetableEntry(_Model):

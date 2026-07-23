@@ -80,6 +80,11 @@ class CourseRestrictionPolicy:
                 raise ValueError(f"duplicate restriction rule: {rule.course_code}-{rule.division}")
             rules_by_course_section[key] = rule
         self.rules_by_course_section = rules_by_course_section
+        self.known_departments = frozenset(
+            department
+            for rule in rules_by_course_section.values()
+            for department in [*rule.allowed_departments, *rule.blocked_departments]
+        )
 
     def evaluate(self, course: Course, *, department: str) -> EligibilityDecision:
         department_name = department.strip()
@@ -87,6 +92,12 @@ class CourseRestrictionPolicy:
             return EligibilityDecision(
                 EligibilityStatus.UNKNOWN_DEPARTMENT,
                 "사용자 학과 정보가 없습니다.",
+            )
+
+        if self.known_departments and department_name not in self.known_departments:
+            return EligibilityDecision(
+                EligibilityStatus.NOT_RESTRICTED,
+                "제한 데이터에 없는 학과이므로 학과 제한을 적용하지 않습니다.",
             )
 
         rule = self.rules_by_course_section.get(_course_key(course))
@@ -139,7 +150,9 @@ class GeneralCoursePoolService:
         if not department.strip():
             raise AppError("DEPARTMENT_NOT_FOUND", "사용자 학과 정보가 없습니다.", status_code=409)
 
-        required_candidates = list(general_required_courses)
+        required_candidates = [
+            course for course in general_required_courses if _is_jangjeon_course(course)
+        ]
         if not required_candidates:
             raise AppError(
                 "RESTRICTED_COURSE_DATA_NOT_FOUND",
@@ -147,8 +160,12 @@ class GeneralCoursePoolService:
                 status_code=500,
             )
 
-        uploaded = list(uploaded_elective_courses or [])
-        fallback = list(fallback_elective_courses or [])
+        uploaded = [
+            course for course in (uploaded_elective_courses or []) if _is_jangjeon_course(course)
+        ]
+        fallback = [
+            course for course in (fallback_elective_courses or []) if _is_jangjeon_course(course)
+        ]
         result = GeneralCoursePoolResult()
 
         required = self._accept_courses(
@@ -272,10 +289,10 @@ class GeneralCoursePreparationService:
                 "교양선택 후보 준비 시 교양 영역을 선택해주세요.",
                 status_code=400,
             )
-        if not 1 <= elective_area <= 7:
+        if not 1 <= elective_area <= 9:
             raise AppError(
                 "INVALID_ELECTIVE_AREA",
-                "교양 영역은 1~7 사이의 정수여야 합니다.",
+                "교양 영역은 1~9 사이의 정수여야 합니다.",
                 status_code=400,
             )
 
@@ -461,6 +478,16 @@ def _normalized(value: str) -> str:
     return re.sub(r"\s+", "", value).casefold()
 
 
+def _is_jangjeon_course(course: Course) -> bool:
+    """Return false for sections explicitly marked as Miryang or Yangsan."""
+    for meeting in course.class_times:
+        classroom = meeting.classroom.strip().lower()
+        building = meeting.building_code.strip().lower()
+        if classroom.startswith(("밀양", "양산")) or building.startswith(("m", "y")):
+            return False
+    return True
+
+
 def _diagnostic(course: Course, reason_code: str, reason: str, source: str) -> ExcludedCourseDiagnostic:
     return ExcludedCourseDiagnostic(
         course_key=course.course_id,
@@ -522,7 +549,7 @@ def _elective_catalog_app_error(exc: UploadedCatalogError) -> AppError:
     if "교양 영역" in message:
         return AppError(
             "INVALID_ELECTIVE_AREA",
-            "교양 영역은 1~7 사이의 정수여야 합니다.",
+            "교양 영역은 1~9 사이의 정수여야 합니다.",
             status_code=400,
         )
     if "비어 있습니다" in message or "찾지 못했습니다" in message:

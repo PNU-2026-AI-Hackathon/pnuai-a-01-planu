@@ -100,6 +100,85 @@ def test_preview_matches_uploaded_catalog_courses_and_saves_latest_preview() -> 
     assert saved["matched_course_ids"] == ["MA100-001"]
 
 
+def test_list_uploaded_courses_returns_session_major_catalog_sorted() -> None:
+    first = _course("MA200-002", "운영체제", "002")
+    second = _course("MA100-001", "자료구조", "001")
+    store = SessionStore(ttl=timedelta(minutes=30))
+    session = store.create(
+        "컴퓨터공학과",
+        major_candidates=[first, second],
+    )
+    service = _service(
+        store,
+        MajorSelectionParseResult(),
+    )
+
+    response = asyncio.run(service.list_uploaded_courses(session.session_id))
+
+    assert response.session_id == session.session_id
+    assert [course.course_id for course in response.courses] == [
+        "MA200-002",
+        "MA100-001",
+    ]
+
+
+def test_manual_preview_saves_confirmable_preview_from_checked_courses() -> None:
+    first = _course("MA100-001", "자료구조", "001")
+    second = _course(
+        "MA200-001",
+        "운영체제",
+        "001",
+        day=Day.TUE,
+        start="10:30",
+        end="11:45",
+    )
+    store = SessionStore(ttl=timedelta(minutes=30))
+    session = store.create(
+        "컴퓨터공학과",
+        major_candidates=[first, second],
+    )
+    service = _service(
+        store,
+        MajorSelectionParseResult(),
+    )
+
+    response = asyncio.run(
+        service.create_manual_preview(
+            session.session_id,
+            ["MA200-001", "MA100-001"],
+        )
+    )
+
+    assert response.can_confirm is True
+    assert [item.course.course_id for item in response.matched_courses] == [
+        "MA200-001",
+        "MA100-001",
+    ]
+    saved = store.get(session.session_id).latest_major_preview
+    assert saved is not None
+    assert saved["preview_id"] == response.preview_id
+    assert saved["matched_course_ids"] == ["MA200-001", "MA100-001"]
+    assert saved["source"] == "manual"
+
+
+def test_manual_preview_rejects_course_ids_outside_uploaded_catalog() -> None:
+    store = SessionStore(ttl=timedelta(minutes=30))
+    session = store.create(
+        "컴퓨터공학과",
+        major_candidates=[_course("MA100-001", "자료구조", "001")],
+    )
+    service = _service(
+        store,
+        MajorSelectionParseResult(),
+    )
+
+    with pytest.raises(AppError) as exc_info:
+        asyncio.run(service.create_manual_preview(session.session_id, ["MA404-001"]))
+
+    assert exc_info.value.code == "MAJOR_COURSE_REFERENCE_INVALID"
+    assert exc_info.value.details == {"course_ids": ["MA404-001"]}
+
+
 def test_unmatched_courses_are_returned_with_partial_success() -> None:
     store = SessionStore()
     session = store.create(

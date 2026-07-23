@@ -145,7 +145,7 @@ class Course(_Model):
     course_id: str = Field(min_length=1)
     course_name: str = Field(min_length=1)
     category: Category
-    area: int | None = Field(default=None, ge=1, le=7) # 교양 영역 번호
+    area: int | None = Field(default=None, ge=1, le=9) # 교양 영역 번호(8: 효원브릿지, 9: 인성과사회봉사)
     credit: float = Field(gt=0) # 학점
     division: str = Field(min_length=1) # 분반
     professor: str = Field(min_length=1)

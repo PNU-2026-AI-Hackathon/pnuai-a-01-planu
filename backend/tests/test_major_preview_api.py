@@ -122,6 +122,64 @@ def test_major_preview_api_returns_success_response() -> None:
     assert body["can_confirm"] is True
 
 
+def test_major_courses_api_returns_uploaded_courses() -> None:
+    store = SessionStore()
+    session = store.create(
+        "컴퓨터공학과",
+        major_candidates=[_course("MA100-001", "자료구조", "001")],
+    )
+    service = MajorPreviewService(
+        store=store,
+        parser=FakeParser(MajorSelectionParseResult()),
+    )
+    app.dependency_overrides[get_major_preview_service] = lambda: service
+    client = TestClient(app)
+
+    try:
+        response = client.get(
+            "/major/courses",
+            params={"session_id": session.session_id},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["session_id"] == session.session_id
+    assert body["courses"][0]["course_id"] == "MA100-001"
+    assert body["courses"][0]["course_name"] == "자료구조"
+
+
+def test_major_manual_preview_api_returns_confirmable_preview() -> None:
+    store = SessionStore()
+    session = store.create(
+        "컴퓨터공학과",
+        major_candidates=[_course("MA100-001", "자료구조", "001")],
+    )
+    service = MajorPreviewService(
+        store=store,
+        parser=FakeParser(MajorSelectionParseResult()),
+    )
+    app.dependency_overrides[get_major_preview_service] = lambda: service
+    client = TestClient(app)
+
+    try:
+        response = client.post(
+            "/major/manual-preview",
+            json={
+                "session_id": session.session_id,
+                "course_ids": ["MA100-001"],
+            },
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["matched_courses"][0]["course"]["course_id"] == "MA100-001"
+    assert body["can_confirm"] is True
+
+
 def test_major_preview_api_flattens_multiple_class_times() -> None:
     store = SessionStore()
     session = store.create(

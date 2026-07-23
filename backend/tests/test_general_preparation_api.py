@@ -261,7 +261,7 @@ def test_general_prepare_api_rejects_invalid_area() -> None:
     try:
         response = client.post(
             "/general/prepare",
-            data={"session_id": session_id, "elective_area": "8"},
+            data={"session_id": session_id, "elective_area": "10"},
         )
     finally:
         app.dependency_overrides.clear()

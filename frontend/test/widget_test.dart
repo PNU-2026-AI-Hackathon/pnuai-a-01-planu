@@ -47,6 +47,7 @@ void main() {
       find.text('에브리타임의 수업 평가와 시간표를 참고해 원하는 전공 과목과 분반을 미리 정해 주세요.'),
       findsOneWidget,
     );
+
     expect(find.text('개인정보 및 세션 안내'), findsOneWidget);
     expect(find.text('개인정보 보호'), findsOneWidget);
     expect(find.text('30분 세션'), findsOneWidget);
