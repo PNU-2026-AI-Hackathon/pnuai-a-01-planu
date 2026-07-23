@@ -280,7 +280,8 @@ class _Metric extends StatelessWidget {
 class _Timetable extends StatelessWidget {
   const _Timetable({required this.entries});
   final List<MajorCourse> entries;
-  static const days = {
+  static const days = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
+  static const dayLabels = {
     'MON': '월',
     'TUE': '화',
     'WED': '수',
@@ -288,57 +289,113 @@ class _Timetable extends StatelessWidget {
     'FRI': '금',
     'SAT': '토',
   };
+  static const _timeColumnWidth = 52.0;
+  static const _dayColumnWidth = 140.0;
+  static const _itemHorizontalPadding = 4.0;
+  static const _hourHeight = 48.0;
+  static const _startHour = 9;
+  static const _endHour = 24;
+  static const _gridHeight = (_endHour - _startHour) * _hourHeight;
+
+  List<_TimetableBlock> get _blocks => [
+    for (final course in entries)
+      for (final time in course.classTimes)
+        _TimetableBlock(course: course, time: time),
+  ];
+
   @override
-  Widget build(BuildContext context) => Container(
-    decoration: BoxDecoration(
-      border: Border.all(color: const Color(0xFFE5E7EB)),
-      borderRadius: BorderRadius.circular(12),
-    ),
-    child: SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: days.entries.map((day) {
-          final items = entries
-              .where((e) => e.classTimes.first.day == day.key)
-              .toList();
-          return SizedBox(
-            width: 150,
-            child: Column(
-              children: [
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(12),
-                  color: const Color(0xFFF8F9FA),
-                  child: Text(
-                    day.value,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(fontWeight: FontWeight.w600),
+  Widget build(BuildContext context) => SingleChildScrollView(
+    scrollDirection: Axis.horizontal,
+    child: SizedBox(
+      width: _timeColumnWidth + days.length * _dayColumnWidth,
+      child: Column(
+        children: [
+          Row(
+            children: [
+              const SizedBox(width: _timeColumnWidth),
+              for (final day in days)
+                SizedBox(
+                  width: _dayColumnWidth,
+                  child: Center(
+                    child: Text(
+                      dayLabels[day] ?? day,
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
                   ),
                 ),
-                ...items.map((e) {
-                  final t = e.classTimes.first;
-                  return Container(
-                    width: double.infinity,
-                    margin: const EdgeInsets.all(6),
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFEFF6FF),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
+            ],
+          ),
+          const Divider(),
+          SizedBox(
+            height: _gridHeight,
+            child: Stack(
+              children: [
+                for (var hour = _startHour; hour < _endHour; hour++) ...[
+                  Positioned(
+                    top: (hour - _startHour) * _hourHeight,
+                    left: 0,
                     child: Text(
-                      '${t.start}–${t.end}\n${e.name} ${e.division}',
-                      overflow: TextOverflow.visible,
+                      '${hour.toString().padLeft(2, '0')}:00',
+                      style: const TextStyle(
+                        color: Color(0xFF6B7280),
+                        fontSize: 12,
+                      ),
                     ),
-                  );
-                }),
+                  ),
+                  Positioned(
+                    top: (hour - _startHour) * _hourHeight,
+                    left: _timeColumnWidth,
+                    right: 0,
+                    child: const Divider(height: 1),
+                  ),
+                ],
+                for (final block in _blocks)
+                  if (days.contains(block.time.day))
+                    Positioned(
+                      left:
+                          _timeColumnWidth +
+                          days.indexOf(block.time.day) * _dayColumnWidth +
+                          _itemHorizontalPadding,
+                      top:
+                          ((_minutes(block.time.start) - _startHour * 60) /
+                                  60 *
+                                  _hourHeight)
+                              .clamp(0, _gridHeight - 32)
+                              .toDouble(),
+                      width: _dayColumnWidth - _itemHorizontalPadding * 2,
+                      height:
+                          ((_minutes(block.time.end) -
+                                      _minutes(block.time.start)) /
+                                  60 *
+                                  _hourHeight)
+                              .clamp(32, 300)
+                              .toDouble(),
+                      child: Container(
+                        padding: const EdgeInsets.all(7),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFEFF6FF),
+                          borderRadius: BorderRadius.circular(7),
+                        ),
+                        child: Text(
+                          '${block.course.name} ${block.course.division}\n${block.time.classroom}',
+                          overflow: TextOverflow.fade,
+                          style: const TextStyle(fontSize: 11),
+                        ),
+                      ),
+                    ),
               ],
             ),
-          );
-        }).toList(),
+          ),
+        ],
       ),
     ),
   );
+}
+
+class _TimetableBlock {
+  const _TimetableBlock({required this.course, required this.time});
+  final MajorCourse course;
+  final MajorClassTime time;
 }
 
 class _CourseCard extends StatelessWidget {
@@ -366,7 +423,7 @@ class _CourseCard extends StatelessWidget {
           (t) => Padding(
             padding: const EdgeInsets.only(top: 6),
             child: Text(
-              '${_Timetable.days[t.day] ?? t.day} ${t.start}–${t.end} · ${t.classroom.isEmpty ? '강의실 미정' : t.classroom}',
+              '${_Timetable.dayLabels[t.day] ?? t.day} ${t.start}–${t.end} · ${t.classroom.isEmpty ? '강의실 미정' : t.classroom}',
             ),
           ),
         ),
@@ -423,7 +480,7 @@ class _Issues extends StatelessWidget {
           p.conflicts
               .map(
                 (e) =>
-                    '${e.firstCourseId} ↔ ${e.secondCourseId} · ${_Timetable.days[e.day] ?? e.day} ${e.start}–${e.end}',
+                    '${e.firstCourseId} ↔ ${e.secondCourseId} · ${_Timetable.dayLabels[e.day] ?? e.day} ${e.start}–${e.end}',
               )
               .toList(),
         ),
@@ -509,4 +566,14 @@ class _ApiErrorCard extends StatelessWidget {
       ),
     );
   }
+}
+
+int _minutes(String value) {
+  final match = RegExp(r'(\d{1,2})(?::(\d{1,2}))?').firstMatch(value.trim());
+  if (match == null) return 0;
+  final hour = (int.tryParse(match.group(1) ?? '') ?? 0).clamp(0, 24);
+  final minute = hour == 24
+      ? 0
+      : (int.tryParse(match.group(2) ?? '') ?? 0).clamp(0, 59);
+  return hour * 60 + minute;
 }

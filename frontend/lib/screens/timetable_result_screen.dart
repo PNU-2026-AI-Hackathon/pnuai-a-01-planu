@@ -503,7 +503,7 @@ class _TimetableGrid extends StatelessWidget {
   static const _dayColumnWidth = 140.0;
   static const _itemHorizontalPadding = 4.0;
   static const _hourHeight = 48.0;
-  static const _startHour = 0;
+  static const _startHour = 9;
   static const _endHour = 24;
   static const _gridHeight = (_endHour - _startHour) * _hourHeight;
   @override

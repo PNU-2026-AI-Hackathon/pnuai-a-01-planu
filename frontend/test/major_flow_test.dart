@@ -59,6 +59,13 @@ const time = MajorClassTime(
   classroom: '제6공학관 6201',
   buildingCode: '6201',
 );
+const tuesdayTime = MajorClassTime(
+  day: 'TUE',
+  start: '13',
+  end: '14',
+  classroom: '제6공학관 6301',
+  buildingCode: '6301',
+);
 const course = MajorCourse(
   id: 'MA100-001',
   name: '자료구조',
@@ -67,6 +74,15 @@ const course = MajorCourse(
   division: '001',
   professor: '김교수',
   classTimes: [time],
+);
+const tuesdayCourse = MajorCourse(
+  id: 'MA200-001',
+  name: '운영체제',
+  category: 'MAJOR_REQUIRED',
+  credit: 3,
+  division: '001',
+  professor: '이교수',
+  classTimes: [tuesdayTime],
 );
 const samplePreview = MajorPreviewResponse(
   sessionId: 'session-1',
@@ -157,7 +173,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(home: MajorPreviewScreen(controller: c)),
     );
-    expect(find.text('자료구조'), findsWidgets);
+    expect(find.textContaining('자료구조'), findsWidgets);
     expect(find.text('1개'), findsOneWidget);
     expect(find.text('3학점'), findsOneWidget);
     await tester.scrollUntilVisible(
@@ -179,6 +195,36 @@ void main() {
           .widget<FilledButton>(find.byKey(const Key('majorConfirmButton')))
           .onPressed,
       isNull,
+    );
+  });
+
+  testWidgets('preview timetable places classes by absolute time', (
+    tester,
+  ) async {
+    final c = controller(FakeMajorApi())
+      ..preview = const MajorPreviewResponse(
+        sessionId: 's',
+        previewId: 'time-position-id',
+        courses: [course, tuesdayCourse],
+        ambiguousCourses: [],
+        unmatchedCourses: [],
+        ambiguousTexts: [],
+        timetableEntries: [course, tuesdayCourse],
+        hasTimeConflict: false,
+        conflicts: [],
+        canConfirm: true,
+      );
+    await tester.pumpWidget(
+      MaterialApp(home: MajorPreviewScreen(controller: c)),
+    );
+
+    final mondayClass = find.text('자료구조 001\n제6공학관 6201');
+    final tuesdayClass = find.text('운영체제 001\n제6공학관 6301');
+    expect(mondayClass, findsOneWidget);
+    expect(tuesdayClass, findsOneWidget);
+    expect(
+      tester.getTopLeft(tuesdayClass).dy,
+      greaterThan(tester.getTopLeft(mondayClass).dy),
     );
   });
 
