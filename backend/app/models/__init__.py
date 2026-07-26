@@ -38,6 +38,7 @@ from .preference import (
     UnsupportedCondition,
     merge_preference_rules,
 )
+from .planu_session_state import PlanuSessionState
 from .timetable import (
     CourseLoadSatisfaction,
     GenerationDiagnostic,
@@ -85,6 +86,7 @@ __all__ = [
     "PreferenceToolUsage",
     "PreferenceTraceEvent",
     "PreferenceWarning",
+    "PlanuSessionState",
     "SoftPreferenceConditions",
     "RankingDiagnostic",
     "RankingResult",
