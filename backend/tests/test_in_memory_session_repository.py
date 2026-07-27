@@ -208,6 +208,51 @@ def test_touch_expired_session_raises_and_removes_it() -> None:
     assert repository.get(state.session_id, now=_now()) is None
 
 
+@pytest.mark.parametrize(
+    ("expires_delta", "should_raise"),
+    [
+        (timedelta(minutes=10), True),
+        (timedelta(minutes=9), True),
+        (timedelta(minutes=11), False),
+    ],
+)
+def test_touch_rejects_already_expired_new_expiration(
+    expires_delta: timedelta,
+    should_raise: bool,
+) -> None:
+    repository = InMemorySessionRepository()
+    state = _state(expires_delta=timedelta(minutes=30))
+    repository.create(state, now=_now())
+    touch_now = _now() + timedelta(minutes=10)
+    last_accessed_at = _now() + timedelta(minutes=5)
+    expires_at = _now() + expires_delta
+
+    if should_raise:
+        with pytest.raises(
+            ValueError,
+            match="session state must not already be expired",
+        ):
+            repository.touch(
+                state.session_id,
+                now=touch_now,
+                last_accessed_at=last_accessed_at,
+                expires_at=expires_at,
+            )
+
+        assert repository.get(state.session_id, now=_now()) == state
+        return
+
+    touched = repository.touch(
+        state.session_id,
+        now=touch_now,
+        last_accessed_at=last_accessed_at,
+        expires_at=expires_at,
+    )
+
+    assert touched.last_accessed_at == last_accessed_at
+    assert touched.expires_at == expires_at
+
+
 def test_get_expired_session_returns_none_and_removes_it() -> None:
     repository = InMemorySessionRepository()
     state = _state(expires_delta=timedelta(minutes=10))

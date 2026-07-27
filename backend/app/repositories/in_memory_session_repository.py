@@ -110,6 +110,7 @@ class InMemorySessionRepository:
                     "expires_at": expires_at,
                 }
             )
+            self._validate_not_already_expired(touched, now)
             self._sessions[session_id] = touched
             return self._copy(touched)
 
