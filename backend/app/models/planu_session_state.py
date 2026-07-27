@@ -3,8 +3,19 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
+
+
+CourseId = Annotated[str, StringConstraints(strip_whitespace=False)]
 
 
 class PlanuSessionState(BaseModel):
@@ -25,7 +36,7 @@ class PlanuSessionState(BaseModel):
     department: str | None = None
     major_catalog_id: str | None = None
     elective_catalog_id: str | None = None
-    selected_major_course_ids: list[str] = Field(default_factory=list)
+    selected_major_course_ids: list[CourseId] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
     last_accessed_at: datetime
@@ -36,6 +47,18 @@ class PlanuSessionState(BaseModel):
     def validate_session_id(cls, value: str) -> str:
         if not value.strip():
             raise ValueError("session_id must not be empty")
+        return value
+
+    @field_validator("selected_major_course_ids")
+    @classmethod
+    def validate_selected_major_course_ids(cls, value: list[str]) -> list[str]:
+        seen: set[str] = set()
+        for course_id in value:
+            if not course_id.strip():
+                raise ValueError("selected_major_course_ids must not contain empty ids")
+            if course_id in seen:
+                raise ValueError("selected_major_course_ids must not contain duplicates")
+            seen.add(course_id)
         return value
 
     @field_validator(
@@ -49,3 +72,13 @@ class PlanuSessionState(BaseModel):
         if value.tzinfo is None or value.tzinfo.utcoffset(value) is None:
             raise ValueError("datetime fields must include timezone information")
         return value
+
+    @model_validator(mode="after")
+    def validate_time_order(self) -> "PlanuSessionState":
+        if self.updated_at < self.created_at:
+            raise ValueError("updated_at must not be earlier than created_at")
+        if self.last_accessed_at < self.created_at:
+            raise ValueError("last_accessed_at must not be earlier than created_at")
+        if self.expires_at <= self.last_accessed_at:
+            raise ValueError("expires_at must be later than last_accessed_at")
+        return self
