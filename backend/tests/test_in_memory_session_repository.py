@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
+from threading import Barrier
 
 import pytest
 
@@ -59,6 +61,17 @@ def test_create_duplicate_live_session_raises() -> None:
         repository.create(state, now=_now())
 
 
+@pytest.mark.parametrize("elapsed", [timedelta(minutes=5), timedelta(minutes=6)])
+def test_create_rejects_already_expired_state(elapsed: timedelta) -> None:
+    repository = InMemorySessionRepository()
+    state = _state(expires_delta=timedelta(minutes=5))
+
+    with pytest.raises(ValueError, match="session state must not already be expired"):
+        repository.create(state, now=_now() + elapsed)
+
+    assert repository.get(state.session_id, now=_now()) is None
+
+
 def test_create_can_replace_expired_session_with_same_id() -> None:
     repository = InMemorySessionRepository()
     current = _now()
@@ -92,6 +105,22 @@ def test_save_existing_session_replaces_state() -> None:
 
     assert saved.department == "전자공학과"
     assert repository.get(state.session_id, now=_now()) == updated
+
+
+def test_save_rejects_already_expired_replacement_state() -> None:
+    repository = InMemorySessionRepository()
+    original = _state(expires_delta=timedelta(minutes=30))
+    repository.create(original, now=_now())
+    replacement = _state(
+        original.session_id,
+        selected_major_course_ids=["MAJ002-001"],
+        expires_delta=timedelta(minutes=5),
+    )
+
+    with pytest.raises(ValueError, match="session state must not already be expired"):
+        repository.save(replacement, now=_now() + timedelta(minutes=5))
+
+    assert repository.get(original.session_id, now=_now()) == original
 
 
 def test_save_missing_session_raises() -> None:
@@ -208,6 +237,105 @@ def test_delete_expired_removes_only_expired_sessions_and_returns_count() -> Non
     assert repository.get("expired", now=current + timedelta(minutes=10)) is None
     assert repository.get("equal-to-now", now=current + timedelta(minutes=10)) is None
     assert repository.get("live", now=current + timedelta(minutes=10)) == live
+
+
+def test_create_rejects_naive_now() -> None:
+    repository = InMemorySessionRepository()
+
+    with pytest.raises(ValueError, match="now must include timezone information"):
+        repository.create(_state(), now=datetime(2026, 7, 26, 12, 0))
+
+
+def test_get_rejects_naive_now() -> None:
+    repository = InMemorySessionRepository()
+
+    with pytest.raises(ValueError, match="now must include timezone information"):
+        repository.get("session-1", now=datetime(2026, 7, 26, 12, 0))
+
+
+def test_save_rejects_naive_now() -> None:
+    repository = InMemorySessionRepository()
+    repository.create(_state(), now=_now())
+
+    with pytest.raises(ValueError, match="now must include timezone information"):
+        repository.save(_state(), now=datetime(2026, 7, 26, 12, 0))
+
+
+def test_touch_rejects_naive_now() -> None:
+    repository = InMemorySessionRepository()
+    repository.create(_state(), now=_now())
+
+    with pytest.raises(ValueError, match="now must include timezone information"):
+        repository.touch(
+            "session-1",
+            now=datetime(2026, 7, 26, 12, 0),
+            last_accessed_at=_now() + timedelta(minutes=1),
+            expires_at=_now() + timedelta(minutes=31),
+        )
+
+
+def test_touch_rejects_naive_last_accessed_at() -> None:
+    repository = InMemorySessionRepository()
+    repository.create(_state(), now=_now())
+
+    with pytest.raises(
+        ValueError,
+        match="last_accessed_at must include timezone information",
+    ):
+        repository.touch(
+            "session-1",
+            now=_now(),
+            last_accessed_at=datetime(2026, 7, 26, 12, 1),
+            expires_at=_now() + timedelta(minutes=31),
+        )
+
+
+def test_touch_rejects_naive_expires_at() -> None:
+    repository = InMemorySessionRepository()
+    repository.create(_state(), now=_now())
+
+    with pytest.raises(ValueError, match="expires_at must include timezone information"):
+        repository.touch(
+            "session-1",
+            now=_now(),
+            last_accessed_at=_now() + timedelta(minutes=1),
+            expires_at=datetime(2026, 7, 26, 12, 31),
+        )
+
+
+def test_delete_expired_rejects_naive_now() -> None:
+    repository = InMemorySessionRepository()
+
+    with pytest.raises(ValueError, match="now must include timezone information"):
+        repository.delete_expired(now=datetime(2026, 7, 26, 12, 0))
+
+
+def test_concurrent_create_allows_only_one_success() -> None:
+    repository = InMemorySessionRepository()
+    worker_count = 12
+    barrier = Barrier(worker_count)
+
+    def create_session(worker_index: int) -> str:
+        state = _state(
+            selected_major_course_ids=[f"MAJ{worker_index:03d}-001"],
+        )
+        barrier.wait()
+        try:
+            repository.create(state, now=_now())
+        except SessionAlreadyExistsError:
+            return "already_exists"
+        return "created"
+
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        futures = [
+            executor.submit(create_session, worker_index)
+            for worker_index in range(worker_count)
+        ]
+        results = [future.result() for future in as_completed(futures)]
+
+    assert results.count("created") == 1
+    assert results.count("already_exists") == worker_count - 1
+    assert repository.get("session-1", now=_now()) is not None
 
 
 def test_create_stores_deep_copy_of_original_state() -> None:

@@ -231,8 +231,8 @@ class PreferenceRules(BaseModel):
     @field_validator("preferred_elective_areas")
     @classmethod
     def validate_areas(cls, values: list[int]) -> list[int]:
-        if any(not 1 <= value <= 9 for value in values):
-            raise ValueError("elective areas must be between 1 and 9")
+        if any(not 1 <= value <= 7 for value in values):
+            raise ValueError("elective areas must be between 1 and 7")
         return list(dict.fromkeys(values))
 
     @field_validator(
@@ -433,8 +433,8 @@ class SoftPreferenceConditions(BaseModel):
     @field_validator("preferred_elective_areas")
     @classmethod
     def validate_areas(cls, values: list[int]) -> list[int]:
-        if any(not 1 <= value <= 9 for value in values):
-            raise ValueError("elective areas must be between 1 and 9")
+        if any(not 1 <= value <= 7 for value in values):
+            raise ValueError("elective areas must be between 1 and 7")
         return list(dict.fromkeys(values))
 
     @field_validator(

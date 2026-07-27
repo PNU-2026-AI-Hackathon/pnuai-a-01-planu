@@ -136,13 +136,13 @@ def integration_app() -> Iterator[IntegrationApp]:
                     course_code="GR101",
                     division="001",
                     allowed_departments=frozenset({"컴퓨터공학과", "전자공학과"}),
-                    blocked_departments=frozenset(),
+                    blocked_departments=frozenset({"기계공학과"}),
                 ),
                 DepartmentRestrictionRule(
                     course_code="GR102",
                     division="001",
                     allowed_departments=frozenset({"컴퓨터공학과"}),
-                    blocked_departments=frozenset(),
+                    blocked_departments=frozenset({"기계공학과"}),
                 ),
             ]
         )

@@ -95,9 +95,26 @@ def test_planu_session_state_rejects_empty_selected_major_course_id(
         PlanuSessionState(**kwargs)
 
 
+def test_selected_major_course_ids_are_trimmed() -> None:
+    kwargs = _valid_state_kwargs()
+    kwargs["selected_major_course_ids"] = [" MAJ001-001 "]
+
+    state = PlanuSessionState(**kwargs)
+
+    assert state.selected_major_course_ids == ["MAJ001-001"]
+
+
 def test_planu_session_state_rejects_duplicate_selected_major_course_id() -> None:
     kwargs = _valid_state_kwargs()
     kwargs["selected_major_course_ids"] = ["MAJ001-001", "MAJ001-001"]
+
+    with pytest.raises(ValidationError, match="duplicates"):
+        PlanuSessionState(**kwargs)
+
+
+def test_selected_major_course_ids_reject_duplicates_after_trimming() -> None:
+    kwargs = _valid_state_kwargs()
+    kwargs["selected_major_course_ids"] = ["MAJ001-001", " MAJ001-001 "]
 
     with pytest.raises(ValidationError, match="duplicates"):
         PlanuSessionState(**kwargs)

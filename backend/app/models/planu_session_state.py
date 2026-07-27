@@ -15,7 +15,7 @@ from pydantic import (
 )
 
 
-CourseId = Annotated[str, StringConstraints(strip_whitespace=False)]
+CourseId = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
 class PlanuSessionState(BaseModel):
@@ -24,6 +24,10 @@ class PlanuSessionState(BaseModel):
     The model intentionally contains only durable session facts. Domain changes
     such as adding preferences or selecting courses should be handled by a
     service/tool and then persisted through a repository implementation.
+
+    ``updated_at`` is the time when actual planning data such as department,
+    uploaded catalogs, or selected courses last changed. Simple session access
+    and TTL extension do not update it.
     """
 
     model_config = ConfigDict(
@@ -54,11 +58,12 @@ class PlanuSessionState(BaseModel):
     def validate_selected_major_course_ids(cls, value: list[str]) -> list[str]:
         seen: set[str] = set()
         for course_id in value:
-            if not course_id.strip():
+            normalized_course_id = course_id.strip()
+            if not normalized_course_id:
                 raise ValueError("selected_major_course_ids must not contain empty ids")
-            if course_id in seen:
+            if normalized_course_id in seen:
                 raise ValueError("selected_major_course_ids must not contain duplicates")
-            seen.add(course_id)
+            seen.add(normalized_course_id)
         return value
 
     @field_validator(
