@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from pydantic import ValidationError
 
 from backend.app.repositories import InMemorySessionRepository
 from backend.app.services.exceptions import (
@@ -131,6 +132,8 @@ def test_set_department_trims_value_and_updates_timestamp() -> None:
 
     assert updated.department == "컴퓨터공학부"
     assert updated.updated_at == clock.current
+    assert updated.last_accessed_at == clock.current
+    assert updated.expires_at == clock.current + timedelta(minutes=30)
 
 
 def test_set_department_rejects_empty_value() -> None:
@@ -261,6 +264,36 @@ def test_actual_state_changes_update_updated_at() -> None:
     updated = service.register_major_catalog(created.session_id, "major-1")
 
     assert updated.updated_at == clock.current
+    assert updated.last_accessed_at == clock.current
+    assert updated.expires_at == clock.current + timedelta(minutes=30)
+
+
+def test_state_change_updates_access_time_and_extends_ttl() -> None:
+    clock = MutableClock(_now())
+    session_ttl = timedelta(minutes=30)
+    service = _service(clock=clock, session_ttl=session_ttl)
+    created = service.create_session()
+    clock.advance(timedelta(minutes=10))
+
+    updated = service.add_selected_major_course(created.session_id, "MAJ001-001")
+
+    assert updated.updated_at == clock.current
+    assert updated.last_accessed_at == clock.current
+    assert updated.expires_at == clock.current + session_ttl
+
+
+def test_state_change_just_before_expiration_keeps_session_alive() -> None:
+    clock = MutableClock(_now())
+    service = _service(clock=clock)
+    created = service.create_session()
+    clock.advance(timedelta(minutes=29))
+
+    service.set_department(created.session_id, "컴퓨터공학부")
+    clock.advance(timedelta(minutes=2))
+    found = service.get_session(created.session_id)
+
+    assert found.department == "컴퓨터공학부"
+    assert found.expires_at == _now() + timedelta(minutes=59)
 
 
 def test_duplicate_add_does_not_update_updated_at() -> None:
@@ -274,6 +307,8 @@ def test_duplicate_add_does_not_update_updated_at() -> None:
 
     assert second.selected_major_course_ids == ["MAJ001-001"]
     assert second.updated_at == first.updated_at
+    assert second.last_accessed_at == clock.current
+    assert second.expires_at == clock.current + timedelta(minutes=30)
 
 
 def test_missing_remove_does_not_update_updated_at() -> None:
@@ -285,6 +320,8 @@ def test_missing_remove_does_not_update_updated_at() -> None:
     unchanged = service.remove_selected_major_course(created.session_id, "missing")
 
     assert unchanged.updated_at == created.updated_at
+    assert unchanged.last_accessed_at == clock.current
+    assert unchanged.expires_at == clock.current + timedelta(minutes=30)
 
 
 def test_replace_with_same_courses_does_not_update_updated_at() -> None:
@@ -297,6 +334,58 @@ def test_replace_with_same_courses_does_not_update_updated_at() -> None:
     second = service.replace_selected_major_courses(created.session_id, [" MAJ001-001 "])
 
     assert second.updated_at == first.updated_at
+    assert second.last_accessed_at == clock.current
+    assert second.expires_at == clock.current + timedelta(minutes=30)
+
+
+def test_setting_same_department_only_refreshes_session() -> None:
+    clock = MutableClock(_now())
+    service = _service(clock=clock)
+    created = service.create_session()
+    first = service.set_department(created.session_id, "컴퓨터공학부")
+    clock.advance(timedelta(minutes=1))
+
+    second = service.set_department(created.session_id, "  컴퓨터공학부  ")
+
+    assert second.department == "컴퓨터공학부"
+    assert second.updated_at == first.updated_at
+    assert second.last_accessed_at == clock.current
+    assert second.expires_at == clock.current + timedelta(minutes=30)
+
+
+@pytest.mark.parametrize(
+    ("register_method", "catalog_id_attr"),
+    [
+        ("register_major_catalog", "major_catalog_id"),
+        ("register_elective_catalog", "elective_catalog_id"),
+    ],
+)
+def test_setting_same_catalog_id_only_refreshes_session(
+    register_method: str,
+    catalog_id_attr: str,
+) -> None:
+    clock = MutableClock(_now())
+    service = _service(clock=clock)
+    created = service.create_session()
+    register = getattr(service, register_method)
+    first = register(created.session_id, "catalog-1")
+    clock.advance(timedelta(minutes=1))
+
+    second = register(created.session_id, " catalog-1 ")
+
+    assert getattr(second, catalog_id_attr) == "catalog-1"
+    assert second.updated_at == first.updated_at
+    assert second.last_accessed_at == clock.current
+    assert second.expires_at == clock.current + timedelta(minutes=30)
+
+
+def test_state_change_uses_full_model_validation() -> None:
+    service = _service()
+    created = service.create_session()
+    service._session_ttl = -timedelta(minutes=1)
+
+    with pytest.raises(ValidationError, match="expires_at"):
+        service.set_department(created.session_id, "컴퓨터공학부")
 
 
 def test_get_session_does_not_change_time_fields() -> None:

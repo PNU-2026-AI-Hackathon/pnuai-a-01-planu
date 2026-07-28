@@ -29,7 +29,13 @@ def utc_now() -> datetime:
 
 
 class SessionService:
-    """Owns session lifecycle rules while delegating persistence to a repository."""
+    """Owns session lifecycle rules while delegating persistence to a repository.
+
+    The MVP assumes agent tools mutate a single session sequentially. Concurrent
+    state changes for the same session can still lose updates; multi-worker or
+    parallel tool execution will need version-based optimistic locking or an
+    atomic repository update operation.
+    """
 
     def __init__(
         self,
@@ -95,9 +101,10 @@ class SessionService:
         """Set or replace the department name for a live session."""
 
         normalized_department = self._require_non_empty("department", department)
-        return self._save_changed_state(
+        return self._save_state_field(
             session_id,
-            {"department": normalized_department},
+            field_name="department",
+            value=normalized_department,
         )
 
     def register_major_catalog(
@@ -108,9 +115,10 @@ class SessionService:
         """Store the identifier for a parsed major catalog."""
 
         normalized_catalog_id = self._require_non_empty("major_catalog_id", catalog_id)
-        return self._save_changed_state(
+        return self._save_state_field(
             session_id,
-            {"major_catalog_id": normalized_catalog_id},
+            field_name="major_catalog_id",
+            value=normalized_catalog_id,
         )
 
     def register_elective_catalog(
@@ -121,9 +129,10 @@ class SessionService:
         """Store the identifier for a parsed elective catalog."""
 
         normalized_catalog_id = self._require_non_empty("elective_catalog_id", catalog_id)
-        return self._save_changed_state(
+        return self._save_state_field(
             session_id,
-            {"elective_catalog_id": normalized_catalog_id},
+            field_name="elective_catalog_id",
+            value=normalized_catalog_id,
         )
 
     def add_selected_major_course(
@@ -139,7 +148,7 @@ class SessionService:
         )
         state = self.get_session(session_id)
         if normalized_course_id in state.selected_major_course_ids:
-            return state
+            return self._refresh_unchanged_state(state)
         return self._save_state_with_courses(
             state,
             [*state.selected_major_course_ids, normalized_course_id],
@@ -155,7 +164,7 @@ class SessionService:
         normalized_course_id = course_id.strip()
         state = self.get_session(session_id)
         if normalized_course_id not in state.selected_major_course_ids:
-            return state
+            return self._refresh_unchanged_state(state)
         return self._save_state_with_courses(
             state,
             [
@@ -175,45 +184,77 @@ class SessionService:
         normalized_course_ids = self._normalize_course_ids(course_ids)
         state = self.get_session(session_id)
         if normalized_course_ids == state.selected_major_course_ids:
-            return state
+            return self._refresh_unchanged_state(state)
         return self._save_state_with_courses(state, normalized_course_ids)
+
+    def _save_state_field(
+        self,
+        session_id: str,
+        *,
+        field_name: str,
+        value: str,
+    ) -> PlanuSessionState:
+        state = self.get_session(session_id)
+        if getattr(state, field_name) == value:
+            return self._refresh_unchanged_state(state)
+        return self._save_changed_state(state, {field_name: value})
 
     def _save_changed_state(
         self,
-        session_id: str,
+        state: PlanuSessionState,
         update: dict[str, object],
     ) -> PlanuSessionState:
-        state = self.get_session(session_id)
         now = self._now()
-        changed = state.model_copy(
-            update={
+        changed = self._build_validated_state(
+            state,
+            {
                 **update,
                 "updated_at": now,
+                "last_accessed_at": now,
+                "expires_at": now + self._session_ttl,
             },
-            deep=True,
         )
         try:
             return self._repository.save(changed, now=now)
         except SessionNotFoundError as exc:
-            raise SessionNotAvailableError(session_id) from exc
+            raise SessionNotAvailableError(state.session_id) from exc
 
     def _save_state_with_courses(
         self,
         state: PlanuSessionState,
         selected_major_course_ids: list[str],
     ) -> PlanuSessionState:
-        now = self._now()
-        changed = state.model_copy(
-            update={
-                "selected_major_course_ids": selected_major_course_ids,
-                "updated_at": now,
-            },
-            deep=True,
+        return self._save_changed_state(
+            state,
+            {"selected_major_course_ids": selected_major_course_ids},
         )
+
+    def _refresh_unchanged_state(
+        self,
+        state: PlanuSessionState,
+    ) -> PlanuSessionState:
+        now = self._now()
         try:
-            return self._repository.save(changed, now=now)
+            return self._repository.touch(
+                state.session_id,
+                now=now,
+                last_accessed_at=now,
+                expires_at=now + self._session_ttl,
+            )
         except SessionNotFoundError as exc:
             raise SessionNotAvailableError(state.session_id) from exc
+
+    @staticmethod
+    def _build_validated_state(
+        state: PlanuSessionState,
+        update: dict[str, object],
+    ) -> PlanuSessionState:
+        return PlanuSessionState.model_validate(
+            {
+                **state.model_dump(),
+                **update,
+            }
+        )
 
     def _now(self) -> datetime:
         now = self._now_provider()
