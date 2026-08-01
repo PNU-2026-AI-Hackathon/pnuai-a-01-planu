@@ -1,10 +1,23 @@
-"""Session-scoped timetable constraints and preferences."""
+"""Session-scoped, resolved timetable constraints and preferences.
+
+These models are durable domain state stored on ``PlanuSessionState`` after
+free-text preferences have been interpreted and reconciled with uploaded course
+catalogs. Course constraints intentionally use ``course_id`` values, not course
+names, and do not contain LLM trace, warnings, raw output, or parser metadata.
+"""
 
 from __future__ import annotations
 
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 
 from .course import Day, time_to_minutes
 
@@ -17,7 +30,12 @@ def _deduplicate(values: list) -> list:
 
 
 class HardConstraints(BaseModel):
-    """Hard timetable constraints that candidate generation must satisfy."""
+    """Resolved hard constraints that candidate generation must satisfy.
+
+    Unlike ``HardPreferenceConditions`` in ``preference.py``, this model is not
+    an LLM/input DTO. Any course-name preferences must be resolved against the
+    active catalog before values are stored here as course ids.
+    """
 
     model_config = ConfigDict(
         extra="forbid",
@@ -53,9 +71,9 @@ class HardConstraints(BaseModel):
             self.earliest_start_time is not None
             and self.latest_end_time is not None
             and time_to_minutes(self.earliest_start_time)
-            > time_to_minutes(self.latest_end_time)
+            >= time_to_minutes(self.latest_end_time)
         ):
-            raise ValueError("earliest_start_time must not be later than latest_end_time")
+            raise ValueError("earliest_start_time must be earlier than latest_end_time")
 
         overlap = set(self.required_course_ids) & set(self.excluded_course_ids)
         if overlap:
@@ -65,7 +83,12 @@ class HardConstraints(BaseModel):
 
 
 class SoftPreferences(BaseModel):
-    """Soft timetable preferences used for ranking without filtering candidates."""
+    """Resolved soft preferences used for ranking without filtering candidates.
+
+    This is session state, not the LLM parsing layer. Course preferences are
+    stored only after ambiguous course names and divisions have been resolved to
+    concrete ``course_id`` values.
+    """
 
     model_config = ConfigDict(
         extra="forbid",
@@ -102,10 +125,10 @@ class SoftPreferences(BaseModel):
             self.preferred_earliest_start_time is not None
             and self.preferred_latest_end_time is not None
             and time_to_minutes(self.preferred_earliest_start_time)
-            > time_to_minutes(self.preferred_latest_end_time)
+            >= time_to_minutes(self.preferred_latest_end_time)
         ):
             raise ValueError(
-                "preferred_earliest_start_time must not be later than "
+                "preferred_earliest_start_time must be earlier than "
                 "preferred_latest_end_time"
             )
 

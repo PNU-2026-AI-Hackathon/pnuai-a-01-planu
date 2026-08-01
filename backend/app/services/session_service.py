@@ -8,7 +8,13 @@ from uuid import uuid4
 
 from pydantic import ValidationError
 
-from ..models import Day, HardConstraints, PlanuSessionState, SoftPreferences, time_to_minutes
+from ..models import (
+    Day,
+    HardConstraints,
+    PlanuSessionState,
+    SoftPreferences,
+    time_to_minutes,
+)
 from ..repositories import (
     SessionAlreadyExistsError,
     SessionNotFoundError,
@@ -30,8 +36,195 @@ def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+class SessionInputNormalizer:
+    """Normalize public service inputs before they are applied to state."""
+
+    @staticmethod
+    def require_non_empty(field_name: str, value: str) -> str:
+        normalized_value = value.strip()
+        if not normalized_value:
+            raise InvalidSessionStateValueError(field_name, value)
+        return normalized_value
+
+    @classmethod
+    def course_ids(
+        cls,
+        course_ids: Iterable[str],
+        *,
+        field_name: str,
+    ) -> list[str]:
+        normalized_course_ids: list[str] = []
+        seen: set[str] = set()
+        for course_id in course_ids:
+            normalized_course_id = cls.require_non_empty(field_name, course_id)
+            if normalized_course_id in seen:
+                continue
+            normalized_course_ids.append(normalized_course_id)
+            seen.add(normalized_course_id)
+        return normalized_course_ids
+
+    @staticmethod
+    def day(field_name: str, day: Day | str) -> Day:
+        try:
+            return day if isinstance(day, Day) else Day(day)
+        except ValueError as exc:
+            raise InvalidSessionStateValueError(
+                field_name,
+                day,
+                "day must be one of MON, TUE, WED, THU, FRI, SAT, SUN",
+            ) from exc
+
+    @classmethod
+    def days(
+        cls,
+        field_name: str,
+        days: Iterable[Day | str],
+    ) -> list[Day]:
+        normalized_days: list[Day] = []
+        seen: set[Day] = set()
+        for day in days:
+            normalized_day = cls.day(field_name, day)
+            if normalized_day in seen:
+                continue
+            normalized_days.append(normalized_day)
+            seen.add(normalized_day)
+        return normalized_days
+
+    @staticmethod
+    def time(field_name: str, time_value: str) -> str:
+        normalized_time = time_value.strip()
+        try:
+            time_to_minutes(normalized_time)
+        except ValueError as exc:
+            raise InvalidSessionStateValueError(field_name, time_value, str(exc)) from exc
+        return normalized_time
+
+
+class SessionStateBuilder:
+    """Build validated session preference models and map validation failures."""
+
+    @staticmethod
+    def hard_constraints(
+        hard_constraints: HardConstraints,
+        **update: object,
+    ) -> HardConstraints:
+        try:
+            return HardConstraints.model_validate(
+                {
+                    **hard_constraints.model_dump(),
+                    **update,
+                }
+            )
+        except ValidationError as exc:
+            raise InvalidSessionStateValueError(
+                next(iter(update), "hard_constraints"),
+                update,
+                str(exc.errors()[0]["msg"]),
+            ) from exc
+
+    @staticmethod
+    def soft_preferences(
+        soft_preferences: SoftPreferences,
+        **update: object,
+    ) -> SoftPreferences:
+        try:
+            return SoftPreferences.model_validate(
+                {
+                    **soft_preferences.model_dump(),
+                    **update,
+                }
+            )
+        except ValidationError as exc:
+            raise InvalidSessionStateValueError(
+                next(iter(update), "soft_preferences"),
+                update,
+                str(exc.errors()[0]["msg"]),
+            ) from exc
+
+
+class PreferenceConflictValidator:
+    """Validate rules that require both hard constraints and soft preferences."""
+
+    @staticmethod
+    def validate(
+        hard_constraints: HardConstraints,
+        soft_preferences: SoftPreferences,
+    ) -> None:
+        duplicated_days = set(hard_constraints.required_free_days) & set(
+            soft_preferences.preferred_free_days
+        )
+        if duplicated_days:
+            raise InvalidSessionStateValueError(
+                "preferred_free_days",
+                sorted(day.value for day in duplicated_days),
+                "day is already hard-required as free",
+            )
+
+        if (
+            hard_constraints.earliest_start_time is not None
+            and soft_preferences.preferred_earliest_start_time is not None
+            and time_to_minutes(soft_preferences.preferred_earliest_start_time)
+            < time_to_minutes(hard_constraints.earliest_start_time)
+        ):
+            raise InvalidSessionStateValueError(
+                "preferred_earliest_start_time",
+                soft_preferences.preferred_earliest_start_time,
+                "preference is earlier than the hard earliest_start_time",
+            )
+
+        if (
+            hard_constraints.latest_end_time is not None
+            and soft_preferences.preferred_latest_end_time is not None
+            and time_to_minutes(soft_preferences.preferred_latest_end_time)
+            > time_to_minutes(hard_constraints.latest_end_time)
+        ):
+            raise InvalidSessionStateValueError(
+                "preferred_latest_end_time",
+                soft_preferences.preferred_latest_end_time,
+                "preference is later than the hard latest_end_time",
+            )
+
+        required = set(hard_constraints.required_course_ids)
+        excluded = set(hard_constraints.excluded_course_ids)
+        preferred = set(soft_preferences.preferred_course_ids)
+        disliked = set(soft_preferences.disliked_course_ids)
+
+        hard_preferred_overlap = excluded & preferred
+        if hard_preferred_overlap:
+            raise InvalidSessionStateValueError(
+                "preferred_course_ids",
+                sorted(hard_preferred_overlap),
+                "course is hard-excluded",
+            )
+
+        hard_disliked_overlap = required & disliked
+        if hard_disliked_overlap:
+            raise InvalidSessionStateValueError(
+                "disliked_course_ids",
+                sorted(hard_disliked_overlap),
+                "course is hard-required",
+            )
+
+        redundant_soft = (required & preferred) | (excluded & disliked)
+        if redundant_soft:
+            raise InvalidSessionStateValueError(
+                "soft_preferences",
+                sorted(redundant_soft),
+                "course is already covered by hard constraints",
+            )
+
+
 class SessionService:
     """Owns session lifecycle rules while delegating persistence to a repository.
+
+    Preference mutation methods accept resolved domain values. In particular,
+    course preference methods require concrete ``course_id`` values; LLM output
+    that names courses must first pass through a resolver that checks the active
+    catalog and handles ambiguous divisions.
+
+    The fine-grained methods here are service commands, not the final agent Tool
+    surface. A future Tool layer may batch several changes into one request while
+    still delegating the actual state mutation rules to this service.
 
     The MVP assumes agent tools mutate a single session sequentially. Concurrent
     state changes for the same session can still lose updates; multi-worker or
@@ -897,106 +1090,21 @@ class SessionService:
         hard_constraints: HardConstraints,
         **update: object,
     ) -> HardConstraints:
-        try:
-            return HardConstraints.model_validate(
-                {
-                    **hard_constraints.model_dump(),
-                    **update,
-                }
-            )
-        except ValidationError as exc:
-            raise InvalidSessionStateValueError(
-                next(iter(update), "hard_constraints"),
-                update,
-                str(exc.errors()[0]["msg"]),
-            ) from exc
+        return SessionStateBuilder.hard_constraints(hard_constraints, **update)
 
     @staticmethod
     def _build_soft_preferences(
         soft_preferences: SoftPreferences,
         **update: object,
     ) -> SoftPreferences:
-        try:
-            return SoftPreferences.model_validate(
-                {
-                    **soft_preferences.model_dump(),
-                    **update,
-                }
-            )
-        except ValidationError as exc:
-            raise InvalidSessionStateValueError(
-                next(iter(update), "soft_preferences"),
-                update,
-                str(exc.errors()[0]["msg"]),
-            ) from exc
+        return SessionStateBuilder.soft_preferences(soft_preferences, **update)
 
     @staticmethod
     def _validate_cross_constraints(
         hard_constraints: HardConstraints,
         soft_preferences: SoftPreferences,
     ) -> None:
-        duplicated_days = set(hard_constraints.required_free_days) & set(
-            soft_preferences.preferred_free_days
-        )
-        if duplicated_days:
-            raise InvalidSessionStateValueError(
-                "preferred_free_days",
-                sorted(day.value for day in duplicated_days),
-                "day is already hard-required as free",
-            )
-
-        if (
-            hard_constraints.earliest_start_time is not None
-            and soft_preferences.preferred_earliest_start_time is not None
-            and time_to_minutes(soft_preferences.preferred_earliest_start_time)
-            < time_to_minutes(hard_constraints.earliest_start_time)
-        ):
-            raise InvalidSessionStateValueError(
-                "preferred_earliest_start_time",
-                soft_preferences.preferred_earliest_start_time,
-                "preference is earlier than the hard earliest_start_time",
-            )
-
-        if (
-            hard_constraints.latest_end_time is not None
-            and soft_preferences.preferred_latest_end_time is not None
-            and time_to_minutes(soft_preferences.preferred_latest_end_time)
-            > time_to_minutes(hard_constraints.latest_end_time)
-        ):
-            raise InvalidSessionStateValueError(
-                "preferred_latest_end_time",
-                soft_preferences.preferred_latest_end_time,
-                "preference is later than the hard latest_end_time",
-            )
-
-        required = set(hard_constraints.required_course_ids)
-        excluded = set(hard_constraints.excluded_course_ids)
-        preferred = set(soft_preferences.preferred_course_ids)
-        disliked = set(soft_preferences.disliked_course_ids)
-
-        hard_preferred_overlap = excluded & preferred
-        if hard_preferred_overlap:
-            raise InvalidSessionStateValueError(
-                "preferred_course_ids",
-                sorted(hard_preferred_overlap),
-                "course is hard-excluded",
-            )
-
-        hard_disliked_overlap = required & disliked
-        if hard_disliked_overlap:
-            raise InvalidSessionStateValueError(
-                "disliked_course_ids",
-                sorted(hard_disliked_overlap),
-                "course is hard-required",
-            )
-
-        redundant_soft = (required & preferred) | (excluded & disliked)
-        if redundant_soft:
-            raise InvalidSessionStateValueError(
-                "soft_preferences",
-                sorted(redundant_soft),
-                "course is already covered by hard constraints",
-            )
+        PreferenceConflictValidator.validate(hard_constraints, soft_preferences)
 
     def _now(self) -> datetime:
         now = self._now_provider()
@@ -1006,10 +1114,7 @@ class SessionService:
 
     @staticmethod
     def _require_non_empty(field_name: str, value: str) -> str:
-        normalized_value = value.strip()
-        if not normalized_value:
-            raise InvalidSessionStateValueError(field_name, value)
-        return normalized_value
+        return SessionInputNormalizer.require_non_empty(field_name, value)
 
     @classmethod
     def _normalize_course_ids(
@@ -1018,29 +1123,11 @@ class SessionService:
         *,
         field_name: str = "selected_major_course_ids",
     ) -> list[str]:
-        normalized_course_ids: list[str] = []
-        seen: set[str] = set()
-        for course_id in course_ids:
-            normalized_course_id = cls._require_non_empty(
-                field_name,
-                course_id,
-            )
-            if normalized_course_id in seen:
-                continue
-            normalized_course_ids.append(normalized_course_id)
-            seen.add(normalized_course_id)
-        return normalized_course_ids
+        return SessionInputNormalizer.course_ids(course_ids, field_name=field_name)
 
     @staticmethod
     def _normalize_day(field_name: str, day: Day | str) -> Day:
-        try:
-            return day if isinstance(day, Day) else Day(day)
-        except ValueError as exc:
-            raise InvalidSessionStateValueError(
-                field_name,
-                day,
-                "day must be one of MON, TUE, WED, THU, FRI, SAT, SUN",
-            ) from exc
+        return SessionInputNormalizer.day(field_name, day)
 
     @classmethod
     def _normalize_days(
@@ -1048,21 +1135,8 @@ class SessionService:
         field_name: str,
         days: Iterable[Day | str],
     ) -> list[Day]:
-        normalized_days: list[Day] = []
-        seen: set[Day] = set()
-        for day in days:
-            normalized_day = cls._normalize_day(field_name, day)
-            if normalized_day in seen:
-                continue
-            normalized_days.append(normalized_day)
-            seen.add(normalized_day)
-        return normalized_days
+        return SessionInputNormalizer.days(field_name, days)
 
     @staticmethod
     def _normalize_time(field_name: str, time_value: str) -> str:
-        normalized_time = time_value.strip()
-        try:
-            time_to_minutes(normalized_time)
-        except ValueError as exc:
-            raise InvalidSessionStateValueError(field_name, time_value, str(exc)) from exc
-        return normalized_time
+        return SessionInputNormalizer.time(field_name, time_value)

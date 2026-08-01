@@ -93,6 +93,18 @@ def test_preference_models_deduplicate_and_reject_invalid_values() -> None:
         SoftPreferences(preferred_course_ids=["GEN001-001"], disliked_course_ids=["GEN001-001"])
     with pytest.raises(ValidationError, match="earliest_start_time"):
         HardConstraints(earliest_start_time="18:00", latest_end_time="10:00")
+    with pytest.raises(ValidationError, match="earliest_start_time"):
+        HardConstraints(earliest_start_time="10:00", latest_end_time="10:00")
+    with pytest.raises(ValidationError, match="preferred_earliest_start_time"):
+        SoftPreferences(
+            preferred_earliest_start_time="10:00",
+            preferred_latest_end_time="10:00",
+        )
+    with pytest.raises(ValidationError, match="preferred_earliest_start_time"):
+        SoftPreferences(
+            preferred_earliest_start_time="18:00",
+            preferred_latest_end_time="10:00",
+        )
 
 
 def test_hard_free_days_are_mutated_idempotently_and_remove_soft_duplicates() -> None:
@@ -254,6 +266,25 @@ def test_changed_constraints_are_persisted_and_returned_as_copies() -> None:
     stored = service.get_session(created.session_id)
 
     assert stored.hard_constraints.required_course_ids == ["GEN001-001"]
+
+
+def test_repository_copies_include_nested_preference_state() -> None:
+    repository = InMemorySessionRepository()
+    state = _state("session-1")
+    state.hard_constraints.required_free_days.append(Day.MON)
+    state.soft_preferences.preferred_course_ids.append("GEN001-001")
+
+    created = repository.create(state, now=_now())
+    found = repository.get(state.session_id, now=_now())
+    assert found is not None
+
+    created.hard_constraints.required_free_days.append(Day.TUE)
+    found.soft_preferences.preferred_course_ids.append("GEN002-001")
+
+    stored = repository.get(state.session_id, now=_now())
+    assert stored is not None
+    assert stored.hard_constraints.required_free_days == [Day.MON]
+    assert stored.soft_preferences.preferred_course_ids == ["GEN001-001"]
 
 
 def test_condition_updates_fail_for_missing_or_expired_sessions() -> None:
