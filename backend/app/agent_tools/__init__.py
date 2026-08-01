@@ -8,14 +8,21 @@ from .schemas import (
     DepartmentInput,
     DayInput,
     DaysInput,
+    HardConstraintsPatch,
+    ResetSessionPreferencesInput,
     SessionIdInput,
     SessionStateSummary,
     SessionToolError,
     SessionToolErrorCode,
     SessionToolResult,
+    SoftPreferencesPatch,
     TextValueInput,
     TimeInput,
+    UpdateSelectedMajorCoursesInput,
+    UpdateSessionProfileInput,
+    UpdateTimetablePreferencesInput,
 )
+from .session_agent_tools import SessionAgentTools
 from .session_command_tools import SessionCommandTools
 from .session_query_tools import SessionQueryTools
 
@@ -27,6 +34,9 @@ __all__ = [
     "DepartmentInput",
     "DayInput",
     "DaysInput",
+    "HardConstraintsPatch",
+    "ResetSessionPreferencesInput",
+    "SessionAgentTools",
     "SessionCommandTools",
     "SessionIdInput",
     "SessionQueryTools",
@@ -34,6 +44,10 @@ __all__ = [
     "SessionToolError",
     "SessionToolErrorCode",
     "SessionToolResult",
+    "SoftPreferencesPatch",
     "TextValueInput",
     "TimeInput",
+    "UpdateSelectedMajorCoursesInput",
+    "UpdateSessionProfileInput",
+    "UpdateTimetablePreferencesInput",
 ]

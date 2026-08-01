@@ -25,6 +25,12 @@ from .exceptions import (
     SessionNotAvailableError,
     SessionServiceError,
 )
+from .session_update_models import (
+    HardConstraintsUpdate,
+    SelectedMajorCourseMode,
+    SessionProfileUpdate,
+    SoftPreferencesUpdate,
+)
 
 
 DEFAULT_SESSION_TTL = timedelta(minutes=30)
@@ -329,6 +335,68 @@ class SessionService:
             field_name="elective_catalog_id",
             value=normalized_catalog_id,
         )
+
+    def update_profile(
+        self,
+        session_id: str,
+        update: SessionProfileUpdate,
+    ) -> PlanuSessionState:
+        """Apply a profile patch in one session save.
+
+        Fields set to ``None`` are left unchanged unless explicitly listed in
+        ``clear_fields``.
+        """
+
+        state = self.get_session(session_id)
+        changed_fields: dict[str, object] = {}
+        values = {
+            "department": update.department,
+            "major_catalog_id": update.major_catalog_id,
+            "elective_catalog_id": update.elective_catalog_id,
+        }
+        for field_name in update.clear_fields:
+            changed_fields[field_name] = None
+        for field_name, value in values.items():
+            if value is not None:
+                changed_fields[field_name] = self._require_non_empty(field_name, value)
+        return self._save_state_update_if_changed(state, changed_fields)
+
+    def update_selected_major_courses(
+        self,
+        session_id: str,
+        course_ids: Iterable[str],
+        *,
+        mode: SelectedMajorCourseMode = "replace",
+    ) -> PlanuSessionState:
+        """Update selected major course ids in one session save."""
+
+        normalized_course_ids = self._normalize_course_ids(course_ids)
+        state = self.get_session(session_id)
+        if mode == "replace":
+            next_course_ids = normalized_course_ids
+        elif mode == "add":
+            next_course_ids = [
+                *state.selected_major_course_ids,
+                *[
+                    course_id
+                    for course_id in normalized_course_ids
+                    if course_id not in state.selected_major_course_ids
+                ],
+            ]
+        elif mode == "remove":
+            removed = set(normalized_course_ids)
+            next_course_ids = [
+                course_id
+                for course_id in state.selected_major_course_ids
+                if course_id not in removed
+            ]
+        else:
+            raise InvalidSessionStateValueError(
+                "mode",
+                mode,
+                "mode must be one of replace, add, remove",
+            )
+        return self._save_state_with_courses_if_changed(state, next_course_ids)
 
     def add_selected_major_course(
         self,
@@ -961,6 +1029,43 @@ class SessionService:
             lambda _hard, _soft: (HardConstraints(), SoftPreferences()),
         )
 
+    def update_preferences(
+        self,
+        session_id: str,
+        *,
+        hard_patch: HardConstraintsUpdate | None = None,
+        soft_patch: SoftPreferencesUpdate | None = None,
+    ) -> PlanuSessionState:
+        """Apply Hard and Soft preference patches in one session save.
+
+        Hard constraints have priority over Soft preferences when both are
+        supplied in the same patch. Final cross-constraint validation still runs
+        before persistence.
+        """
+
+        state = self.get_session(session_id)
+        hard_constraints = state.hard_constraints
+        soft_preferences = state.soft_preferences
+
+        if hard_patch is not None:
+            hard_constraints = self._apply_hard_patch(hard_constraints, hard_patch)
+        if soft_patch is not None:
+            soft_preferences = self._apply_soft_patch(soft_preferences, soft_patch)
+        soft_preferences = self._apply_hard_priority(hard_constraints, soft_preferences)
+        self._validate_cross_constraints(hard_constraints, soft_preferences)
+        if (
+            hard_constraints == state.hard_constraints
+            and soft_preferences == state.soft_preferences
+        ):
+            return self._refresh_unchanged_state(state)
+        return self._save_changed_state(
+            state,
+            {
+                "hard_constraints": hard_constraints,
+                "soft_preferences": soft_preferences,
+            },
+        )
+
     def _save_state_field(
         self,
         session_id: str,
@@ -1002,6 +1107,29 @@ class SessionService:
             state,
             {"selected_major_course_ids": selected_major_course_ids},
         )
+
+    def _save_state_with_courses_if_changed(
+        self,
+        state: PlanuSessionState,
+        selected_major_course_ids: list[str],
+    ) -> PlanuSessionState:
+        if selected_major_course_ids == state.selected_major_course_ids:
+            return self._refresh_unchanged_state(state)
+        return self._save_state_with_courses(state, selected_major_course_ids)
+
+    def _save_state_update_if_changed(
+        self,
+        state: PlanuSessionState,
+        update: dict[str, object],
+    ) -> PlanuSessionState:
+        changed = {
+            field_name: value
+            for field_name, value in update.items()
+            if getattr(state, field_name) != value
+        }
+        if not changed:
+            return self._refresh_unchanged_state(state)
+        return self._save_changed_state(state, changed)
 
     def _save_constraints(
         self,
@@ -1057,6 +1185,126 @@ class SessionService:
                 self._build_soft_preferences(soft, **{field_name: value}),
             ),
         )
+
+    def _apply_hard_patch(
+        self,
+        hard_constraints: HardConstraints,
+        patch: HardConstraintsUpdate,
+    ) -> HardConstraints:
+        update: dict[str, object] = {}
+        for field_name in patch.clear_fields:
+            update[field_name] = self._cleared_preference_value(field_name)
+        if patch.required_free_days is not None:
+            update["required_free_days"] = self._normalize_days(
+                "required_free_days",
+                patch.required_free_days,
+            )
+        if patch.earliest_start_time is not None:
+            update["earliest_start_time"] = self._normalize_time(
+                "earliest_start_time",
+                patch.earliest_start_time,
+            )
+        if patch.latest_end_time is not None:
+            update["latest_end_time"] = self._normalize_time(
+                "latest_end_time",
+                patch.latest_end_time,
+            )
+        if patch.required_course_ids is not None:
+            update["required_course_ids"] = self._normalize_course_ids(
+                patch.required_course_ids,
+                field_name="required_course_ids",
+            )
+        if patch.excluded_course_ids is not None:
+            update["excluded_course_ids"] = self._normalize_course_ids(
+                patch.excluded_course_ids,
+                field_name="excluded_course_ids",
+            )
+        if "required_course_ids" in update and "excluded_course_ids" not in update:
+            required = set(update["required_course_ids"])
+            update["excluded_course_ids"] = [
+                course_id
+                for course_id in hard_constraints.excluded_course_ids
+                if course_id not in required
+            ]
+        if "excluded_course_ids" in update and "required_course_ids" not in update:
+            excluded = set(update["excluded_course_ids"])
+            update["required_course_ids"] = [
+                course_id
+                for course_id in hard_constraints.required_course_ids
+                if course_id not in excluded
+            ]
+        return self._build_hard_constraints(hard_constraints, **update)
+
+    def _apply_soft_patch(
+        self,
+        soft_preferences: SoftPreferences,
+        patch: SoftPreferencesUpdate,
+    ) -> SoftPreferences:
+        update: dict[str, object] = {}
+        for field_name in patch.clear_fields:
+            update[field_name] = self._cleared_preference_value(field_name)
+        if patch.preferred_free_days is not None:
+            update["preferred_free_days"] = self._normalize_days(
+                "preferred_free_days",
+                patch.preferred_free_days,
+            )
+        if patch.preferred_earliest_start_time is not None:
+            update["preferred_earliest_start_time"] = self._normalize_time(
+                "preferred_earliest_start_time",
+                patch.preferred_earliest_start_time,
+            )
+        if patch.preferred_latest_end_time is not None:
+            update["preferred_latest_end_time"] = self._normalize_time(
+                "preferred_latest_end_time",
+                patch.preferred_latest_end_time,
+            )
+        if patch.preferred_course_ids is not None:
+            update["preferred_course_ids"] = self._normalize_course_ids(
+                patch.preferred_course_ids,
+                field_name="preferred_course_ids",
+            )
+        if patch.disliked_course_ids is not None:
+            update["disliked_course_ids"] = self._normalize_course_ids(
+                patch.disliked_course_ids,
+                field_name="disliked_course_ids",
+            )
+        if patch.compact_schedule is not None:
+            update["compact_schedule"] = patch.compact_schedule
+        return self._build_soft_preferences(soft_preferences, **update)
+
+    def _apply_hard_priority(
+        self,
+        hard_constraints: HardConstraints,
+        soft_preferences: SoftPreferences,
+    ) -> SoftPreferences:
+        required_days = set(hard_constraints.required_free_days)
+        required_courses = set(hard_constraints.required_course_ids)
+        excluded_courses = set(hard_constraints.excluded_course_ids)
+        hard_courses = required_courses | excluded_courses
+        return self._build_soft_preferences(
+            soft_preferences,
+            preferred_free_days=[
+                day
+                for day in soft_preferences.preferred_free_days
+                if day not in required_days
+            ],
+            preferred_course_ids=[
+                course_id
+                for course_id in soft_preferences.preferred_course_ids
+                if course_id not in hard_courses
+            ],
+            disliked_course_ids=[
+                course_id
+                for course_id in soft_preferences.disliked_course_ids
+                if course_id not in hard_courses
+            ],
+        )
+
+    @staticmethod
+    def _cleared_preference_value(field_name: str) -> object:
+        if field_name.endswith("_ids") or field_name.endswith("_days"):
+            return []
+        return None
 
     def _refresh_unchanged_state(
         self,

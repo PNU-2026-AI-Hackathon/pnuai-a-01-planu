@@ -4,10 +4,16 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from ..models import Day, HardConstraints, PlanuSessionState, SoftPreferences, time_to_minutes
+from ..services.session_update_models import (
+    HardConstraintsUpdate,
+    SessionProfileUpdate,
+    SoftPreferencesUpdate,
+)
 
 
 class SessionToolErrorCode(str, Enum):
@@ -78,6 +84,7 @@ class SessionToolResult(BaseModel):
     message: str
     session_id: str | None = None
     changed: bool = False
+    changed_fields: list[str] = Field(default_factory=list)
     state_summary: SessionStateSummary | None = None
     hard_constraints: HardConstraints | None = None
     soft_preferences: SoftPreferences | None = None
@@ -164,3 +171,173 @@ class BoolPreferenceInput(SessionIdInput):
     """Input for setting a boolean soft preference."""
 
     value: bool
+
+
+ProfileClearField = Literal["department", "major_catalog_id", "elective_catalog_id"]
+CourseUpdateMode = Literal["replace", "add", "remove"]
+HardClearField = Literal[
+    "required_free_days",
+    "earliest_start_time",
+    "latest_end_time",
+    "required_course_ids",
+    "excluded_course_ids",
+]
+SoftClearField = Literal[
+    "preferred_free_days",
+    "preferred_earliest_start_time",
+    "preferred_latest_end_time",
+    "preferred_course_ids",
+    "disliked_course_ids",
+    "compact_schedule",
+]
+ResetPreferenceTarget = Literal["hard", "soft", "all"]
+
+
+class UpdateSessionProfileInput(SessionIdInput):
+    """Input for updating session profile fields in one agent tool call."""
+
+    department: str | None = Field(
+        default=None,
+        min_length=1,
+        description="Resolved department name to store. Omit or use null to leave unchanged.",
+    )
+    major_catalog_id: str | None = Field(
+        default=None,
+        min_length=1,
+        description="Parsed major catalog identifier. Omit or use null to leave unchanged.",
+    )
+    elective_catalog_id: str | None = Field(
+        default=None,
+        min_length=1,
+        description="Parsed elective catalog identifier. Omit or use null to leave unchanged.",
+    )
+    clear_fields: list[ProfileClearField] = Field(
+        default_factory=list,
+        description="Profile fields to explicitly clear. Null values alone never clear fields.",
+    )
+
+    def to_service_update(self) -> SessionProfileUpdate:
+        return SessionProfileUpdate(
+            department=self.department,
+            major_catalog_id=self.major_catalog_id,
+            elective_catalog_id=self.elective_catalog_id,
+            clear_fields=tuple(dict.fromkeys(self.clear_fields)),
+        )
+
+
+class UpdateSelectedMajorCoursesInput(SessionIdInput):
+    """Input for updating selected major course ids in one call."""
+
+    course_ids: list[str] = Field(
+        description="Resolved course_id values only; do not pass natural-language course names.",
+    )
+    mode: CourseUpdateMode = Field(
+        default="replace",
+        description="replace overwrites the list, add appends missing ids, remove deletes ids idempotently.",
+    )
+
+    @field_validator("course_ids")
+    @classmethod
+    def validate_course_ids(cls, values: list[str]) -> list[str]:
+        if any(not value.strip() for value in values):
+            raise ValueError("course_ids must not contain empty ids")
+        return values
+
+
+class HardConstraintsPatch(_ToolInput):
+    """Patch for replacing or clearing hard timetable constraint fields."""
+
+    required_free_days: list[Day] | None = Field(default=None)
+    earliest_start_time: str | None = Field(default=None)
+    latest_end_time: str | None = Field(default=None)
+    required_course_ids: list[str] | None = Field(default=None)
+    excluded_course_ids: list[str] | None = Field(default=None)
+    clear_fields: list[HardClearField] = Field(default_factory=list)
+
+    @field_validator("earliest_start_time", "latest_end_time")
+    @classmethod
+    def validate_time(cls, value: str | None) -> str | None:
+        if value is not None:
+            time_to_minutes(value)
+        return value
+
+    @field_validator("required_course_ids", "excluded_course_ids")
+    @classmethod
+    def validate_course_ids(cls, values: list[str] | None) -> list[str] | None:
+        if values is not None and any(not value.strip() for value in values):
+            raise ValueError("course id lists must not contain empty ids")
+        return values
+
+    def to_service_update(self) -> HardConstraintsUpdate:
+        return HardConstraintsUpdate(
+            required_free_days=self.required_free_days,
+            earliest_start_time=self.earliest_start_time,
+            latest_end_time=self.latest_end_time,
+            required_course_ids=self.required_course_ids,
+            excluded_course_ids=self.excluded_course_ids,
+            clear_fields=tuple(dict.fromkeys(self.clear_fields)),
+        )
+
+
+class SoftPreferencesPatch(_ToolInput):
+    """Patch for replacing or clearing soft timetable preference fields."""
+
+    preferred_free_days: list[Day] | None = Field(default=None)
+    preferred_earliest_start_time: str | None = Field(default=None)
+    preferred_latest_end_time: str | None = Field(default=None)
+    preferred_course_ids: list[str] | None = Field(default=None)
+    disliked_course_ids: list[str] | None = Field(default=None)
+    compact_schedule: bool | None = Field(default=None)
+    clear_fields: list[SoftClearField] = Field(default_factory=list)
+
+    @field_validator("preferred_earliest_start_time", "preferred_latest_end_time")
+    @classmethod
+    def validate_time(cls, value: str | None) -> str | None:
+        if value is not None:
+            time_to_minutes(value)
+        return value
+
+    @field_validator("preferred_course_ids", "disliked_course_ids")
+    @classmethod
+    def validate_course_ids(cls, values: list[str] | None) -> list[str] | None:
+        if values is not None and any(not value.strip() for value in values):
+            raise ValueError("course id lists must not contain empty ids")
+        return values
+
+    def to_service_update(self) -> SoftPreferencesUpdate:
+        return SoftPreferencesUpdate(
+            preferred_free_days=self.preferred_free_days,
+            preferred_earliest_start_time=self.preferred_earliest_start_time,
+            preferred_latest_end_time=self.preferred_latest_end_time,
+            preferred_course_ids=self.preferred_course_ids,
+            disliked_course_ids=self.disliked_course_ids,
+            compact_schedule=self.compact_schedule,
+            clear_fields=tuple(dict.fromkeys(self.clear_fields)),
+        )
+
+
+class UpdateTimetablePreferencesInput(SessionIdInput):
+    """Input for one atomic Hard/Soft timetable preference patch."""
+
+    hard: HardConstraintsPatch | None = Field(
+        default=None,
+        description="Hard constraint replacements or explicit clears. Hard wins over Soft.",
+    )
+    soft: SoftPreferencesPatch | None = Field(
+        default=None,
+        description="Soft preference replacements or explicit clears after course ids are resolved.",
+    )
+
+    @model_validator(mode="after")
+    def validate_has_patch(self) -> "UpdateTimetablePreferencesInput":
+        if self.hard is None and self.soft is None:
+            raise ValueError("hard or soft patch is required")
+        return self
+
+
+class ResetSessionPreferencesInput(SessionIdInput):
+    """Input for resetting Hard, Soft, or all timetable preferences."""
+
+    target: ResetPreferenceTarget = Field(
+        description="hard clears only constraints, soft clears only preferences, all clears both.",
+    )
