@@ -1,4 +1,10 @@
-"""Validated rules produced from a user's natural-language preferences."""
+"""Input DTOs for free-text and LLM-produced timetable preferences.
+
+These models describe user intent before it has been committed to a session.
+They may contain course names, parser traces, warnings, raw LLM output, and
+other interpretation metadata. Resolved session state lives in
+``session_preferences.py`` and stores concrete ``course_id`` values instead.
+"""
 
 from __future__ import annotations
 
@@ -141,10 +147,12 @@ class ExcludedTimeRange(TimeRange):
 
 
 class PreferenceRules(BaseModel):
-    """Concrete user preference content for filtering and ranking.
+    """Parsed user preference content from UI or LLM input.
 
     Every field has a safe default so an LLM parsing failure can fall back to an
-    empty ``PreferenceRules`` instance as required by the backend design.
+    empty ``PreferenceRules`` instance as required by the backend design. Course
+    fields are names at this layer; they must be resolved to catalog course ids
+    before being stored in ``HardConstraints`` or ``SoftPreferences``.
     """
 
     model_config = ConfigDict(
@@ -317,7 +325,11 @@ class PreferenceParseResult(BaseModel):
 
 
 class HardPreferenceConditions(BaseModel):
-    """Hard filters supported by timetable generation."""
+    """Hard conditions emitted by the preference parser.
+
+    This is an input DTO that may carry course names from natural language. It
+    should not be persisted directly as session preference state.
+    """
 
     model_config = ConfigDict(
         extra="forbid",
@@ -385,7 +397,11 @@ class HardPreferenceConditions(BaseModel):
 
 
 class SoftPreferenceConditions(BaseModel):
-    """Soft ranking preferences supported by the timetable ranker."""
+    """Soft conditions emitted by the preference parser.
+
+    This is an input DTO that may carry course names from natural language. It
+    should not be persisted directly as session preference state.
+    """
 
     model_config = ConfigDict(
         extra="forbid",

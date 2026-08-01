@@ -18,7 +18,11 @@ class SessionNotAvailableError(SessionServiceError):
 class InvalidSessionStateValueError(SessionServiceError):
     """Raised when a service input cannot be stored in session state."""
 
-    def __init__(self, field_name: str, value: object) -> None:
+    def __init__(self, field_name: str, value: object, reason: str | None = None) -> None:
         self.field_name = field_name
         self.value = value
-        super().__init__(f"invalid session state value for {field_name}: {value!r}")
+        self.reason = reason
+        message = f"invalid session state value for {field_name}: {value!r}"
+        if reason:
+            message = f"{message} ({reason})"
+        super().__init__(message)

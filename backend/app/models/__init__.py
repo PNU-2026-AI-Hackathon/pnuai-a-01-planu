@@ -39,6 +39,7 @@ from .preference import (
     merge_preference_rules,
 )
 from .planu_session_state import PlanuSessionState
+from .session_preferences import CourseId, HardConstraints, SoftPreferences
 from .timetable import (
     CourseLoadSatisfaction,
     GenerationDiagnostic,
@@ -59,6 +60,7 @@ __all__ = [
     "Category",
     "ClassTime",
     "Course",
+    "CourseId",
     "CourseLoadSatisfaction",
     "CourseLoadCalculationResult",
     "CourseLoadTarget",
@@ -69,6 +71,7 @@ __all__ = [
     "GeneralPreferenceLLMOutput",
     "GeneralPreferenceParseResult",
     "HardPreferenceConditions",
+    "HardConstraints",
     "GeneralCoursePoolResult",
     "GeneralCoursePools",
     "GenerationDiagnostic",
@@ -88,6 +91,7 @@ __all__ = [
     "PreferenceWarning",
     "PlanuSessionState",
     "SoftPreferenceConditions",
+    "SoftPreferences",
     "RankingDiagnostic",
     "RankingResult",
     "RankingTemplate",

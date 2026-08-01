@@ -9,13 +9,11 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
-    StringConstraints,
     field_validator,
     model_validator,
 )
 
-
-CourseId = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+from .session_preferences import CourseId, HardConstraints, SoftPreferences
 
 
 class PlanuSessionState(BaseModel):
@@ -41,6 +39,8 @@ class PlanuSessionState(BaseModel):
     major_catalog_id: str | None = None
     elective_catalog_id: str | None = None
     selected_major_course_ids: list[CourseId] = Field(default_factory=list)
+    hard_constraints: HardConstraints = Field(default_factory=HardConstraints)
+    soft_preferences: SoftPreferences = Field(default_factory=SoftPreferences)
     created_at: datetime
     updated_at: datetime
     last_accessed_at: datetime
