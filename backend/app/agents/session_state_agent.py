@@ -30,6 +30,8 @@ logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT_PATH = Path(__file__).with_name("prompts") / "session_state_agent_system.txt"
 DEFAULT_MAX_TOOL_CALLS = 10
+DEFAULT_MAX_MUTATION_TOOL_CALLS = DEFAULT_MAX_TOOL_CALLS
+READ_ONLY_TOOL_NAMES = {"get_session_summary"}
 
 
 class SessionStateAgentErrorCode(str, Enum):
@@ -88,6 +90,10 @@ class ExecutedSessionTool(BaseModel):
     success: bool
     changed: bool = False
     error_code: str | None = None
+    message: str | None = None
+    error_message: str | None = None
+    error_field: str | None = None
+    error_value: str | None = None
 
 
 class UnresolvedSessionRequest(BaseModel):
@@ -112,10 +118,13 @@ class SessionStateAgentResult(BaseModel):
 
     success: bool
     session_id: str | None = None
+    request_id: str | None = None
     message: str
     changed: bool = False
+    partially_applied: bool = False
     state_summary: SessionStateSummary | None = None
     executed_tools: list[ExecutedSessionTool] = Field(default_factory=list)
+    failed_tools: list[ExecutedSessionTool] = Field(default_factory=list)
     unresolved_requests: list[UnresolvedSessionRequest] = Field(default_factory=list)
     error: SessionStateAgentError | None = None
 
@@ -296,14 +305,21 @@ class SessionStateAgent:
         *,
         model: Any,
         tools: SessionStateToolset,
-        max_tool_calls: int = DEFAULT_MAX_TOOL_CALLS,
+        max_mutation_tool_calls: int | None = None,
+        max_tool_calls: int | None = None,
         system_prompt: str | None = None,
     ) -> None:
-        if max_tool_calls <= 0:
-            raise ValueError("max_tool_calls must be positive")
+        if max_mutation_tool_calls is None:
+            max_mutation_tool_calls = (
+                DEFAULT_MAX_MUTATION_TOOL_CALLS
+                if max_tool_calls is None
+                else max_tool_calls
+            )
+        if max_mutation_tool_calls < 0:
+            raise ValueError("max_mutation_tool_calls must not be negative")
         self.model = model
         self.tools = tools
-        self.max_tool_calls = max_tool_calls
+        self.max_mutation_tool_calls = max_mutation_tool_calls
         self.system_prompt = system_prompt or load_session_state_agent_prompt()
 
     def run(self, data: SessionStateAgentInput | Mapping[str, object]) -> SessionStateAgentResult:
@@ -312,19 +328,26 @@ class SessionStateAgent:
         except ValidationError as exc:
             return self._input_error(exc)
 
+        logger.info(
+            "session_state_agent_started",
+            extra={
+                "session_id": request.session_id,
+                "request_id": request.request_id,
+            },
+        )
         executed: list[ExecutedSessionTool] = []
         transcript: list[dict[str, Any]] = []
         unresolved_requests: list[UnresolvedSessionRequest] = []
         changed = False
+        mutation_tool_call_count = 0
         last_summary: SessionStateSummary | None = None
 
         initial = self._execute_tool(
             "get_session_summary",
             {"session_id": request.session_id},
             executed,
+            request_id=request.request_id,
         )
-        if initial.result is None:
-            return self._limit_error(request, executed, last_summary)
         if not initial.result.success:
             return self._session_error(request, initial.result, executed)
         last_summary = initial.result.state_summary
@@ -336,7 +359,11 @@ class SessionStateAgent:
             except Exception:
                 logger.exception(
                     "session_state_agent_model_failed",
-                    extra={"session_id": request.session_id, "tool_call_count": len(executed)},
+                    extra={
+                        "session_id": request.session_id,
+                        "request_id": request.request_id,
+                        "mutation_tool_call_count": mutation_tool_call_count,
+                    },
                 )
                 return self._failure(
                     request,
@@ -353,31 +380,51 @@ class SessionStateAgent:
                     "get_session_summary",
                     {"session_id": request.session_id},
                     executed,
+                    request_id=request.request_id,
                 )
-                if final.result is None:
-                    return self._limit_error(request, executed, last_summary)
                 if not final.result.success:
                     return self._tool_failure(request, final.result, executed, last_summary, changed)
-                message = model_response.message or self._default_message(
+                failed_tools = _failed_tools(executed)
+                unresolved_requests.extend(
+                    _unresolved_requests_from_failed_tools(failed_tools)
+                )
+                message = self._final_message(
                     changed,
                     unresolved_requests,
+                    failed_tools,
+                    model_response.message,
                 )
+                partially_applied = bool(failed_tools and changed)
                 return SessionStateAgentResult(
-                    success=True,
+                    success=not failed_tools,
                     session_id=request.session_id,
+                    request_id=request.request_id,
                     message=message,
                     changed=changed,
+                    partially_applied=partially_applied,
                     state_summary=final.result.state_summary,
                     executed_tools=executed,
+                    failed_tools=failed_tools,
                     unresolved_requests=unresolved_requests,
-                    error=None,
+                    error=(
+                        None
+                        if not failed_tools
+                        else SessionStateAgentError(
+                            code=SessionStateAgentErrorCode.TOOL_ERROR,
+                            message="하나 이상의 도구 실행이 실패했습니다.",
+                        )
+                    ),
                 )
 
             for tool_call in model_response.tool_calls:
                 if not self.tools.has_tool(tool_call.name):
                     logger.warning(
                         "session_state_agent_unknown_tool",
-                        extra={"session_id": request.session_id, "tool_name": tool_call.name},
+                        extra={
+                            "session_id": request.session_id,
+                            "request_id": request.request_id,
+                            "tool_name": tool_call.name,
+                        },
                     )
                     return self._failure(
                         request,
@@ -402,9 +449,20 @@ class SessionStateAgent:
                         changed,
                     )
 
-                result = self._execute_tool(tool_call.name, arguments, executed)
-                if result.result is None:
+                if (
+                    not self._is_read_only_tool(tool_call.name)
+                    and mutation_tool_call_count >= self.max_mutation_tool_calls
+                ):
                     return self._limit_error(request, executed, last_summary)
+
+                result = self._execute_tool(
+                    tool_call.name,
+                    arguments,
+                    executed,
+                    request_id=request.request_id,
+                )
+                if not self._is_read_only_tool(tool_call.name):
+                    mutation_tool_call_count += 1
                 changed = changed or result.result.changed
                 if result.result.state_summary is not None:
                     last_summary = result.result.state_summary
@@ -425,6 +483,7 @@ class SessionStateAgent:
                         "session_id": request.session_id,
                         "locale": request.locale,
                         "user_message": request.user_message,
+                        "request_id": request.request_id,
                         "current_state_summary": (
                             None
                             if current_summary is None
@@ -452,9 +511,9 @@ class SessionStateAgent:
         name: str,
         arguments: Mapping[str, object],
         executed: list[ExecutedSessionTool],
+        *,
+        request_id: str | None,
     ) -> "_ToolExecution":
-        if len(executed) >= self.max_tool_calls:
-            return _ToolExecution(result=None)
         result = self.tools.run(name, arguments)
         error_code = None if result.error is None else result.error.code.value
         executed.append(
@@ -463,17 +522,22 @@ class SessionStateAgent:
                 success=result.success,
                 changed=result.changed,
                 error_code=error_code,
+                message=result.message,
+                error_message=None if result.error is None else result.error.message,
+                error_field=None if result.error is None else result.error.field,
+                error_value=None if result.error is None else result.error.value,
             )
         )
         logger.info(
             "session_state_agent_tool_executed",
             extra={
                 "session_id": result.session_id,
+                "request_id": request_id,
                 "tool_name": name,
                 "success": result.success,
                 "changed": result.changed,
                 "error_code": error_code,
-                "tool_call_count": len(executed),
+                "executed_tool_count": len(executed),
             },
         )
         return _ToolExecution(result=result)
@@ -522,6 +586,19 @@ class SessionStateAgent:
         }
 
     @staticmethod
+    def _final_message(
+        changed: bool,
+        unresolved: list[UnresolvedSessionRequest],
+        failed_tools: list[ExecutedSessionTool],
+        model_message: str | None,
+    ) -> str:
+        if not failed_tools and model_message:
+            return model_message
+        if failed_tools:
+            return _partial_or_failed_message(changed, failed_tools)
+        return SessionStateAgent._default_message(changed, unresolved)
+
+    @staticmethod
     def _default_message(changed: bool, unresolved: list[UnresolvedSessionRequest]) -> str:
         if changed:
             if unresolved:
@@ -538,6 +615,7 @@ class SessionStateAgent:
         return SessionStateAgentResult(
             success=False,
             session_id=None,
+            request_id=None,
             message="입력값이 올바르지 않습니다.",
             error=SessionStateAgentError(
                 code=SessionStateAgentErrorCode.INVALID_INPUT,
@@ -559,8 +637,10 @@ class SessionStateAgent:
         return SessionStateAgentResult(
             success=False,
             session_id=request.session_id,
+            request_id=request.request_id,
             message="세션을 찾을 수 없거나 만료되었습니다.",
             executed_tools=executed,
+            failed_tools=_failed_tools(executed),
             error=error,
         )
 
@@ -575,10 +655,13 @@ class SessionStateAgent:
         return SessionStateAgentResult(
             success=False,
             session_id=request.session_id,
+            request_id=request.request_id,
             message="최종 세션 상태를 확인하지 못했습니다.",
             changed=changed,
+            partially_applied=changed,
             state_summary=state_summary,
             executed_tools=executed,
+            failed_tools=_failed_tools(executed),
             error=_agent_error_from_tool_result(
                 result,
                 fallback_code=SessionStateAgentErrorCode.TOOL_ERROR,
@@ -599,10 +682,13 @@ class SessionStateAgent:
         return SessionStateAgentResult(
             success=False,
             session_id=request.session_id,
+            request_id=request.request_id,
             message=message,
             changed=changed,
+            partially_applied=changed and bool(_failed_tools(executed)),
             state_summary=state_summary,
             executed_tools=executed,
+            failed_tools=_failed_tools(executed),
             error=SessionStateAgentError(
                 code=code,
                 message=message,
@@ -625,10 +711,13 @@ class SessionStateAgent:
         return SessionStateAgentResult(
             success=False,
             session_id=request.session_id,
+            request_id=request.request_id,
             message=message,
             changed=changed,
+            partially_applied=changed,
             state_summary=state_summary,
             executed_tools=executed,
+            failed_tools=_failed_tools(executed),
             error=SessionStateAgentError(
                 code=SessionStateAgentErrorCode.INVALID_TOOL_ARGUMENTS,
                 message=str(first["msg"]),
@@ -647,15 +736,22 @@ class SessionStateAgent:
         return SessionStateAgentResult(
             success=False,
             session_id=request.session_id,
+            request_id=request.request_id,
             message="도구 호출 한도를 초과해 실행을 중단했습니다.",
             changed=changed,
+            partially_applied=changed,
             state_summary=state_summary,
             executed_tools=executed,
+            failed_tools=_failed_tools(executed),
             error=SessionStateAgentError(
                 code=SessionStateAgentErrorCode.TOOL_CALL_LIMIT_EXCEEDED,
                 message="tool call limit exceeded",
             ),
         )
+
+    @staticmethod
+    def _is_read_only_tool(name: str) -> bool:
+        return name in READ_ONLY_TOOL_NAMES
 
 
 class _ToolExecution(BaseModel):
@@ -684,6 +780,55 @@ def _agent_error_from_tool_result(
         message=result.error.message,
         field=result.error.field,
         value=result.error.value,
+    )
+
+
+def _failed_tools(executed: list[ExecutedSessionTool]) -> list[ExecutedSessionTool]:
+    return [tool for tool in executed if not tool.success]
+
+
+def _unresolved_requests_from_failed_tools(
+    failed_tools: list[ExecutedSessionTool],
+) -> list[UnresolvedSessionRequest]:
+    unresolved: list[UnresolvedSessionRequest] = []
+    for tool in failed_tools:
+        reason = tool.error_message or "도구 실행이 실패했습니다."
+        unresolved.append(
+            UnresolvedSessionRequest(
+                source_text=f"도구 실행 실패: {tool.name}",
+                reason=reason,
+                needed_information=(
+                    f"tool={tool.name}, error_code={tool.error_code or 'UNKNOWN'}"
+                ),
+                requires_user_confirmation=True,
+            )
+        )
+    return unresolved
+
+
+def _partial_or_failed_message(
+    changed: bool,
+    failed_tools: list[ExecutedSessionTool],
+) -> str:
+    failed_lines = [
+        (
+            f"{tool.name} 요청은 "
+            f"{tool.error_code or 'UNKNOWN'} 오류로 적용하지 못했습니다."
+        )
+        for tool in failed_tools
+    ]
+    if changed:
+        return "\n".join(
+            [
+                "일부 조건만 세션에 반영했습니다.",
+                *failed_lines,
+            ]
+        )
+    return "\n".join(
+        [
+            "요청한 조건을 세션에 반영하지 못했습니다.",
+            *failed_lines,
+        ]
     )
 
 

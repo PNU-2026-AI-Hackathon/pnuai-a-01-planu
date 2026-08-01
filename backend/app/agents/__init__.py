@@ -1,6 +1,7 @@
 """Agent execution layers for PlaNU."""
 
 from .session_state_agent import (
+    DEFAULT_MAX_MUTATION_TOOL_CALLS,
     DEFAULT_MAX_TOOL_CALLS,
     ExecutedSessionTool,
     SessionStateAgent,
@@ -16,6 +17,7 @@ from .session_state_agent import (
 
 __all__ = [
     "DEFAULT_MAX_TOOL_CALLS",
+    "DEFAULT_MAX_MUTATION_TOOL_CALLS",
     "ExecutedSessionTool",
     "SessionStateAgent",
     "SessionStateAgentError",
