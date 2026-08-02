@@ -25,6 +25,18 @@ class SessionNotFoundError(SessionRepositoryError):
         super().__init__(session_id, f"session not found: {session_id}")
 
 
+class SessionVersionConflictError(SessionRepositoryError):
+    """Raised when optimistic locking detects a stale session version."""
+
+    def __init__(self, session_id: str, *, expected: int, actual: int) -> None:
+        self.expected = expected
+        self.actual = actual
+        super().__init__(
+            session_id,
+            f"session version conflict: {session_id} expected {expected}, actual {actual}",
+        )
+
+
 class CatalogRepositoryError(RuntimeError):
     """Base class for expected catalog repository failures."""
 

@@ -16,6 +16,7 @@ from .session_store import (
     SessionStore,
     session_store,
 )
+from .session_preference_adapter import hard_constraints_to_rules, soft_preferences_to_rules
 from .timetable_generator import TimetableGenerator
 from .timetable_validator import TimetableValidator
 
@@ -86,13 +87,23 @@ class TimetableGenerationService:
 
         target = course_load_target or CourseLoadTarget.mvp_default_policy()
         parse_result = self._parse_prompt(preference_prompt)
+        session_hard_conditions = hard_constraints_to_rules(data.hard_constraints)
+        session_soft_conditions = soft_preferences_to_rules(data.soft_preferences)
         effective_hard_conditions = self._merge_rules(
+            session_hard_conditions,
             hard_conditions,
+        )
+        effective_hard_conditions = self._merge_rules(
+            effective_hard_conditions,
             parse_result.hard_conditions,
         )
         # Combined rules used by the ranker for both hard filtering and soft scoring.
         ranking_preferences = self._merge_rules(
             effective_hard_conditions,
+            session_soft_conditions,
+        )
+        ranking_preferences = self._merge_rules(
+            ranking_preferences,
             parse_result.soft_conditions,
         )
         result = self.generator.generate_detailed(

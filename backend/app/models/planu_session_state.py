@@ -45,6 +45,7 @@ class PlanuSessionState(BaseModel):
     updated_at: datetime
     last_accessed_at: datetime
     expires_at: datetime
+    version: int = Field(default=1, ge=1)
 
     @field_validator("session_id")
     @classmethod

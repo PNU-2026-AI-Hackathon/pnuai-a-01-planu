@@ -5,7 +5,12 @@ from __future__ import annotations
 from pathlib import Path
 
 from .core.errors import AppError
+from .agent_tools import CourseDiscoveryTools, SessionAgentTools, SessionCommandTools, SessionQueryTools
+from .agents import SessionStateAgent, SessionStateToolset
+from .agents.simple_session_model import SimpleSessionStateModel
 from .models.course import Category
+from .repositories import SessionRepository, SessionStoreCatalogRepository, SessionStoreRepository
+from .services.course_discovery_service import CourseDiscoveryService
 from .services.course_loader import CourseCatalogLoadError, load_courses
 from .services.course_restriction_loader import (
     CourseRestrictionLoadError,
@@ -22,6 +27,7 @@ from .services.uploaded_catalog_parser import UploadedCatalogParser
 from .services.major_preview_service import MajorPreviewService
 from .services.major_selection_parser import MajorSelectionParser
 from .services.session_store import SessionStore, session_store
+from .services.session_service import SessionService
 from .services.timetable_generation_service import TimetableGenerationService
 from .services.ranking_template_service import RankingTemplateService
 from .services.timetable_ranker import TimetableRanker
@@ -31,10 +37,58 @@ from .services.timetable_ranking_service import TimetableRankingService
 _BACKEND_DIR = Path(__file__).resolve().parents[1]
 _COURSE_CATALOG_PATH = _BACKEND_DIR / "data" / "course_catalog.json"
 _COURSE_RESTRICTIONS_PATH = _BACKEND_DIR / "data" / "course_restrictions.json"
+_SESSION_REPOSITORY = SessionStoreRepository(session_store)
+_CATALOG_REPOSITORY = SessionStoreCatalogRepository(session_store)
+_SESSION_SERVICE = SessionService(_SESSION_REPOSITORY)
+_SESSION_AGENT_TOOLS = SessionAgentTools(_SESSION_SERVICE)
+_SESSION_QUERY_TOOLS = SessionQueryTools(_SESSION_SERVICE)
+_SESSION_COMMAND_TOOLS = SessionCommandTools(_SESSION_SERVICE)
+_COURSE_DISCOVERY_SERVICE = CourseDiscoveryService(_CATALOG_REPOSITORY)
+_COURSE_DISCOVERY_TOOLS = CourseDiscoveryTools(_COURSE_DISCOVERY_SERVICE)
+_SESSION_STATE_TOOLSET = SessionStateToolset.from_agent_and_discovery_tools(
+    _SESSION_AGENT_TOOLS,
+    _COURSE_DISCOVERY_TOOLS,
+)
+_SESSION_STATE_AGENT = SessionStateAgent(
+    model=SimpleSessionStateModel(),
+    tools=_SESSION_STATE_TOOLSET,
+)
 
 
 def get_session_store() -> SessionStore:
     return session_store
+
+
+def get_session_repository() -> SessionRepository:
+    return _SESSION_REPOSITORY
+
+
+def get_session_service() -> SessionService:
+    return _SESSION_SERVICE
+
+
+def get_session_query_tools() -> SessionQueryTools:
+    return _SESSION_QUERY_TOOLS
+
+
+def get_session_command_tools() -> SessionCommandTools:
+    return _SESSION_COMMAND_TOOLS
+
+
+def get_course_discovery_service() -> CourseDiscoveryService:
+    return _COURSE_DISCOVERY_SERVICE
+
+
+def get_course_discovery_tools() -> CourseDiscoveryTools:
+    return _COURSE_DISCOVERY_TOOLS
+
+
+def get_session_state_toolset() -> SessionStateToolset:
+    return _SESSION_STATE_TOOLSET
+
+
+def get_session_state_agent() -> SessionStateAgent:
+    return _SESSION_STATE_AGENT
 
 
 def get_major_selection_parser() -> MajorSelectionParser:

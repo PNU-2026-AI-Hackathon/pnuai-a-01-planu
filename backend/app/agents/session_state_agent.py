@@ -16,22 +16,36 @@ from ..agent_tools import (
     CatalogInput,
     CourseIdInput,
     CourseIdsInput,
+    CourseSectionsInput,
     DepartmentInput,
     DayInput,
     DaysInput,
+    SearchCoursesByNameInput,
+    SectionDetailsInput,
     SessionIdInput,
     SessionStateSummary,
     SessionToolError,
     SessionToolResult,
     TimeInput,
+    ResetSessionPreferencesInput,
+    UpdateSelectedMajorCoursesInput,
+    UpdateSessionProfileInput,
+    UpdateTimetablePreferencesInput,
 )
+from ..models.course_discovery import CourseDiscoveryRequest
 
 logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT_PATH = Path(__file__).with_name("prompts") / "session_state_agent_system.txt"
 DEFAULT_MAX_TOOL_CALLS = 10
 DEFAULT_MAX_MUTATION_TOOL_CALLS = DEFAULT_MAX_TOOL_CALLS
-READ_ONLY_TOOL_NAMES = {"get_session_summary"}
+READ_ONLY_TOOL_NAMES = {
+    "get_session_summary",
+    "search_courses_by_name",
+    "discover_courses",
+    "get_course_sections",
+    "get_section_details",
+}
 
 
 class SessionStateAgentErrorCode(str, Enum):
@@ -161,7 +175,7 @@ class SessionStateToolSpec(BaseModel):
 class SessionStateToolset:
     """Registry of the session-state tools available to the agent."""
 
-    def __init__(self, tools: Mapping[str, Callable[[Mapping[str, object]], SessionToolResult]]) -> None:
+    def __init__(self, tools: Mapping[str, Callable[[Mapping[str, object]], Any]]) -> None:
         self._tools = dict(tools)
 
     @classmethod
@@ -205,6 +219,26 @@ class SessionStateToolset:
             }
         )
 
+    @classmethod
+    def from_agent_and_discovery_tools(
+        cls,
+        session_tools: object,
+        discovery_tools: object,
+    ) -> "SessionStateToolset":
+        return cls(
+            {
+                "get_session_summary": session_tools.get_session_summary,
+                "update_session_profile": session_tools.update_session_profile,
+                "update_selected_major_courses": session_tools.update_selected_major_courses,
+                "update_timetable_preferences": session_tools.update_timetable_preferences,
+                "reset_session_preferences": session_tools.reset_session_preferences,
+                "search_courses_by_name": discovery_tools.search_courses_by_name,
+                "discover_courses": discovery_tools.discover_courses,
+                "get_course_sections": discovery_tools.get_course_sections,
+                "get_section_details": discovery_tools.get_section_details,
+            }
+        )
+
     def has_tool(self, name: str) -> bool:
         return name in self._tools
 
@@ -224,6 +258,14 @@ class SessionStateToolset:
 
 _TOOL_INPUT_MODELS: dict[str, type[BaseModel]] = {
     "get_session_summary": SessionIdInput,
+    "update_session_profile": UpdateSessionProfileInput,
+    "update_selected_major_courses": UpdateSelectedMajorCoursesInput,
+    "update_timetable_preferences": UpdateTimetablePreferencesInput,
+    "reset_session_preferences": ResetSessionPreferencesInput,
+    "search_courses_by_name": SearchCoursesByNameInput,
+    "discover_courses": CourseDiscoveryRequest,
+    "get_course_sections": CourseSectionsInput,
+    "get_section_details": SectionDetailsInput,
     "set_department": DepartmentInput,
     "register_major_catalog": CatalogInput,
     "register_elective_catalog": CatalogInput,
@@ -261,6 +303,14 @@ _TOOL_INPUT_MODELS: dict[str, type[BaseModel]] = {
 
 _TOOL_DESCRIPTIONS: dict[str, str] = {
     "get_session_summary": "Fetch the compact current session state. Required before and after mutations.",
+    "update_session_profile": "Update explicit department or catalog id profile fields without replacing the whole session.",
+    "update_selected_major_courses": "Add, remove, or replace resolved selected major course ids.",
+    "update_timetable_preferences": "Apply one batched Hard/Soft timetable preference patch with service validation.",
+    "reset_session_preferences": "Reset hard, soft, or all timetable preferences.",
+    "search_courses_by_name": "Read-only search for a specific course name, course id, or course code in a catalog.",
+    "discover_courses": "Read-only structured catalog discovery by optional query and filters.",
+    "get_course_sections": "Read-only lookup of sections for one course id.",
+    "get_section_details": "Read-only lookup of one concrete section id.",
     "set_department": "Set the user's department when the department text is explicit.",
     "register_major_catalog": "Store an already parsed major catalog id.",
     "register_elective_catalog": "Store an already parsed elective catalog id.",
@@ -434,10 +484,11 @@ class SessionStateAgent:
                         last_summary,
                         changed,
                         tool_name=tool_call.name,
-                    )
+                )
 
                 arguments = {**tool_call.arguments}
-                arguments.setdefault("session_id", request.session_id)
+                if "session_id" in _TOOL_INPUT_MODELS[tool_call.name].model_fields:
+                    arguments.setdefault("session_id", request.session_id)
                 validation_error = self._validate_tool_arguments(tool_call.name, arguments)
                 if validation_error is not None:
                     return self._invalid_tool_arguments(
@@ -463,9 +514,10 @@ class SessionStateAgent:
                 )
                 if not self._is_read_only_tool(tool_call.name):
                     mutation_tool_call_count += 1
-                changed = changed or result.result.changed
-                if result.result.state_summary is not None:
-                    last_summary = result.result.state_summary
+                changed = changed or bool(getattr(result.result, "changed", False))
+                state_summary = getattr(result.result, "state_summary", None)
+                if state_summary is not None:
+                    last_summary = state_summary
                 transcript.append(self._tool_transcript(tool_call.name, result.result))
 
     def _call_model(
@@ -515,27 +567,35 @@ class SessionStateAgent:
         request_id: str | None,
     ) -> "_ToolExecution":
         result = self.tools.run(name, arguments)
-        error_code = None if result.error is None else result.error.code.value
+        error = getattr(result, "error", None)
+        changed = bool(getattr(result, "changed", False))
+        success = bool(getattr(result, "success", False))
+        message = getattr(result, "message", None)
+        session_id = getattr(result, "session_id", None) or arguments.get("session_id")
+        error_code = None
+        if error is not None:
+            code = getattr(error, "code", None)
+            error_code = getattr(code, "value", code)
         executed.append(
             ExecutedSessionTool(
                 name=name,
-                success=result.success,
-                changed=result.changed,
+                success=success,
+                changed=changed,
                 error_code=error_code,
-                message=result.message,
-                error_message=None if result.error is None else result.error.message,
-                error_field=None if result.error is None else result.error.field,
-                error_value=None if result.error is None else result.error.value,
+                message=message,
+                error_message=None if error is None else getattr(error, "message", None),
+                error_field=None if error is None else getattr(error, "field", None),
+                error_value=None if error is None else getattr(error, "value", None),
             )
         )
         logger.info(
             "session_state_agent_tool_executed",
             extra={
-                "session_id": result.session_id,
+                "session_id": session_id,
                 "request_id": request_id,
                 "tool_name": name,
-                "success": result.success,
-                "changed": result.changed,
+                "success": success,
+                "changed": changed,
                 "error_code": error_code,
                 "executed_tool_count": len(executed),
             },
@@ -578,7 +638,7 @@ class SessionStateAgent:
         return None
 
     @staticmethod
-    def _tool_transcript(name: str, result: SessionToolResult) -> dict[str, Any]:
+    def _tool_transcript(name: str, result: Any) -> dict[str, Any]:
         return {
             "role": "tool",
             "name": name,
@@ -757,7 +817,7 @@ class SessionStateAgent:
 class _ToolExecution(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    result: SessionToolResult | None
+    result: Any
 
 
 def _agent_error_from_tool_result(
