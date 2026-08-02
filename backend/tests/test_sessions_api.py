@@ -39,6 +39,27 @@ def _course(course_id: str = "MA100-001") -> Course:
     )
 
 
+def _named_course(course_id: str, name: str, *, category: Category = Category.MAJOR_REQUIRED) -> Course:
+    return Course(
+        course_id=course_id,
+        course_name=name,
+        category=category,
+        area=3 if category is Category.GENERAL_ELECTIVE else None,
+        credit=3,
+        division=course_id.rsplit("-", 1)[-1],
+        professor="김교수",
+        class_times=[
+            ClassTime(
+                day=Day.MON,
+                start="11:00",
+                end="12:15",
+                classroom="제6공학관 6201",
+                building_code="6201",
+            )
+        ],
+    )
+
+
 class ScriptedModel:
     def __init__(self, *responses):
         self.responses = list(responses)
@@ -204,6 +225,180 @@ def test_agent_resolves_course_name_through_session_catalog_before_mutation() ->
     ]
     saved = store.get(session.session_id, touch=False)
     assert saved.hard_constraints.required_course_ids == ["MA100"]
+
+
+def test_simple_agent_applies_complex_day_and_course_request_once() -> None:
+    store = SessionStore()
+    session = store.create("컴퓨터공학과", major_candidates=[_named_course("DS100-001", "자료구조")])
+    app.dependency_overrides[get_session_state_agent] = lambda: _agent_for_store(store)
+    client = TestClient(app)
+
+    try:
+        response = client.post(
+            f"/sessions/{session.session_id}/agent/messages",
+            json={"message": "금요일은 꼭 비우고 자료구조도 반드시 넣어줘."},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["success"] is True
+    assert body["partially_applied"] is False
+    assert [tool["name"] for tool in body["executed_tools"]].count("update_timetable_preferences") == 1
+    saved = store.get(session.session_id, touch=False)
+    assert saved.hard_constraints.required_free_days == [Day.FRI]
+    assert saved.hard_constraints.required_course_ids == ["DS100"]
+
+
+def test_simple_agent_handles_multiple_courses_with_different_intents() -> None:
+    store = SessionStore()
+    session = store.create("영어영문학과", major_candidates=[])
+    store.update(
+        session.session_id,
+        elective_catalog_id=f"{session.session_id}:elective",
+        elective_candidates=[
+            _named_course("ENG101-001", "고급영어", category=Category.GENERAL_ELECTIVE),
+            _named_course("ENG102-001", "대학영어", category=Category.GENERAL_ELECTIVE),
+        ],
+    )
+    app.dependency_overrides[get_session_state_agent] = lambda: _agent_for_store(store)
+    client = TestClient(app)
+
+    try:
+        response = client.post(
+            f"/sessions/{session.session_id}/agent/messages",
+            json={"message": "고급영어는 선호하지만 대학영어는 빼줘."},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["success"] is True
+    saved = store.get(session.session_id, touch=False)
+    assert saved.soft_preferences.preferred_course_ids == ["ENG101"]
+    assert saved.hard_constraints.excluded_course_ids == ["ENG102"]
+
+
+def test_simple_agent_searches_both_catalogs_and_does_not_choose_ambiguous_course() -> None:
+    store = SessionStore()
+    session = store.create(
+        "컴퓨터공학과",
+        major_candidates=[_named_course("MA100-001", "자료구조")],
+    )
+    store.update(
+        session.session_id,
+        elective_catalog_id=f"{session.session_id}:elective",
+        elective_candidates=[_named_course("GE100-001", "자료구조", category=Category.GENERAL_ELECTIVE)],
+    )
+    app.dependency_overrides[get_session_state_agent] = lambda: _agent_for_store(store)
+    client = TestClient(app)
+
+    try:
+        response = client.post(
+            f"/sessions/{session.session_id}/agent/messages",
+            json={"message": "자료구조는 꼭 넣어줘."},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["changed"] is False
+    assert body["unresolved_requests"]
+    assert len(body["unresolved_requests"][0]["candidates"]) == 2
+    saved = store.get(session.session_id, touch=False)
+    assert saved.hard_constraints.required_course_ids == []
+
+
+def test_simple_agent_partially_applies_resolved_conditions_when_course_missing() -> None:
+    store = SessionStore()
+    session = store.create("컴퓨터공학과", major_candidates=[_named_course("DS100-001", "자료구조")])
+    app.dependency_overrides[get_session_state_agent] = lambda: _agent_for_store(store)
+    client = TestClient(app)
+
+    try:
+        response = client.post(
+            f"/sessions/{session.session_id}/agent/messages",
+            json={"message": "금요일은 꼭 비우고 존재하지 않는 과목은 넣어줘."},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["changed"] is True
+    assert body["partially_applied"] is True
+    assert body["unresolved_requests"]
+    saved = store.get(session.session_id, touch=False)
+    assert saved.hard_constraints.required_free_days == [Day.FRI]
+
+
+def test_simple_agent_time_correction_overwrites_single_time_fields() -> None:
+    store = SessionStore()
+    session = store.create("컴퓨터공학과")
+    app.dependency_overrides[get_session_state_agent] = lambda: _agent_for_store(store)
+    client = TestClient(app)
+
+    try:
+        first = client.post(
+            f"/sessions/{session.session_id}/agent/messages",
+            json={"message": "10시 이전 수업은 절대 안 돼."},
+        )
+        second = client.post(
+            f"/sessions/{session.session_id}/agent/messages",
+            json={"message": "9시부터는 괜찮아."},
+        )
+        third = client.post(
+            f"/sessions/{session.session_id}/agent/messages",
+            json={"message": "5시 이후 수업은 안 돼."},
+        )
+        fourth = client.post(
+            f"/sessions/{session.session_id}/agent/messages",
+            json={"message": "6시까지는 괜찮아."},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert third.status_code == 200
+    assert fourth.status_code == 200
+    saved = store.get(session.session_id, touch=False)
+    assert saved.hard_constraints.earliest_start_time == "09:00"
+    assert saved.hard_constraints.latest_end_time == "18:00"
+
+
+def test_simple_agent_course_correction_removes_previous_required_course() -> None:
+    store = SessionStore()
+    session = store.create(
+        "컴퓨터공학과",
+        major_candidates=[
+            _named_course("DS100-001", "자료구조"),
+            _named_course("ALG100-001", "알고리즘"),
+        ],
+    )
+    app.dependency_overrides[get_session_state_agent] = lambda: _agent_for_store(store)
+    client = TestClient(app)
+
+    try:
+        first = client.post(
+            f"/sessions/{session.session_id}/agent/messages",
+            json={"message": "자료구조는 꼭 넣어줘."},
+        )
+        second = client.post(
+            f"/sessions/{session.session_id}/agent/messages",
+            json={"message": "자료구조는 빼고 알고리즘을 넣어줘."},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    saved = store.get(session.session_id, touch=False)
+    assert saved.hard_constraints.required_course_ids == ["ALG100"]
+    assert saved.hard_constraints.excluded_course_ids == ["DS100"]
 
 
 def test_generation_service_uses_agent_saved_constraints_from_same_session() -> None:

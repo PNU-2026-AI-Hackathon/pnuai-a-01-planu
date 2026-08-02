@@ -114,7 +114,11 @@ class CourseDiscoveryTools:
                 ),
             )
         except Exception as exc:
-            fallback = CourseDiscoveryRequest(catalog_id=_catalog_id(data), limit=1)
+            fallback = CourseDiscoveryRequest(
+                catalog_id=_catalog_id(data),
+                query=_optional_text(data, "query"),
+                limit=1,
+            )
             return _error_discovery_envelope(fallback, exc)
 
     def get_course_sections(

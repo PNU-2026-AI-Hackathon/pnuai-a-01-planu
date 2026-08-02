@@ -39,6 +39,7 @@ logger = logging.getLogger(__name__)
 SYSTEM_PROMPT_PATH = Path(__file__).with_name("prompts") / "session_state_agent_system.txt"
 DEFAULT_MAX_TOOL_CALLS = 10
 DEFAULT_MAX_MUTATION_TOOL_CALLS = DEFAULT_MAX_TOOL_CALLS
+DEFAULT_MAX_TOTAL_TOOL_CALLS = 40
 READ_ONLY_TOOL_NAMES = {
     "get_session_summary",
     "search_courses_by_name",
@@ -110,6 +111,19 @@ class ExecutedSessionTool(BaseModel):
     error_value: str | None = None
 
 
+class UnresolvedCourseCandidate(BaseModel):
+    """A candidate the user may need to choose from."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    catalog_id: str | None = None
+    catalog_type: str | None = None
+    course_id: str | None = None
+    course_name: str | None = None
+    matching_section_ids: list[str] = Field(default_factory=list)
+    resolution: str | None = None
+
+
 class UnresolvedSessionRequest(BaseModel):
     """A user request the current session-state tools cannot safely apply."""
 
@@ -123,6 +137,7 @@ class UnresolvedSessionRequest(BaseModel):
     reason: str = Field(min_length=1)
     needed_information: str | None = None
     requires_user_confirmation: bool = False
+    candidates: list[UnresolvedCourseCandidate] = Field(default_factory=list)
 
 
 class SessionStateAgentResult(BaseModel):
@@ -369,6 +384,7 @@ class SessionStateAgent:
             raise ValueError("max_mutation_tool_calls must not be negative")
         self.model = model
         self.tools = tools
+        self.max_total_tool_calls = max_tool_calls or DEFAULT_MAX_TOTAL_TOOL_CALLS
         self.max_mutation_tool_calls = max_mutation_tool_calls
         self.system_prompt = system_prompt or load_session_state_agent_prompt()
 
@@ -444,7 +460,7 @@ class SessionStateAgent:
                     failed_tools,
                     model_response.message,
                 )
-                partially_applied = bool(failed_tools and changed)
+                partially_applied = bool(changed and (failed_tools or unresolved_requests))
                 return SessionStateAgentResult(
                     success=not failed_tools,
                     session_id=request.session_id,
@@ -504,6 +520,8 @@ class SessionStateAgent:
                     not self._is_read_only_tool(tool_call.name)
                     and mutation_tool_call_count >= self.max_mutation_tool_calls
                 ):
+                    return self._limit_error(request, executed, last_summary)
+                if len(executed) >= self.max_total_tool_calls:
                     return self._limit_error(request, executed, last_summary)
 
                 result = self._execute_tool(
@@ -652,7 +670,7 @@ class SessionStateAgent:
         failed_tools: list[ExecutedSessionTool],
         model_message: str | None,
     ) -> str:
-        if not failed_tools and model_message:
+        if not failed_tools and not unresolved and model_message:
             return model_message
         if failed_tools:
             return _partial_or_failed_message(changed, failed_tools)

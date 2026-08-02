@@ -120,12 +120,12 @@ class SessionData:
             raise ValueError("session_id must not be empty")
         if not self.department.strip():
             raise ValueError("department must not be empty")
-        if self.major_catalog_id is None:
-            self.major_catalog_id = f"{self.session_id}:major"
         # Do not retain mutable lists owned by request handlers.
         self.major_candidates = list(self.major_candidates)
         self.elective_candidates = list(self.elective_candidates)
         self.fixed_courses = list(self.fixed_courses)
+        if self.major_catalog_id is None and self.major_candidates:
+            self.major_catalog_id = f"{self.session_id}:major"
         self.selected_major_course_ids = list(dict.fromkeys(self.selected_major_course_ids))
         if not self.selected_major_course_ids and self.fixed_courses:
             self.selected_major_course_ids = [course.course_id for course in self.fixed_courses]

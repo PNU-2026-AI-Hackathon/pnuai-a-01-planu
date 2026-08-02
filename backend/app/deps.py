@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import logging
+import os
 from pathlib import Path
 
 from .core.errors import AppError
 from .agent_tools import CourseDiscoveryTools, SessionAgentTools, SessionCommandTools, SessionQueryTools
 from .agents import SessionStateAgent, SessionStateToolset
-from .agents.simple_session_model import SimpleSessionStateModel
+from .agents.simple_session_model import LlmSessionStateModel, SimpleSessionStateModel, SessionStateModel
 from .models.course import Category
 from .repositories import SessionRepository, SessionStoreCatalogRepository, SessionStoreRepository
 from .services.course_discovery_service import CourseDiscoveryService
@@ -37,6 +39,7 @@ from .services.timetable_ranking_service import TimetableRankingService
 _BACKEND_DIR = Path(__file__).resolve().parents[1]
 _COURSE_CATALOG_PATH = _BACKEND_DIR / "data" / "course_catalog.json"
 _COURSE_RESTRICTIONS_PATH = _BACKEND_DIR / "data" / "course_restrictions.json"
+logger = logging.getLogger(__name__)
 _SESSION_REPOSITORY = SessionStoreRepository(session_store)
 _CATALOG_REPOSITORY = SessionStoreCatalogRepository(session_store)
 _SESSION_SERVICE = SessionService(_SESSION_REPOSITORY)
@@ -49,8 +52,24 @@ _SESSION_STATE_TOOLSET = SessionStateToolset.from_agent_and_discovery_tools(
     _SESSION_AGENT_TOOLS,
     _COURSE_DISCOVERY_TOOLS,
 )
+def _build_session_state_model() -> SessionStateModel:
+    provider = os.getenv("SESSION_STATE_MODEL_PROVIDER", "simple").strip().lower()
+    environment = os.getenv("APP_ENV", "development").strip().lower()
+    if provider in {"llm", "openai"}:
+        return LlmSessionStateModel()
+    if environment in {"production", "prod"} and provider == "simple":
+        raise RuntimeError(
+            "SESSION_STATE_MODEL_PROVIDER must be configured in production; "
+            "the simple fallback is for local development and tests only."
+        )
+    logger.warning(
+        "Using SimpleSessionStateModel fallback; configure SESSION_STATE_MODEL_PROVIDER=llm for production."
+    )
+    return SimpleSessionStateModel()
+
+
 _SESSION_STATE_AGENT = SessionStateAgent(
-    model=SimpleSessionStateModel(),
+    model=_build_session_state_model(),
     tools=_SESSION_STATE_TOOLSET,
 )
 
