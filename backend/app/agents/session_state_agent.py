@@ -33,6 +33,11 @@ from ..agent_tools import (
     UpdateTimetablePreferencesInput,
 )
 from ..models.course_discovery import CourseDiscoveryRequest
+from ..models.course_discovery import (
+    CourseCandidate,
+    CourseDiscoveryResult,
+    DiscoveryResolution,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -140,6 +145,47 @@ class UnresolvedSessionRequest(BaseModel):
     candidates: list[UnresolvedCourseCandidate] = Field(default_factory=list)
 
 
+class AgentCourseCandidate(BaseModel):
+    """A compact course candidate safe to return from an agent run."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    course_id: str
+    course_code: str
+    course_name: str
+    category: str
+    area: int | None = None
+    department: str | None = None
+    matching_section_count: int
+    total_section_count: int
+    matching_section_ids: list[str] = Field(default_factory=list)
+    match_reasons: list[str] = Field(default_factory=list)
+
+
+class AgentDiscoveryResult(BaseModel):
+    """Compact summary of one discovery/search tool result."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    tool_name: str
+    catalog_id: str
+    resolution: str
+    total_matched_courses: int
+    returned_candidate_count: int
+    message: str
+    candidate_courses: list[AgentCourseCandidate] = Field(default_factory=list)
+
+
+class ConfirmationRequest(BaseModel):
+    """A user-facing request to choose among stable course candidates."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str
+    question: str
+    candidates: list[AgentCourseCandidate] = Field(default_factory=list)
+
+
 class SessionStateAgentResult(BaseModel):
     """Final structured result of a session-state agent run."""
 
@@ -155,6 +201,10 @@ class SessionStateAgentResult(BaseModel):
     executed_tools: list[ExecutedSessionTool] = Field(default_factory=list)
     failed_tools: list[ExecutedSessionTool] = Field(default_factory=list)
     unresolved_requests: list[UnresolvedSessionRequest] = Field(default_factory=list)
+    discovery_results: list[AgentDiscoveryResult] = Field(default_factory=list)
+    candidate_courses: list[AgentCourseCandidate] = Field(default_factory=list)
+    needs_confirmation: bool = False
+    confirmation_request: ConfirmationRequest | None = None
     error: SessionStateAgentError | None = None
 
 
@@ -404,6 +454,7 @@ class SessionStateAgent:
         executed: list[ExecutedSessionTool] = []
         transcript: list[dict[str, Any]] = []
         unresolved_requests: list[UnresolvedSessionRequest] = []
+        discovery_results: list[AgentDiscoveryResult] = []
         changed = False
         mutation_tool_call_count = 0
         last_summary: SessionStateSummary | None = None
@@ -454,6 +505,14 @@ class SessionStateAgent:
                 unresolved_requests.extend(
                     _unresolved_requests_from_failed_tools(failed_tools)
                 )
+                candidate_courses = _candidate_courses_from_discovery(discovery_results)
+                confirmation_request = _confirmation_request_from_discovery(
+                    discovery_results
+                )
+                needs_confirmation = bool(
+                    confirmation_request
+                    or any(item.requires_user_confirmation for item in unresolved_requests)
+                )
                 message = self._final_message(
                     changed,
                     unresolved_requests,
@@ -472,6 +531,10 @@ class SessionStateAgent:
                     executed_tools=executed,
                     failed_tools=failed_tools,
                     unresolved_requests=unresolved_requests,
+                    discovery_results=discovery_results,
+                    candidate_courses=candidate_courses,
+                    needs_confirmation=needs_confirmation,
+                    confirmation_request=confirmation_request,
                     error=(
                         None
                         if not failed_tools
@@ -532,6 +595,9 @@ class SessionStateAgent:
                 )
                 if not self._is_read_only_tool(tool_call.name):
                     mutation_tool_call_count += 1
+                discovery_result = _agent_discovery_result(tool_call.name, result.result)
+                if discovery_result is not None:
+                    discovery_results.append(discovery_result)
                 changed = changed or bool(getattr(result.result, "changed", False))
                 state_summary = getattr(result.result, "state_summary", None)
                 if state_summary is not None:
@@ -882,6 +948,79 @@ def _unresolved_requests_from_failed_tools(
             )
         )
     return unresolved
+
+
+def _agent_discovery_result(
+    tool_name: str,
+    result: Any,
+) -> AgentDiscoveryResult | None:
+    if tool_name not in {"search_courses_by_name", "discover_courses"}:
+        return None
+    try:
+        discovery = CourseDiscoveryResult.model_validate(
+            result.model_dump() if hasattr(result, "model_dump") else result
+        )
+    except ValidationError:
+        logger.warning(
+            "session_state_agent_unexpected_discovery_result",
+            extra={"tool_name": tool_name},
+        )
+        return None
+    return AgentDiscoveryResult(
+        tool_name=tool_name,
+        catalog_id=discovery.catalog_id,
+        resolution=discovery.resolution.value,
+        total_matched_courses=discovery.total_matched_courses,
+        returned_candidate_count=len(discovery.candidates),
+        message=discovery.message,
+        candidate_courses=[
+            _agent_course_candidate(candidate) for candidate in discovery.candidates
+        ],
+    )
+
+
+def _agent_course_candidate(candidate: CourseCandidate) -> AgentCourseCandidate:
+    return AgentCourseCandidate(
+        course_id=candidate.course_id,
+        course_code=candidate.course_code,
+        course_name=candidate.course_name,
+        category=candidate.category.value,
+        area=candidate.area,
+        department=candidate.department,
+        matching_section_count=candidate.matching_section_count,
+        total_section_count=candidate.total_section_count,
+        matching_section_ids=list(candidate.matching_section_ids),
+        match_reasons=list(candidate.match_reasons),
+    )
+
+
+def _candidate_courses_from_discovery(
+    discovery_results: list[AgentDiscoveryResult],
+) -> list[AgentCourseCandidate]:
+    candidates: list[AgentCourseCandidate] = []
+    seen: set[tuple[str, str]] = set()
+    for discovery in discovery_results:
+        for candidate in discovery.candidate_courses:
+            key = (discovery.catalog_id, candidate.course_id)
+            if key in seen:
+                continue
+            seen.add(key)
+            candidates.append(candidate)
+    return candidates
+
+
+def _confirmation_request_from_discovery(
+    discovery_results: list[AgentDiscoveryResult],
+) -> ConfirmationRequest | None:
+    for discovery in discovery_results:
+        if discovery.resolution != DiscoveryResolution.AMBIGUOUS.value:
+            continue
+        return ConfirmationRequest(
+            reason="검색 결과가 여러 과목 후보로 나뉘어 자동으로 확정할 수 없습니다.",
+            question="원하는 과목의 course_id, 과목코드 또는 과목명을 선택해 주세요.",
+            candidates=discovery.candidate_courses,
+        )
+    return None
 
 
 def _partial_or_failed_message(

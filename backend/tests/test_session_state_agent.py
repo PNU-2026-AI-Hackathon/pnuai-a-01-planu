@@ -7,14 +7,20 @@ from typing import Any
 
 import pytest
 
-from backend.app.agent_tools import SessionCommandTools, SessionQueryTools
+from backend.app.agent_tools import (
+    CourseDiscoveryTools,
+    SessionAgentTools,
+    SessionCommandTools,
+    SessionQueryTools,
+)
 from backend.app.agents import (
     SessionStateAgent,
     SessionStateAgentErrorCode,
     SessionStateToolset,
 )
-from backend.app.models import Day
-from backend.app.repositories import InMemorySessionRepository
+from backend.app.models import CatalogKind, Category, ClassTime, Course, Day
+from backend.app.repositories import InMemoryCatalogRepository, InMemorySessionRepository
+from backend.app.services.course_discovery_service import CourseDiscoveryService
 from backend.app.services.session_service import SessionService
 
 
@@ -98,6 +104,35 @@ def _agent(
     )
 
 
+def _agent_with_discovery(
+    model: ScriptedModel,
+    *,
+    service: SessionService | None = None,
+    max_mutation_tool_calls: int = 10,
+    max_tool_calls: int | None = None,
+) -> tuple[SessionStateAgent, SessionService, RecordingTools, InMemoryCatalogRepository]:
+    service = service or _service()
+    catalog_repository = InMemoryCatalogRepository()
+    _register_test_catalogs(catalog_repository)
+    tools = RecordingTools(
+        SessionStateToolset.from_agent_and_discovery_tools(
+            SessionAgentTools(service),
+            CourseDiscoveryTools(CourseDiscoveryService(catalog_repository)),
+        )
+    )
+    return (
+        SessionStateAgent(
+            model=model,
+            tools=tools,
+            max_mutation_tool_calls=max_mutation_tool_calls,
+            max_tool_calls=max_tool_calls,
+        ),
+        service,
+        tools,
+        catalog_repository,
+    )
+
+
 def _create_session(service: SessionService) -> str:
     return service.create_session().session_id
 
@@ -117,6 +152,119 @@ def _run(
 
 def _tool(name: str, **arguments: object) -> dict[str, Any]:
     return {"name": name, "arguments": arguments}
+
+
+def _class_time(day: Day, start: str, end: str) -> ClassTime:
+    return ClassTime(
+        day=day,
+        start=start,
+        end=end,
+        classroom="609-313",
+        building_code="609",
+    )
+
+
+def _course(
+    code: str,
+    division: str,
+    name: str,
+    *,
+    category: Category,
+    area: int | None = None,
+    department: str | None = None,
+    class_times: list[ClassTime] | None = None,
+) -> Course:
+    return Course(
+        course_id=f"{code}-{division}",
+        course_name=name,
+        category=category,
+        area=area,
+        credit=3,
+        division=division,
+        professor="김교수",
+        class_times=class_times or [_class_time(Day.MON, "10:00", "11:15")],
+    )
+
+
+def _register_test_catalogs(repository: InMemoryCatalogRepository) -> None:
+    repository.register(
+        "major-1",
+        kind=CatalogKind.MAJOR,
+        department="정보컴퓨터공학부",
+        courses=[
+            _course(
+                "MAJ101",
+                "001",
+                "컴퓨터프로그래밍",
+                category=Category.MAJOR_REQUIRED,
+                department="정보컴퓨터공학부",
+            ),
+            _course(
+                "MAJ101",
+                "002",
+                "컴퓨터프로그래밍",
+                category=Category.MAJOR_REQUIRED,
+                department="정보컴퓨터공학부",
+                class_times=[_class_time(Day.FRI, "13:00", "14:15")],
+            ),
+            _course(
+                "MAJ201",
+                "001",
+                "자료구조",
+                category=Category.MAJOR_REQUIRED,
+                department="정보컴퓨터공학부",
+            ),
+        ],
+    )
+    repository.register(
+        "elective-1",
+        kind=CatalogKind.ELECTIVE,
+        courses=[
+            _course(
+                "GEN101",
+                "001",
+                "컴퓨터와사회",
+                category=Category.GENERAL_ELECTIVE,
+                area=3,
+                department="교양교육원",
+                class_times=[_class_time(Day.WED, "10:00", "11:15")],
+            ),
+            _course(
+                "GEN102",
+                "001",
+                "데이터와사회",
+                category=Category.GENERAL_ELECTIVE,
+                area=3,
+                department="교양교육원",
+                class_times=[_class_time(Day.MON, "10:00", "11:15")],
+            ),
+            _course(
+                "GEN103",
+                "001",
+                "금요일세미나",
+                category=Category.GENERAL_ELECTIVE,
+                area=3,
+                department="교양교육원",
+                class_times=[_class_time(Day.FRI, "10:00", "11:15")],
+            ),
+            _course(
+                "GEN201",
+                "001",
+                "대학수학(I)",
+                category=Category.GENERAL_ELECTIVE,
+                area=2,
+                department="수학과",
+            ),
+            _course(
+                "GEN202",
+                "001",
+                "대학수학(II)",
+                category=Category.GENERAL_ELECTIVE,
+                area=2,
+                department="수학과",
+            ),
+        ],
+    )
 
 
 def test_blank_user_message_is_rejected_without_model_or_tool_call() -> None:
@@ -673,3 +821,338 @@ def test_result_tool_records_are_ordered_and_final_summary_matches_storage() -> 
     assert result.state_summary is not None
     assert result.state_summary.department == stored.department
     assert result.state_summary.soft_preferences == stored.soft_preferences
+
+
+def test_discovery_tools_are_registered_with_single_agent_toolset() -> None:
+    agent, service, tools, _catalogs = _agent_with_discovery(
+        ScriptedModel({"message": "확인했습니다.", "tool_calls": []})
+    )
+    session_id = _create_session(service)
+
+    specs = {spec.name for spec in tools.specs()}
+    result = _run(agent, session_id, "현재 상태만 보여줘")
+
+    assert result.success is True
+    assert {
+        "get_session_summary",
+        "update_timetable_preferences",
+        "search_courses_by_name",
+        "discover_courses",
+        "get_course_sections",
+        "get_section_details",
+    } <= specs
+    assert len(specs) == len(tools.specs())
+    assert [name for name, _args in tools.calls] == [
+        "get_session_summary",
+        "get_session_summary",
+    ]
+
+
+def test_explicit_major_course_search_returns_candidate_without_state_change() -> None:
+    agent, service, tools, _catalogs = _agent_with_discovery(
+        ScriptedModel(
+            {
+                "tool_calls": [
+                    _tool(
+                        "search_courses_by_name",
+                        catalog_id="major-1",
+                        query="컴퓨터프로그래밍",
+                    )
+                ]
+            },
+            {"message": "컴퓨터프로그래밍 후보를 찾았습니다.", "tool_calls": []},
+        )
+    )
+    session_id = _create_session(service)
+    SessionAgentTools(service).update_session_profile(
+        {
+            "session_id": session_id,
+            "major_catalog_id": "major-1",
+            "elective_catalog_id": "elective-1",
+        }
+    )
+
+    result = _run(agent, session_id, "컴퓨터프로그래밍을 찾아줘")
+
+    assert result.success is True
+    assert result.changed is False
+    assert result.discovery_results[0].tool_name == "search_courses_by_name"
+    assert result.discovery_results[0].catalog_id == "major-1"
+    assert result.discovery_results[0].resolution == "EXACT"
+    assert result.candidate_courses[0].course_id == "MAJ101"
+    assert result.candidate_courses[0].matching_section_count == 2
+    assert [name for name, _args in tools.calls] == [
+        "get_session_summary",
+        "search_courses_by_name",
+        "get_session_summary",
+    ]
+
+
+def test_exact_search_can_feed_required_course_update_after_resolution() -> None:
+    agent, service, tools, _catalogs = _agent_with_discovery(
+        ScriptedModel(
+            {
+                "tool_calls": [
+                    _tool(
+                        "search_courses_by_name",
+                        catalog_id="major-1",
+                        query="자료구조",
+                    )
+                ]
+            },
+            {
+                "tool_calls": [
+                    _tool(
+                        "update_timetable_preferences",
+                        hard={"required_course_ids": ["MAJ201"]},
+                    )
+                ]
+            },
+            {"message": "자료구조를 반드시 포함하도록 반영했습니다.", "tool_calls": []},
+        )
+    )
+    session_id = _create_session(service)
+    SessionAgentTools(service).update_session_profile(
+        {"session_id": session_id, "major_catalog_id": "major-1"}
+    )
+
+    result = _run(agent, session_id, "자료구조를 반드시 넣어줘")
+
+    assert result.success is True
+    assert result.changed is True
+    assert result.state_summary is not None
+    assert result.state_summary.hard_constraints.required_course_ids == ["MAJ201"]
+    assert [name for name, _args in tools.calls] == [
+        "get_session_summary",
+        "search_courses_by_name",
+        "update_timetable_preferences",
+        "get_session_summary",
+    ]
+
+
+def test_ambiguous_search_sets_confirmation_without_selecting_first_candidate() -> None:
+    agent, service, tools, _catalogs = _agent_with_discovery(
+        ScriptedModel(
+            {
+                "tool_calls": [
+                    _tool(
+                        "search_courses_by_name",
+                        catalog_id="elective-1",
+                        query="대학수학",
+                    )
+                ]
+            },
+            {"message": "대학수학과 일치하는 후보가 여러 개입니다.", "tool_calls": []},
+        )
+    )
+    session_id = _create_session(service)
+    SessionAgentTools(service).update_session_profile(
+        {"session_id": session_id, "elective_catalog_id": "elective-1"}
+    )
+
+    result = _run(agent, session_id, "대학수학을 반드시 넣어줘")
+
+    assert result.success is True
+    assert result.changed is False
+    assert result.needs_confirmation is True
+    assert result.confirmation_request is not None
+    assert {item.course_code for item in result.confirmation_request.candidates} == {
+        "GEN201",
+        "GEN202",
+    }
+    assert "update_timetable_preferences" not in [name for name, _args in tools.calls]
+
+
+def test_condition_discovery_uses_structured_filters_and_candidate_summary() -> None:
+    agent, service, tools, _catalogs = _agent_with_discovery(
+        ScriptedModel(
+            {
+                "tool_calls": [
+                    _tool(
+                        "discover_courses",
+                        catalog_id="elective-1",
+                        category="GENERAL_ELECTIVE",
+                        area=3,
+                        excluded_days=["FRI"],
+                        earliest_start_time="10:00",
+                        limit=3,
+                    )
+                ]
+            },
+            {
+                "message": "교양 3영역이며 금요일 수업이 없고 10시 이후 시작하는 후보를 찾았습니다.",
+                "tool_calls": [],
+            },
+        )
+    )
+    session_id = _create_session(service)
+    SessionAgentTools(service).update_session_profile(
+        {"session_id": session_id, "elective_catalog_id": "elective-1"}
+    )
+
+    result = _run(agent, session_id, "금요일 없는 3영역 교양 후보를 보여줘")
+
+    assert result.success is True
+    assert result.changed is False
+    assert result.discovery_results[0].resolution == "CANDIDATES"
+    assert {candidate.course_id for candidate in result.candidate_courses} == {
+        "GEN101",
+        "GEN102",
+    }
+    assert all("GEN103" not in candidate.matching_section_ids for candidate in result.candidate_courses)
+    assert all(candidate.matching_section_count >= 1 for candidate in result.candidate_courses)
+    discover_args = tools.calls[1][1]
+    assert "query" not in discover_args
+    assert discover_args["excluded_days"] == ["FRI"]
+    assert discover_args["earliest_start_time"] == "10:00"
+    assert "get_course_sections" not in [name for name, _args in tools.calls]
+
+
+def test_state_change_then_discovery_uses_updated_hard_constraints_in_order() -> None:
+    agent, service, tools, _catalogs = _agent_with_discovery(
+        ScriptedModel(
+            {
+                "tool_calls": [
+                    _tool(
+                        "update_timetable_preferences",
+                        hard={"required_free_days": ["FRI"]},
+                    )
+                ]
+            },
+            {"tool_calls": [_tool("get_session_summary")]},
+            {
+                "tool_calls": [
+                    _tool(
+                        "discover_courses",
+                        catalog_id="elective-1",
+                        category="GENERAL_ELECTIVE",
+                        excluded_days=["FRI"],
+                        limit=3,
+                    )
+                ]
+            },
+            {"message": "금요일을 비우는 조건을 반영하고 후보를 찾았습니다.", "tool_calls": []},
+        )
+    )
+    session_id = _create_session(service)
+    SessionAgentTools(service).update_session_profile(
+        {"session_id": session_id, "elective_catalog_id": "elective-1"}
+    )
+
+    result = _run(agent, session_id, "금요일은 반드시 비우고 들을 수 있는 교양 후보를 찾아줘")
+
+    assert result.success is True
+    assert result.changed is True
+    assert result.state_summary is not None
+    assert result.state_summary.hard_constraints.required_free_days == [Day.FRI]
+    assert [name for name, _args in tools.calls] == [
+        "get_session_summary",
+        "update_timetable_preferences",
+        "get_session_summary",
+        "discover_courses",
+        "get_session_summary",
+    ]
+    assert tools.calls[3][1]["excluded_days"] == ["FRI"]
+
+
+def test_soft_preferences_are_not_sent_as_hard_discovery_filters() -> None:
+    agent, service, tools, _catalogs = _agent_with_discovery(
+        ScriptedModel(
+            {
+                "tool_calls": [
+                    _tool(
+                        "update_timetable_preferences",
+                        soft={"preferred_free_days": ["FRI"]},
+                    )
+                ]
+            },
+            {"tool_calls": [_tool("get_session_summary")]},
+            {
+                "tool_calls": [
+                    _tool(
+                        "discover_courses",
+                        catalog_id="elective-1",
+                        category="GENERAL_ELECTIVE",
+                        limit=3,
+                    )
+                ]
+            },
+            {"message": "선호를 반영하고 후보를 찾았습니다.", "tool_calls": []},
+        )
+    )
+    session_id = _create_session(service)
+    SessionAgentTools(service).update_session_profile(
+        {"session_id": session_id, "elective_catalog_id": "elective-1"}
+    )
+
+    result = _run(agent, session_id, "가능하면 금요일 공강이 좋고 교양 후보를 보여줘")
+
+    assert result.success is True
+    assert result.state_summary is not None
+    assert result.state_summary.soft_preferences.preferred_free_days == [Day.FRI]
+    assert "excluded_days" not in tools.calls[3][1]
+
+
+def test_catalog_missing_request_stays_unresolved_without_discovery_call() -> None:
+    agent, service, tools, _catalogs = _agent_with_discovery(
+        ScriptedModel(
+            {
+                "message": "전공 수강편람 등록이 필요합니다.",
+                "unresolved_requests": [
+                    {
+                        "source_text": "전공 과목 검색",
+                        "reason": "major_catalog_id가 세션에 없습니다.",
+                        "needed_information": "전공 수강편람 catalog_id",
+                        "requires_user_confirmation": True,
+                    }
+                ],
+            }
+        )
+    )
+    session_id = _create_session(service)
+
+    result = _run(agent, session_id, "전공 과목 후보를 찾아줘")
+
+    assert result.success is True
+    assert result.needs_confirmation is True
+    assert result.discovery_results == []
+    assert [name for name, _args in tools.calls] == [
+        "get_session_summary",
+        "get_session_summary",
+    ]
+
+
+def test_sections_and_section_details_are_called_only_when_requested() -> None:
+    agent, service, tools, _catalogs = _agent_with_discovery(
+        ScriptedModel(
+            {
+                "tool_calls": [
+                    _tool(
+                        "get_course_sections",
+                        catalog_id="major-1",
+                        course_id="MAJ101",
+                    ),
+                    _tool(
+                        "get_section_details",
+                        catalog_id="major-1",
+                        section_id="MAJ101-001",
+                    ),
+                ]
+            },
+            {"message": "분반 상세를 확인했습니다.", "tool_calls": []},
+        )
+    )
+    session_id = _create_session(service)
+    SessionAgentTools(service).update_session_profile(
+        {"session_id": session_id, "major_catalog_id": "major-1"}
+    )
+
+    result = _run(agent, session_id, "MAJ101 분반과 MAJ101-001 상세를 보여줘")
+
+    assert result.success is True
+    assert [name for name, _args in tools.calls] == [
+        "get_session_summary",
+        "get_course_sections",
+        "get_section_details",
+        "get_session_summary",
+    ]
