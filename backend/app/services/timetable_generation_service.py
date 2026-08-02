@@ -16,6 +16,7 @@ from .session_store import (
     SessionStore,
     session_store,
 )
+from .session_preference_adapter import hard_constraints_to_rules, soft_preferences_to_rules
 from .timetable_generator import TimetableGenerator
 from .timetable_validator import TimetableValidator
 
@@ -86,14 +87,24 @@ class TimetableGenerationService:
 
         target = course_load_target or CourseLoadTarget.mvp_default_policy()
         parse_result = self._parse_prompt(preference_prompt)
+        session_hard_conditions = hard_constraints_to_rules(data.hard_constraints)
+        session_soft_conditions = soft_preferences_to_rules(data.soft_preferences)
         effective_hard_conditions = self._merge_rules(
+            session_hard_conditions,
             hard_conditions,
+        )
+        effective_hard_conditions = self._merge_rules(
+            effective_hard_conditions,
             parse_result.hard_conditions,
+        )
+        effective_soft_conditions = self._merge_rules(
+            session_soft_conditions,
+            parse_result.soft_conditions,
         )
         # Combined rules used by the ranker for both hard filtering and soft scoring.
         ranking_preferences = self._merge_rules(
             effective_hard_conditions,
-            parse_result.soft_conditions,
+            effective_soft_conditions,
         )
         result = self.generator.generate_detailed(
             fixed_major_courses=data.fixed_courses,
@@ -106,7 +117,7 @@ class TimetableGenerationService:
         result = result.model_copy(
             update={
                 "hard_conditions": effective_hard_conditions,
-                "soft_conditions": parse_result.soft_conditions,
+                "soft_conditions": effective_soft_conditions,
                 "unsupported_conditions": parse_result.unsupported_conditions,
                 "warnings": parse_result.warnings,
             }
@@ -138,12 +149,14 @@ class TimetableGenerationService:
         extra = addition or PreferenceRules()
         extra_dump = extra.model_dump(mode="json")
         for field_name, value in extra_dump.items():
+            is_explicit = field_name in extra.model_fields_set
             if isinstance(value, list):
                 merged[field_name] = list(dict.fromkeys([*merged.get(field_name, []), *value]))
                 continue
             if isinstance(value, bool):
-                merged[field_name] = bool(merged.get(field_name)) or value
+                if is_explicit:
+                    merged[field_name] = value
                 continue
-            if merged.get(field_name) in (None, "") and value not in (None, ""):
+            if value not in (None, "") and is_explicit:
                 merged[field_name] = value
         return PreferenceRules.model_validate(merged)

@@ -14,10 +14,19 @@ from backend.app.models import (
     GeneralCoursePoolResult,
     GeneralCoursePools,
     PreferenceRules,
+    SoftPreferences,
 )
 from backend.app.services.session_store import SessionStage, SessionStore
 from backend.app.services.timetable_generation_service import TimetableGenerationService
 from backend.app.services.timetable_generator import TimetableGenerator
+
+
+class FakePreferenceParser:
+    def __init__(self, result) -> None:
+        self.result = result
+
+    def parse(self, _prompt: str):
+        return self.result
 
 
 def _course(
@@ -347,3 +356,51 @@ def test_generation_service_uses_standard_session_not_found_error() -> None:
 
     assert exc_info.value.code == "SESSION_NOT_FOUND"
     assert exc_info.value.status_code == 404
+
+
+def test_generation_service_returns_session_soft_conditions_and_saves_ranking_preferences() -> None:
+    store = SessionStore()
+    session = store.create("컴퓨터공학과")
+    store.update(
+        session.session_id,
+        fixed_courses=[_major(credit=3)],
+        confirmed_major_credits=3,
+        session_stage=SessionStage.GENERAL_READY,
+        soft_preferences=SoftPreferences(preferred_free_days=[Day.FRI]),
+    )
+    store.update_general_course_pool(
+        session.session_id,
+        GeneralCoursePoolResult(
+            pools=GeneralCoursePools(
+                elective_courses=[_elective("ELE-001", day=Day.TUE, start="10:00")],
+            )
+        ),
+    )
+
+    result = TimetableGenerationService(store=store).generate_for_session(
+        session_id=session.session_id,
+        course_load_target=CourseLoadTarget(target_total_credits=6, additional_elective_count=1),
+    )
+
+    saved = store.get(session.session_id, touch=False)
+    assert result.soft_conditions.preferred_free_days == [Day.FRI]
+    assert saved.ranking_preferences.preferred_free_days == [Day.FRI]
+
+
+def test_merge_rules_later_single_values_override_and_lists_dedupe() -> None:
+    base = PreferenceRules(
+        required_free_days=[Day.FRI],
+        earliest_start_time="10:00",
+        compact_schedule=True,
+    )
+    addition = PreferenceRules(
+        required_free_days=[Day.FRI, Day.MON],
+        earliest_start_time="09:00",
+        compact_schedule=False,
+    )
+
+    merged = TimetableGenerationService._merge_rules(base, addition)
+
+    assert merged.required_free_days == [Day.FRI, Day.MON]
+    assert merged.earliest_start_time == "09:00"
+    assert merged.compact_schedule is False

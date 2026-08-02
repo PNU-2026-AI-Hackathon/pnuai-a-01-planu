@@ -23,3 +23,53 @@ class SessionNotFoundError(SessionRepositoryError):
 
     def __init__(self, session_id: str) -> None:
         super().__init__(session_id, f"session not found: {session_id}")
+
+
+class SessionVersionConflictError(SessionRepositoryError):
+    """Raised when optimistic locking detects a stale session version."""
+
+    def __init__(self, session_id: str, *, expected: int, actual: int) -> None:
+        self.expected = expected
+        self.actual = actual
+        super().__init__(
+            session_id,
+            f"session version conflict: {session_id} expected {expected}, actual {actual}",
+        )
+
+
+class CatalogRepositoryError(RuntimeError):
+    """Base class for expected catalog repository failures."""
+
+    def __init__(self, catalog_id: str, message: str | None = None) -> None:
+        self.catalog_id = catalog_id
+        super().__init__(message or f"catalog repository error: {catalog_id}")
+
+
+class CatalogAlreadyExistsError(CatalogRepositoryError):
+    """Raised when registering an already existing catalog id."""
+
+    def __init__(self, catalog_id: str) -> None:
+        super().__init__(catalog_id, f"catalog already exists: {catalog_id}")
+
+
+class CatalogNotFoundError(CatalogRepositoryError):
+    """Raised when a catalog id is not registered."""
+
+    def __init__(self, catalog_id: str) -> None:
+        super().__init__(catalog_id, f"catalog not found: {catalog_id}")
+
+
+class CourseNotFoundError(CatalogRepositoryError):
+    """Raised when a course id is not present in a catalog."""
+
+    def __init__(self, catalog_id: str, course_id: str) -> None:
+        self.course_id = course_id
+        super().__init__(catalog_id, f"course not found in {catalog_id}: {course_id}")
+
+
+class SectionNotFoundError(CatalogRepositoryError):
+    """Raised when a section id is not present in a catalog."""
+
+    def __init__(self, catalog_id: str, section_id: str) -> None:
+        self.section_id = section_id
+        super().__init__(catalog_id, f"section not found in {catalog_id}: {section_id}")
