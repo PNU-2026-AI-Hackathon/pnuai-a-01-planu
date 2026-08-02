@@ -1,6 +1,22 @@
 """Public domain models for the PlaNU backend."""
 
 from .course import Category, ClassTime, Course, Day, normalize_course_category, time_to_minutes
+from .course_discovery import (
+    CatalogKind,
+    CatalogRecord,
+    CourseCandidate,
+    CourseDiscoveryRequest,
+    CourseDiscoveryResult,
+    CourseMatchType,
+    CourseSection,
+    CourseSectionsResult,
+    DiscoveryResolution,
+    DiscoveryToolError,
+    DiscoveryToolErrorCode,
+    SectionDetailsResult,
+    derive_course_code,
+    normalize_course_search_text,
+)
 from .course_load import (
     CourseLoadCalculationResult,
     CourseLoadTarget,
@@ -58,14 +74,25 @@ from .timetable import (
 
 __all__ = [
     "Category",
+    "CatalogKind",
+    "CatalogRecord",
     "ClassTime",
     "Course",
+    "CourseCandidate",
+    "CourseDiscoveryRequest",
+    "CourseDiscoveryResult",
     "CourseId",
+    "CourseMatchType",
+    "CourseSection",
+    "CourseSectionsResult",
     "CourseLoadSatisfaction",
     "CourseLoadCalculationResult",
     "CourseLoadTarget",
     "CourseLoadWarning",
     "Day",
+    "DiscoveryResolution",
+    "DiscoveryToolError",
+    "DiscoveryToolErrorCode",
     "ExcludedTimeRange",
     "ExcludedCourseDiagnostic",
     "GeneralPreferenceLLMOutput",
@@ -96,6 +123,7 @@ __all__ = [
     "RankingResult",
     "RankingTemplate",
     "ScheduleItem",
+    "SectionDetailsResult",
     "ScoreComponent",
     "ScoreDetail",
     "TimeRange",
@@ -106,7 +134,9 @@ __all__ = [
     "TimetableRankingResult",
     "UnmatchedMajorCourse",
     "UnsupportedCondition",
+    "derive_course_code",
     "merge_preference_rules",
     "normalize_course_category",
+    "normalize_course_search_text",
     "time_to_minutes",
 ]

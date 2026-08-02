@@ -22,6 +22,12 @@ from .schemas import (
     UpdateSessionProfileInput,
     UpdateTimetablePreferencesInput,
 )
+from .course_discovery_tools import (
+    CourseDiscoveryTools,
+    CourseSectionsInput,
+    SearchCoursesByNameInput,
+    SectionDetailsInput,
+)
 from .session_agent_tools import SessionAgentTools
 from .session_command_tools import SessionCommandTools
 from .session_query_tools import SessionQueryTools
@@ -31,11 +37,15 @@ __all__ = [
     "CatalogInput",
     "CourseIdInput",
     "CourseIdsInput",
+    "CourseDiscoveryTools",
+    "CourseSectionsInput",
     "DepartmentInput",
     "DayInput",
     "DaysInput",
     "HardConstraintsPatch",
     "ResetSessionPreferencesInput",
+    "SearchCoursesByNameInput",
+    "SectionDetailsInput",
     "SessionAgentTools",
     "SessionCommandTools",
     "SessionIdInput",
