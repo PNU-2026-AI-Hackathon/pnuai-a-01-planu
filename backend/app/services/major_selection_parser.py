@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import urllib.error
-import urllib.request
 from typing import Any
 
 from pydantic import ValidationError
@@ -14,9 +12,12 @@ from ..models.major_selection import MajorCourseReference, MajorSelectionParseRe
 from .llm_preference_parser import (
     DEFAULT_CHAT_PROXY_URL,
     DEFAULT_OPENAI_MODEL,
-    chat_completions_url,
-    has_proxy_token,
     load_proxy_env,
+)
+from .openai_client import (
+    has_openai_api_key,
+    normalize_openai_model_name,
+    request_chat_completions,
 )
 from .major_course_matcher import normalize_course_name, normalize_section
 
@@ -83,12 +84,14 @@ class MajorSelectionParser:
         model_name: str | None = None,
         base_url: str | None = None,
         timeout_seconds: int = 60,
-    ) -> None:
+        ) -> None:
         load_proxy_env()
         self.llm = llm
-        self.model_name = model_name or os.getenv("OPENAI_MODEL", DEFAULT_OPENAI_MODEL)
-        self.base_url = base_url or os.getenv("CHAT_PROXY_URL", DEFAULT_CHAT_PROXY_URL)
-        self.proxy_token = self._env_proxy_token()
+        self.model_name = normalize_openai_model_name(
+            model_name or os.getenv("OPENAI_MODEL", DEFAULT_OPENAI_MODEL)
+        )
+        self.base_url = base_url or os.getenv("OPENAI_BASE_URL", DEFAULT_CHAT_PROXY_URL)
+        self.api_key = os.getenv("OPENAI_API_KEY")
         self.timeout_seconds = timeout_seconds
 
     def parse(self, prompt: str) -> MajorSelectionParseResult:
@@ -136,34 +139,19 @@ class MajorSelectionParser:
         raise RuntimeError("configured LLM is not invokable")
 
     def _invoke_openai_compatible_tool_call(self, payload: dict[str, Any]) -> dict[str, Any]:
-        if not has_proxy_token(self.proxy_token):
-            raise RuntimeError("PROXY_TOKEN is not configured")
+        if not has_openai_api_key(self.api_key):
+            raise RuntimeError("OPENAI_API_KEY is not configured")
 
         request_payload = self._tool_call_request_payload(payload)
-        request = urllib.request.Request(
-            chat_completions_url(self.base_url),
-            data=json.dumps(request_payload, ensure_ascii=False).encode("utf-8"),
-            headers={
-                "Authorization": f"Bearer {self.proxy_token}",
-                "Content-Type": "application/json",
-            },
-            method="POST",
-        )
         try:
-            with urllib.request.urlopen(
-                request,
-                timeout=self.timeout_seconds,
-            ) as response:
-                response_payload = json.loads(response.read().decode("utf-8"))
+            response_payload = request_chat_completions(
+                request_payload,
+                api_key=self.api_key,
+                base_url=self.base_url,
+                timeout_seconds=self.timeout_seconds,
+            )
         except TimeoutError:
             raise
-        except urllib.error.HTTPError as exc:
-            raise RuntimeError(f"proxy request failed with status {exc.code}") from exc
-        except urllib.error.URLError as exc:
-            reason = getattr(exc, "reason", "unknown")
-            if isinstance(reason, TimeoutError):
-                raise reason
-            raise RuntimeError("proxy request failed") from exc
 
         return self._result_from_chat_completions_response(response_payload)
 
@@ -200,11 +188,11 @@ class MajorSelectionParser:
     ) -> dict[str, Any]:
         choices = response_payload.get("choices") or []
         if not choices:
-            raise ValueError("proxy response did not include choices")
+            raise ValueError("OpenAI response did not include choices")
         message = choices[0].get("message") or {}
         tool_calls = message.get("tool_calls") or []
         if not tool_calls:
-            raise ValueError("proxy response did not include a tool call")
+            raise ValueError("OpenAI response did not include a tool call")
         function = (tool_calls[0].get("function") or {})
         arguments_text = function.get("arguments") or "{}"
         arguments = json.loads(arguments_text)
@@ -243,11 +231,6 @@ class MajorSelectionParser:
             ("system", SYSTEM_PROMPT),
             ("human", json.dumps(payload, ensure_ascii=False)),
         ]
-
-    @staticmethod
-    def _env_proxy_token() -> str | None:
-        return os.getenv("PROXY_TOKEN")
-
 
 def build_major_selection_parse_payload(*, prompt: str) -> dict[str, str]:
     """Build the LLM input for explicit major course selection parsing."""

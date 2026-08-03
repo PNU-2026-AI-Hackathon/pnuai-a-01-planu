@@ -247,7 +247,7 @@ def test_parse_preferences_with_trace_uses_structured_output() -> None:
 
 
 def test_parse_preferences_falls_back_when_llm_is_unavailable(monkeypatch) -> None:
-    monkeypatch.setenv("PROXY_TOKEN", PROXY_TOKEN_PLACEHOLDER)
+    monkeypatch.setenv("OPENAI_API_KEY", PROXY_TOKEN_PLACEHOLDER)
     selected = PreferenceRules(preferred_free_days=["MON"])
     result = parse_preferences_with_trace(
         free_text="금요일 공강도 원해요.",
@@ -260,7 +260,7 @@ def test_parse_preferences_falls_back_when_llm_is_unavailable(monkeypatch) -> No
     assert result.llm_preferences == PreferenceRules()
     assert result.merged_preferences.preferred_free_days == [Day.MON]
     assert result.trace[-1].tool == "llm_parse_fallback"
-    assert "PROXY_TOKEN" in (result.trace[-1].error or "")
+    assert "OPENAI_API_KEY" in (result.trace[-1].error or "")
 
 
 def test_parse_preferences_skips_empty_free_text() -> None:
@@ -288,8 +288,8 @@ def test_parse_preferences_records_validation_error_trace() -> None:
     assert "time must be a valid 24-hour time" in (result.trace[-2].error or "")
 
 
-def test_parser_defaults_match_proxy_repo_settings(monkeypatch) -> None:
-    monkeypatch.setenv("PROXY_TOKEN", PROXY_TOKEN_PLACEHOLDER)
+def test_parser_defaults_match_openai_settings(monkeypatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", PROXY_TOKEN_PLACEHOLDER)
     parser = LLMPreferenceParser()
 
     assert parser.model_name == DEFAULT_OPENAI_MODEL
@@ -311,7 +311,7 @@ def test_chat_completions_url_appends_endpoint_once() -> None:
 
 
 def test_direct_tool_call_request_uses_function_tool(monkeypatch) -> None:
-    monkeypatch.setenv("PROXY_TOKEN", PROXY_TOKEN_PLACEHOLDER)
+    monkeypatch.setenv("OPENAI_API_KEY", PROXY_TOKEN_PLACEHOLDER)
     parser = LLMPreferenceParser()
     payload = build_preference_parse_payload(
         free_text="가능하면 대학영어를 듣고 싶어.",
@@ -332,7 +332,7 @@ def test_direct_tool_call_request_uses_function_tool(monkeypatch) -> None:
 
 
 def test_direct_tool_call_response_extracts_rules_and_trace(monkeypatch) -> None:
-    monkeypatch.setenv("PROXY_TOKEN", PROXY_TOKEN_PLACEHOLDER)
+    monkeypatch.setenv("OPENAI_API_KEY", PROXY_TOKEN_PLACEHOLDER)
     parser = LLMPreferenceParser()
     used_tools = []
     trace = []

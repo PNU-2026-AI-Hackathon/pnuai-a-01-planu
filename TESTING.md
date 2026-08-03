@@ -10,7 +10,7 @@ PlaNU 테스트는 크게 세 종류로 나눕니다.
 | --- | --- | --- |
 | 기본 백엔드 테스트 | 서비스, API, 에이전트 단위 테스트와 통합 테스트 검증 | 필요 없음 |
 | 에이전트 탐색 테스트 | 단일 에이전트가 상태 변경 도구와 수강편람 탐색 도구를 올바른 순서로 호출하는지 검증 | 필요 없음 |
-| live LLM 테스트 | 실제 LLM/proxy API로 자연어 파싱과 주요 HTTP 흐름 검증 | 필요 |
+| live LLM 테스트 | 실제 OpenAI API로 자연어 파싱과 주요 HTTP 흐름 검증 | 필요 |
 
 기본 테스트는 fake/scripted model을 사용하므로 API 키 없이 실행됩니다.
 
@@ -76,31 +76,29 @@ python -m pytest backend\tests\test_course_discovery.py backend\tests\test_agent
 
 ## 5. 실제 LLM API로 테스트하기
 
-현재 live LLM 테스트는 `.env`에서 `PROXY_TOKEN`을 읽습니다. 일반적인 `OPENAI_API_KEY` 이름이 아니라는 점에 주의합니다.
+현재 live LLM 테스트는 `.env`에서 `OPENAI_API_KEY`와 `OPENAI_MODEL`을 읽습니다.
 
 권장 위치는 `backend\.env`입니다. 루트 `.env`도 읽을 수 있지만, 백엔드 전용 설정은 `backend\.env`가 우선입니다.
 
 ```env
 RUN_LIVE_LLM_TESTS=1
-PROXY_TOKEN=실제_토큰
-OPENAI_MODEL=openai/gpt-4.1-mini
-CHAT_PROXY_URL=https://mlapi.run/.../v1
+OPENAI_API_KEY=실제_OpenAI_API_키
+OPENAI_MODEL=gpt-4.1-mini
 LIVE_LLM_TIMEOUT_SECONDS=60
 ```
 
 주의:
 
 - `.env` 파일은 Git에 커밋하지 않습니다.
-- 토큰 값이 `여기에 토큰 입력` 또는 `여기에 api key 입력` 그대로면 live 테스트가 skip됩니다.
+- API 키 값이 `여기에 OpenAI API 키 입력` 또는 `여기에 api key 입력` 그대로면 live 테스트가 skip됩니다.
 - 실제 API를 호출하므로 비용, 네트워크 상태, 모델 응답 변화의 영향을 받을 수 있습니다.
 
 PowerShell에서 `.env` 대신 직접 환경 변수를 넣어 실행할 수도 있습니다.
 
 ```powershell
 $env:RUN_LIVE_LLM_TESTS = "1"
-$env:PROXY_TOKEN = "실제_토큰"
-$env:OPENAI_MODEL = "openai/gpt-4.1-mini"
-$env:CHAT_PROXY_URL = "https://mlapi.run/.../v1"
+$env:OPENAI_API_KEY = "실제_OpenAI_API_키"
+$env:OPENAI_MODEL = "gpt-4.1-mini"
 $env:LIVE_LLM_TIMEOUT_SECONDS = "60"
 ```
 
@@ -124,7 +122,7 @@ python -m pytest backend\tests\live_llm\test_general_preference_live.py -m live_
 
 ```text
 model: 설정한 모델명
-proxy_enabled: true
+openai_enabled: true
 timeout_seconds: 설정한 timeout
 ```
 
@@ -167,8 +165,8 @@ timeout_seconds: 설정한 timeout
 ## 8. 실패했을 때 확인 순서
 
 1. 기본 테스트가 실패하면 API 키 문제가 아니라 코드 변경 또는 테스트 데이터 문제입니다.
-2. live 테스트가 skip되면 `RUN_LIVE_LLM_TESTS=1`과 `PROXY_TOKEN` 설정을 확인합니다.
-3. live 테스트가 인증 오류로 실패하면 `PROXY_TOKEN`과 `CHAT_PROXY_URL`을 확인합니다.
+2. live 테스트가 skip되면 `RUN_LIVE_LLM_TESTS=1`과 `OPENAI_API_KEY` 설정을 확인합니다.
+3. live 테스트가 인증 오류로 실패하면 `OPENAI_API_KEY`를 확인합니다.
 4. live 테스트가 timeout이면 `LIVE_LLM_TIMEOUT_SECONDS`를 늘려 다시 실행합니다.
 5. 특정 자연어 케이스만 실패하면 모델 응답 변화일 수 있으므로 trace의 case 이름과 실패 assertion을 함께 공유합니다.
 
@@ -191,4 +189,3 @@ python -m pytest backend\tests\test_session_state_agent.py backend\tests\test_co
 ```powershell
 python -m pytest backend\tests\live_llm -m live_llm -v -s
 ```
-

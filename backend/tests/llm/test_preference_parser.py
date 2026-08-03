@@ -9,11 +9,8 @@ from typing import Any
 import pytest
 
 from backend.app.models import PreferenceParseStatus, PreferenceRules, time_to_minutes
-from backend.app.services.llm_preference_parser import (
-    has_proxy_token,
-    load_proxy_env,
-    parse_preferences_with_trace,
-)
+from backend.app.services.llm_preference_parser import load_proxy_env, parse_preferences_with_trace
+from backend.app.services.openai_client import has_openai_api_key
 
 
 CASES_PATH = Path(__file__).with_name("cases") / "preference_cases.json"
@@ -147,8 +144,8 @@ def test_llm_preference_cases(case: dict[str, Any]) -> None:
     load_proxy_env()
     import os
 
-    if not has_proxy_token(os.getenv("PROXY_TOKEN")):
-        pytest.skip("PROXY_TOKEN is not configured; skipping real LLM evaluation")
+    if not has_openai_api_key(os.getenv("OPENAI_API_KEY")):
+        pytest.skip("OPENAI_API_KEY is not configured; skipping real LLM evaluation")
 
     result = parse_preferences_with_trace(free_text=case["input"])
     trace_ids = _trace_ids(result)
