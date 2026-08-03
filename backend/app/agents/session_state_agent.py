@@ -430,11 +430,17 @@ class SessionStateAgent:
                 if max_tool_calls is None
                 else max_tool_calls
             )
+        if max_tool_calls is None:
+            max_tool_calls = DEFAULT_MAX_TOTAL_TOOL_CALLS
+        if max_tool_calls < 1:
+            raise ValueError("max_tool_calls must be at least 1")
         if max_mutation_tool_calls < 0:
             raise ValueError("max_mutation_tool_calls must not be negative")
+        if max_mutation_tool_calls > max_tool_calls:
+            raise ValueError("max_mutation_tool_calls must not exceed max_tool_calls")
         self.model = model
         self.tools = tools
-        self.max_total_tool_calls = max_tool_calls or DEFAULT_MAX_TOTAL_TOOL_CALLS
+        self.max_total_tool_calls = max_tool_calls
         self.max_mutation_tool_calls = max_mutation_tool_calls
         self.system_prompt = system_prompt or load_session_state_agent_prompt()
 
@@ -459,12 +465,21 @@ class SessionStateAgent:
         mutation_tool_call_count = 0
         last_summary: SessionStateSummary | None = None
 
-        initial = self._execute_tool(
-            "get_session_summary",
-            {"session_id": request.session_id},
-            executed,
-            request_id=request.request_id,
-        )
+        try:
+            initial = self._execute_tool(
+                "get_session_summary",
+                {"session_id": request.session_id},
+                executed,
+                request_id=request.request_id,
+            )
+        except Exception:
+            return self._internal_tool_error(
+                request,
+                "get_session_summary",
+                executed,
+                last_summary,
+                changed,
+            )
         if not initial.result.success:
             return self._session_error(request, initial.result, executed)
         last_summary = initial.result.state_summary
@@ -493,12 +508,21 @@ class SessionStateAgent:
 
             unresolved_requests.extend(model_response.unresolved_requests)
             if not model_response.tool_calls:
-                final = self._execute_tool(
-                    "get_session_summary",
-                    {"session_id": request.session_id},
-                    executed,
-                    request_id=request.request_id,
-                )
+                try:
+                    final = self._execute_tool(
+                        "get_session_summary",
+                        {"session_id": request.session_id},
+                        executed,
+                        request_id=request.request_id,
+                    )
+                except Exception:
+                    return self._internal_tool_error(
+                        request,
+                        "get_session_summary",
+                        executed,
+                        last_summary,
+                        changed,
+                    )
                 if not final.result.success:
                     return self._tool_failure(request, final.result, executed, last_summary, changed)
                 failed_tools = _failed_tools(executed)
@@ -567,7 +591,8 @@ class SessionStateAgent:
 
                 arguments = {**tool_call.arguments}
                 if "session_id" in _TOOL_INPUT_MODELS[tool_call.name].model_fields:
-                    arguments.setdefault("session_id", request.session_id)
+                    # Tool calls must operate on the URL session, never on a model-supplied session id.
+                    arguments["session_id"] = request.session_id
                 validation_error = self._validate_tool_arguments(tool_call.name, arguments)
                 if validation_error is not None:
                     return self._invalid_tool_arguments(
@@ -587,12 +612,21 @@ class SessionStateAgent:
                 if len(executed) >= self.max_total_tool_calls:
                     return self._limit_error(request, executed, last_summary)
 
-                result = self._execute_tool(
-                    tool_call.name,
-                    arguments,
-                    executed,
-                    request_id=request.request_id,
-                )
+                try:
+                    result = self._execute_tool(
+                        tool_call.name,
+                        arguments,
+                        executed,
+                        request_id=request.request_id,
+                    )
+                except Exception:
+                    return self._internal_tool_error(
+                        request,
+                        tool_call.name,
+                        executed,
+                        last_summary,
+                        changed,
+                    )
                 if not self._is_read_only_tool(tool_call.name):
                     mutation_tool_call_count += 1
                 discovery_result = _agent_discovery_result(tool_call.name, result.result)
@@ -867,6 +901,39 @@ class SessionStateAgent:
                 message=str(first["msg"]),
                 tool_name=tool_name,
                 field=field,
+            ),
+        )
+
+    @staticmethod
+    def _internal_tool_error(
+        request: SessionStateAgentInput,
+        tool_name: str,
+        executed: list[ExecutedSessionTool],
+        state_summary: SessionStateSummary | None,
+        changed: bool,
+    ) -> SessionStateAgentResult:
+        logger.exception(
+            "session_state_agent_tool_unhandled_exception",
+            extra={
+                "session_id": request.session_id,
+                "request_id": request.request_id,
+                "tool_name": tool_name,
+            },
+        )
+        return SessionStateAgentResult(
+            success=False,
+            session_id=request.session_id,
+            request_id=request.request_id,
+            message="도구 실행 중 오류가 발생했습니다.",
+            changed=changed,
+            partially_applied=changed,
+            state_summary=state_summary,
+            executed_tools=executed,
+            failed_tools=_failed_tools(executed),
+            error=SessionStateAgentError(
+                code=SessionStateAgentErrorCode.INTERNAL_ERROR,
+                message="internal tool execution error",
+                tool_name=tool_name,
             ),
         )
 

@@ -55,16 +55,33 @@ class RecordingTools(SessionStateToolset):
     def __init__(self, wrapped: SessionStateToolset) -> None:
         self.wrapped = wrapped
         self.calls: list[tuple[str, dict[str, object]]] = []
+        self.results: list[Any] = []
 
     def has_tool(self, name: str) -> bool:
         return self.wrapped.has_tool(name)
 
     def run(self, name: str, arguments):
         self.calls.append((name, dict(arguments)))
-        return self.wrapped.run(name, arguments)
+        result = self.wrapped.run(name, arguments)
+        self.results.append(result)
+        return result
 
     def specs(self):
         return self.wrapped.specs()
+
+
+class ExplodingTools(RecordingTools):
+    def __init__(self, wrapped: SessionStateToolset, *, fail_on: str) -> None:
+        super().__init__(wrapped)
+        self.fail_on = fail_on
+
+    def run(self, name: str, arguments):
+        self.calls.append((name, dict(arguments)))
+        if name == self.fail_on:
+            raise RuntimeError("raw repository failure")
+        result = self.wrapped.run(name, arguments)
+        self.results.append(result)
+        return result
 
 
 def _now() -> datetime:
@@ -789,6 +806,127 @@ def test_model_failure_is_sanitized_and_external_llm_is_not_required() -> None:
     assert result.error is not None
     assert result.error.code == SessionStateAgentErrorCode.MODEL_CALL_FAILED
     assert "raw provider failure" not in result.message
+
+
+def test_model_supplied_session_id_is_overridden_by_request_session_id() -> None:
+    ids = iter(["url-session", "other-session"])
+    service = SessionService(
+        InMemorySessionRepository(),
+        session_ttl=timedelta(minutes=30),
+        now_provider=MutableClock(_now()),
+        session_id_provider=lambda: next(ids),
+    )
+    url_session_id = _create_session(service)
+    other_session_id = _create_session(service)
+    tools = RecordingTools(
+        SessionStateToolset.from_agent_and_discovery_tools(
+            SessionAgentTools(service),
+            CourseDiscoveryTools(CourseDiscoveryService(InMemoryCatalogRepository())),
+        )
+    )
+    agent = SessionStateAgent(
+        model=ScriptedModel(
+            {
+                "tool_calls": [
+                    _tool(
+                        "update_timetable_preferences",
+                        session_id=other_session_id,
+                        hard={"required_free_days": ["FRI"]},
+                    )
+                ]
+            },
+            {"message": "반영했습니다.", "tool_calls": []},
+        ),
+        tools=tools,
+    )
+
+    result = _run(agent, url_session_id)
+
+    assert result.success is True
+    assert tools.calls[1][0] == "update_timetable_preferences"
+    assert tools.calls[1][1]["session_id"] == url_session_id
+    assert tools.results[1].session_id == url_session_id
+    assert result.state_summary is not None
+    assert result.state_summary.session_id == url_session_id
+    assert service.get_session(url_session_id).hard_constraints.required_free_days == [Day.FRI]
+    assert service.get_session(other_session_id).hard_constraints.required_free_days == []
+
+
+def test_unexpected_tool_exception_returns_structured_internal_error() -> None:
+    service = _service()
+    wrapped = SessionStateToolset.from_agent_and_discovery_tools(
+        SessionAgentTools(service),
+        CourseDiscoveryTools(CourseDiscoveryService(InMemoryCatalogRepository())),
+    )
+    tools = ExplodingTools(wrapped, fail_on="reset_session_preferences")
+    agent = SessionStateAgent(
+        model=ScriptedModel(
+            {
+                "tool_calls": [
+                    _tool(
+                        "update_timetable_preferences",
+                        hard={"required_free_days": ["FRI"]},
+                    ),
+                    _tool("reset_session_preferences", target="all"),
+                ]
+            }
+        ),
+        tools=tools,
+    )
+    session_id = _create_session(service)
+
+    result = _run(agent, session_id, request_id="req-internal")
+
+    assert result.success is False
+    assert result.changed is True
+    assert result.partially_applied is True
+    assert result.request_id == "req-internal"
+    assert result.error is not None
+    assert result.error.code == SessionStateAgentErrorCode.INTERNAL_ERROR
+    assert result.error.tool_name == "reset_session_preferences"
+    assert "raw repository failure" not in result.message
+    assert "raw repository failure" not in result.error.message
+    assert [tool.name for tool in result.executed_tools] == [
+        "get_session_summary",
+        "update_timetable_preferences",
+    ]
+    assert result.failed_tools == []
+    assert service.get_session(session_id).hard_constraints.required_free_days == [Day.FRI]
+
+
+@pytest.mark.parametrize(
+    ("max_tool_calls", "max_mutation_tool_calls", "message"),
+    [
+        (0, 0, "max_tool_calls must be at least 1"),
+        (-1, 0, "max_tool_calls must be at least 1"),
+        (1, -1, "max_mutation_tool_calls must not be negative"),
+        (1, 2, "max_mutation_tool_calls must not exceed max_tool_calls"),
+    ],
+)
+def test_tool_call_limit_configuration_rejects_invalid_values(
+    max_tool_calls: int,
+    max_mutation_tool_calls: int,
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        SessionStateAgent(
+            model=ScriptedModel({"tool_calls": []}),
+            tools=SessionStateToolset({}),
+            max_tool_calls=max_tool_calls,
+            max_mutation_tool_calls=max_mutation_tool_calls,
+        )
+
+
+def test_tool_call_limit_configuration_accepts_boundary_values() -> None:
+    agent = SessionStateAgent(
+        model=ScriptedModel({"tool_calls": []}),
+        tools=SessionStateToolset({}),
+        max_tool_calls=1,
+        max_mutation_tool_calls=0,
+    )
+
+    assert agent.max_total_tool_calls == 1
+    assert agent.max_mutation_tool_calls == 0
 
 
 def test_result_tool_records_are_ordered_and_final_summary_matches_storage() -> None:
