@@ -28,6 +28,7 @@ class GenerationFailureCode(str, Enum):
 
 
 class TimetableViolationCode(str, Enum):
+    INVALID_VALIDATION_REQUEST = "INVALID_VALIDATION_REQUEST"
     TIME_CONFLICT = "TIME_CONFLICT"
     DUPLICATE_COURSE = "DUPLICATE_COURSE"
     MISSING_REQUIRED_COURSE = "MISSING_REQUIRED_COURSE"
@@ -37,6 +38,12 @@ class TimetableViolationCode(str, Enum):
     LATEST_END_VIOLATION = "LATEST_END_VIOLATION"
     DEPARTMENT_INELIGIBLE = "DEPARTMENT_INELIGIBLE"
     CAMPUS_MOVEMENT_VIOLATION = "CAMPUS_MOVEMENT_VIOLATION"
+
+
+class SearchTerminationReason(str, Enum):
+    SEARCH_EXHAUSTED = "SEARCH_EXHAUSTED"
+    MAX_RESULTS_REACHED = "MAX_RESULTS_REACHED"
+    MAX_SEARCH_NODES_REACHED = "MAX_SEARCH_NODES_REACHED"
 
 
 class _Model(BaseModel):
@@ -256,6 +263,7 @@ class TimetableGenerationResult(_Model):
     total_candidates_found: int = Field(default=0, ge=0)
     search_nodes_visited: int = Field(default=0, ge=0)
     search_truncated: bool = False
+    termination_reason: SearchTerminationReason = SearchTerminationReason.SEARCH_EXHAUSTED
     failure_reasons: list[GenerationFailureReason] = Field(default_factory=list)
     message: str
     error: TimetableGenerationError | None = None

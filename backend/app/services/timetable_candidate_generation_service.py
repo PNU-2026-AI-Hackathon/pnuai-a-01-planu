@@ -9,6 +9,7 @@ from ..models.timetable_generation import (
     GeneratedTimetableCandidate,
     GenerationFailureCode,
     GenerationFailureReason,
+    SearchTerminationReason,
     SectionSource,
     TimetableGenerationError,
     TimetableGenerationRequest,
@@ -52,7 +53,7 @@ class TimetableCandidateGenerationService:
             return self._result(
                 candidates=[],
                 nodes=0,
-                truncated=False,
+                termination_reason=SearchTerminationReason.SEARCH_EXHAUSTED,
                 failures=failures,
                 error=TimetableGenerationError(
                     code=GenerationFailureCode.INVALID_GENERATION_REQUEST,
@@ -82,7 +83,7 @@ class TimetableCandidateGenerationService:
             return self._result(
                 candidates=[],
                 nodes=0,
-                truncated=False,
+                termination_reason=SearchTerminationReason.SEARCH_EXHAUSTED,
                 failures=failures,
                 error=TimetableGenerationError(
                     code=GenerationFailureCode.FIXED_TIMETABLE_CONFLICT,
@@ -106,7 +107,7 @@ class TimetableCandidateGenerationService:
             return self._result(
                 candidates=[],
                 nodes=0,
-                truncated=False,
+                termination_reason=SearchTerminationReason.SEARCH_EXHAUSTED,
                 failures=failures,
                 error=TimetableGenerationError(
                     code=GenerationFailureCode.REQUIRED_COURSE_UNAVAILABLE,
@@ -125,8 +126,13 @@ class TimetableCandidateGenerationService:
             for course_id in request.ordered_candidate_course_ids
             if course_id in candidates_by_course
         ]
+        # Explore constrained courses first while keeping the order deterministic.
         ordered_course_ids.sort(
-            key=lambda course_id: (course_id not in unresolved_required, course_id)
+            key=lambda course_id: (
+                course_id not in unresolved_required,
+                len(candidates_by_course[course_id]),
+                course_id,
+            )
         )
 
         target_count = request.target_additional_course_count
@@ -141,20 +147,20 @@ class TimetableCandidateGenerationService:
             )
 
         results: list[GeneratedTimetableCandidate] = []
+        seen_candidate_ids: set[str] = set()
         nodes = 0
-        truncated = False
+        termination_reason = SearchTerminationReason.SEARCH_EXHAUSTED
 
         def backtrack(
             index: int,
             selected: list[CourseSection],
             selected_course_ids: set[str],
         ) -> None:
-            nonlocal nodes, truncated
-            if truncated or len(results) >= request.max_results:
-                truncated = True
+            nonlocal nodes, termination_reason
+            if termination_reason is not SearchTerminationReason.SEARCH_EXHAUSTED:
                 return
             if nodes >= request.max_search_nodes:
-                truncated = True
+                termination_reason = SearchTerminationReason.MAX_SEARCH_NODES_REACHED
                 failures.add(
                     GenerationFailureCode.SEARCH_LIMIT_REACHED,
                     "탐색 노드 제한에 도달해 생성을 중단했습니다.",
@@ -190,10 +196,16 @@ class TimetableCandidateGenerationService:
                 ):
                     self._append_candidate(
                         results,
+                        seen_candidate_ids=seen_candidate_ids,
                         fixed_sections=fixed_sections,
                         added_sections=selected,
                         request=request,
                     )
+                    if len(results) >= request.max_results:
+                        termination_reason = SearchTerminationReason.MAX_RESULTS_REACHED
+                        return
+                    if target_count is not None and len(selected) >= target_count:
+                        return
                 elif index >= len(ordered_course_ids):
                     failures.add(
                         GenerationFailureCode.TARGET_COURSE_COUNT_UNREACHABLE,
@@ -246,7 +258,7 @@ class TimetableCandidateGenerationService:
                                 constraint=violation.constraint,
                             )
                     if nodes >= request.max_search_nodes:
-                        truncated = True
+                        termination_reason = SearchTerminationReason.MAX_SEARCH_NODES_REACHED
                         failures.add(
                             GenerationFailureCode.SEARCH_LIMIT_REACHED,
                             "탐색 노드 제한에 도달해 생성을 중단했습니다.",
@@ -261,7 +273,7 @@ class TimetableCandidateGenerationService:
                     [*selected, section],
                     {*selected_course_ids, course_id},
                 )
-                if truncated:
+                if termination_reason is not SearchTerminationReason.SEARCH_EXHAUSTED:
                     return
             if must_take and not accepted_branch:
                 failures.add(
@@ -281,7 +293,7 @@ class TimetableCandidateGenerationService:
         return self._result(
             candidates=results,
             nodes=nodes,
-            truncated=truncated,
+            termination_reason=termination_reason,
             failures=failures,
             error=None,
         )
@@ -323,6 +335,7 @@ class TimetableCandidateGenerationService:
         self,
         results: list[GeneratedTimetableCandidate],
         *,
+        seen_candidate_ids: set[str],
         fixed_sections: list[CourseSection],
         added_sections: list[CourseSection],
         request: TimetableGenerationRequest,
@@ -339,13 +352,22 @@ class TimetableCandidateGenerationService:
         )
         if not validation.valid:
             return
-        section_ids = [section.section_id for section in all_sections]
+        ordered_added_sections = sorted(
+            added_sections,
+            key=lambda section: (section.course_id, section.section_id),
+        )
+        ordered_sections = [*fixed_sections, *ordered_added_sections]
+        section_ids = [section.section_id for section in ordered_sections]
+        candidate_id = GeneratedTimetableCandidate.build_id(section_ids)
+        if candidate_id in seen_candidate_ids:
+            return
+        seen_candidate_ids.add(candidate_id)
         results.append(GeneratedTimetableCandidate(
-            candidate_id=GeneratedTimetableCandidate.build_id(section_ids),
+            candidate_id=candidate_id,
             section_ids=section_ids,
             fixed_section_ids=[section.section_id for section in fixed_sections],
-            added_section_ids=[section.section_id for section in added_sections],
-            course_ids=[section.course_id for section in all_sections],
+            added_section_ids=[section.section_id for section in ordered_added_sections],
+            course_ids=[section.course_id for section in ordered_sections],
             total_credits=sum(section.credit for section in all_sections),
             validation=validation,
             generation_order=len(results) + 1,
@@ -356,7 +378,7 @@ class TimetableCandidateGenerationService:
         *,
         candidates: list[GeneratedTimetableCandidate],
         nodes: int,
-        truncated: bool,
+        termination_reason: SearchTerminationReason,
         failures: "_FailureCollector",
         error: TimetableGenerationError | None,
     ) -> TimetableGenerationResult:
@@ -371,7 +393,9 @@ class TimetableCandidateGenerationService:
             candidates=candidates,
             total_candidates_found=len(candidates),
             search_nodes_visited=nodes,
-            search_truncated=truncated,
+            search_truncated=termination_reason
+            is not SearchTerminationReason.SEARCH_EXHAUSTED,
+            termination_reason=termination_reason,
             failure_reasons=failures.reasons(),
             message=message,
             error=error,
@@ -439,6 +463,7 @@ def _failure_code_for_violation(
     if fixed:
         return GenerationFailureCode.FIXED_TIMETABLE_CONFLICT
     return {
+        TimetableViolationCode.INVALID_VALIDATION_REQUEST: GenerationFailureCode.INVALID_GENERATION_REQUEST,
         TimetableViolationCode.TIME_CONFLICT: GenerationFailureCode.TIME_CONFLICT,
         TimetableViolationCode.DUPLICATE_COURSE: GenerationFailureCode.DUPLICATE_COURSE,
         TimetableViolationCode.MISSING_REQUIRED_COURSE: GenerationFailureCode.REQUIRED_COURSE_UNAVAILABLE,

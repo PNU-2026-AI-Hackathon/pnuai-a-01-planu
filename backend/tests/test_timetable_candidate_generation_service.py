@@ -5,6 +5,7 @@ from backend.app.models.course import Category, ClassTime, Course, Day
 from backend.app.models.course_discovery import CatalogKind
 from backend.app.models.timetable_generation import (
     GenerationFailureCode,
+    SearchTerminationReason,
     SectionSource,
     TimetableGenerationRequest,
     TimetableValidationRequest,
@@ -253,10 +254,82 @@ def test_limits_and_order_are_deterministic() -> None:
     second = _service(_repo()).generate(request)
 
     assert first.search_truncated is True
+    assert first.termination_reason == SearchTerminationReason.MAX_RESULTS_REACHED
     assert [candidate.candidate_id for candidate in first.candidates] == [
         candidate.candidate_id for candidate in second.candidates
     ]
     assert first.candidates[0].added_section_ids == second.candidates[0].added_section_ids
+    assert first.termination_reason == second.termination_reason
+
+
+def test_duplicate_candidates_are_not_returned_when_target_count_is_met_early() -> None:
+    result = _service(_repo()).generate(
+        TimetableGenerationRequest(
+            candidate_course_ids=["G101", "G102", "G103"],
+            candidate_section_sources_by_course={
+                "G101": [_source("general", "G101-001")],
+                "G102": [_source("general", "G102-001")],
+                "G103": [_source("general", "G103-001")],
+            },
+            target_additional_course_count=1,
+            max_results=10,
+        )
+    )
+
+    candidate_ids = [candidate.candidate_id for candidate in result.candidates]
+
+    assert len(candidate_ids) == len(set(candidate_ids))
+    assert len(result.candidates) == 3
+    assert result.termination_reason == SearchTerminationReason.SEARCH_EXHAUSTED
+
+
+def test_max_results_is_filled_with_distinct_candidates() -> None:
+    result = _service(_repo()).generate(
+        TimetableGenerationRequest(
+            candidate_course_ids=["G101", "G102", "G103", "G104"],
+            candidate_section_sources_by_course={
+                "G101": [_source("general", "G101-001")],
+                "G102": [_source("general", "G102-001")],
+                "G103": [_source("general", "G103-001")],
+                "G104": [_source("general", "G104-001")],
+            },
+            target_additional_course_count=1,
+            max_results=3,
+        )
+    )
+
+    candidate_ids = [candidate.candidate_id for candidate in result.candidates]
+
+    assert len(result.candidates) == 3
+    assert len(candidate_ids) == len(set(candidate_ids))
+    assert len({tuple(candidate.section_ids) for candidate in result.candidates}) == 3
+    assert result.termination_reason == SearchTerminationReason.MAX_RESULTS_REACHED
+    assert not any(
+        reason.code == GenerationFailureCode.SEARCH_LIMIT_REACHED
+        for reason in result.failure_reasons
+    )
+
+
+def test_search_node_limit_has_its_own_termination_reason() -> None:
+    result = _service(_repo()).generate(
+        TimetableGenerationRequest(
+            candidate_course_ids=["G101", "G102"],
+            candidate_section_sources_by_course={
+                "G101": [_source("general", "G101-001")],
+                "G102": [_source("general", "G102-001")],
+            },
+            target_additional_course_count=1,
+            max_results=10,
+            max_search_nodes=1,
+        )
+    )
+
+    assert result.search_truncated is True
+    assert result.termination_reason == SearchTerminationReason.MAX_SEARCH_NODES_REACHED
+    assert any(
+        reason.code == GenerationFailureCode.SEARCH_LIMIT_REACHED
+        for reason in result.failure_reasons
+    )
 
 
 def test_validation_service_and_tools_do_not_change_state_or_score() -> None:
@@ -291,3 +364,25 @@ def test_validation_service_and_tools_do_not_change_state_or_score() -> None:
     }
     assert generated.success is True
     assert not hasattr(generated.candidates[0], "score")
+
+
+def test_invalid_validation_request_is_not_reported_as_missing_course() -> None:
+    repo = _repo()
+    tools = TimetableGenerationTools(
+        generation_service=_service(repo),
+        validation_service=TimetableCandidateValidationService(catalog_repository=repo),
+    )
+
+    validation = tools.validate_timetable_candidate(
+        {
+            "section_sources": [],
+            "earliest_start_time": "bad-time",
+        }
+    )
+
+    assert validation.valid is False
+    assert validation.violations[0].code == TimetableViolationCode.INVALID_VALIDATION_REQUEST
+    assert all(
+        violation.code != TimetableViolationCode.MISSING_REQUIRED_COURSE
+        for violation in validation.violations
+    )

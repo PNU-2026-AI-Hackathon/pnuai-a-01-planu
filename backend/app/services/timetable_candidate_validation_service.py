@@ -38,7 +38,7 @@ class TimetableCandidateValidationService:
                 valid=False,
                 violations=[
                     TimetableViolation(
-                        code=TimetableViolationCode.MISSING_REQUIRED_COURSE,
+                        code=TimetableViolationCode.INVALID_VALIDATION_REQUEST,
                         message=str(exc),
                         constraint="section_sources",
                     )

@@ -93,7 +93,7 @@ class TimetableGenerationTools:
                 valid=False,
                 violations=[
                     TimetableViolation(
-                        code=TimetableViolationCode.MISSING_REQUIRED_COURSE,
+                        code=TimetableViolationCode.INVALID_VALIDATION_REQUEST,
                         message=str(exc.errors()[0]["msg"]),
                         constraint=".".join(str(part) for part in exc.errors()[0]["loc"]),
                     )
