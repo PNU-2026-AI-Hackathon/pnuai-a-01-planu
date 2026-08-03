@@ -1,6 +1,9 @@
 """Agent execution layers for PlaNU."""
 
 from .session_state_agent import (
+    AgentCourseCandidate,
+    AgentDiscoveryResult,
+    ConfirmationRequest,
     DEFAULT_MAX_MUTATION_TOOL_CALLS,
     DEFAULT_MAX_TOOL_CALLS,
     ExecutedSessionTool,
@@ -16,6 +19,9 @@ from .session_state_agent import (
 )
 
 __all__ = [
+    "AgentCourseCandidate",
+    "AgentDiscoveryResult",
+    "ConfirmationRequest",
     "DEFAULT_MAX_TOOL_CALLS",
     "DEFAULT_MAX_MUTATION_TOOL_CALLS",
     "ExecutedSessionTool",

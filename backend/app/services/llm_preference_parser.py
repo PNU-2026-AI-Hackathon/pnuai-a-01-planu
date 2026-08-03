@@ -5,10 +5,7 @@ from __future__ import annotations
 import json
 import os
 import sys
-import urllib.error
-import urllib.request
 from collections.abc import Callable
-from pathlib import Path
 from typing import Any
 
 from pydantic import ValidationError
@@ -22,12 +19,22 @@ from ..models.preference import (
     PreferenceTraceEvent,
     merge_preference_rules,
 )
+from .openai_client import (
+    DEFAULT_OPENAI_BASE_URL,
+    DEFAULT_OPENAI_MODEL,
+    OPENAI_API_KEY_PLACEHOLDER,
+    OPENAI_API_KEY_PLACEHOLDERS,
+    chat_completions_url,
+    has_openai_api_key,
+    load_openai_env,
+    normalize_openai_model_name,
+    request_chat_completions,
+)
 
 
-DEFAULT_CHAT_PROXY_URL = "https://mlapi.run/4bbd0c4d-bf02-4e59-a635-457b1c30c56a/v1"
-DEFAULT_OPENAI_MODEL = "openai/gpt-4.1-mini"
-PROXY_TOKEN_PLACEHOLDER = "여기에 토큰 입력"
-PROXY_TOKEN_PLACEHOLDERS = {PROXY_TOKEN_PLACEHOLDER, "여기에 api key 입력"}
+DEFAULT_CHAT_PROXY_URL = DEFAULT_OPENAI_BASE_URL
+PROXY_TOKEN_PLACEHOLDER = OPENAI_API_KEY_PLACEHOLDER
+PROXY_TOKEN_PLACEHOLDERS = OPENAI_API_KEY_PLACEHOLDERS
 
 
 SYSTEM_PROMPT = """You are PlaNU's preference parser.
@@ -132,39 +139,13 @@ LLMProvider = Callable[[dict[str, Any]], Any]
 
 
 def load_proxy_env() -> None:
-    """Load proxy settings from .env files without requiring python-dotenv.
+    """Backward-compatible wrapper for loading OpenAI settings from .env files.
 
     PlaNU keeps secrets in ``backend/.env``. Values already exported in the
     shell still win, but root ``.env`` no longer masks backend-specific values.
     """
 
-    for path in _candidate_env_paths():
-        if not path.exists():
-            continue
-        for line in path.read_text(encoding="utf-8").splitlines():
-            stripped = line.strip()
-            if not stripped or stripped.startswith("#") or "=" not in stripped:
-                continue
-            key, value = stripped.split("=", 1)
-            key = key.strip()
-            value = value.strip().strip('"').strip("'")
-            os.environ.setdefault(key, value)
-
-
-def _candidate_env_paths() -> list[Path]:
-    cwd = Path.cwd()
-    module_root = Path(__file__).resolve().parents[3]
-    backend_env = module_root / "backend" / ".env"
-    candidates = [
-        backend_env,
-        cwd / ".env",
-        module_root / ".env",
-    ]
-    unique: list[Path] = []
-    for path in candidates:
-        if path not in unique:
-            unique.append(path)
-    return unique
+    load_openai_env()
 
 
 def extract_agent_events(result: Any) -> list[dict[str, Any]]:
@@ -232,11 +213,9 @@ def extract_final_text(result: Any) -> str:
 
 
 def has_proxy_token(value: str | None) -> bool:
-    """Return whether a PROXY_TOKEN value looks usable."""
+    """Backward-compatible wrapper for OPENAI_API_KEY validation."""
 
-    if not value:
-        return False
-    return value.strip() not in PROXY_TOKEN_PLACEHOLDERS
+    return has_openai_api_key(value)
 
 
 def trace_dict_or_none(value: Any) -> dict[str, Any] | None:
@@ -255,15 +234,6 @@ def should_use_direct_proxy_client() -> bool:
     return sys.version_info >= (3, 14)
 
 
-def chat_completions_url(base_url: str) -> str:
-    """Return the OpenAI-compatible chat completions endpoint URL."""
-
-    stripped = base_url.rstrip("/")
-    if stripped.endswith("/chat/completions"):
-        return stripped
-    return f"{stripped}/chat/completions"
-
-
 class LLMPreferenceParser:
     """Convert free text into validated ``PreferenceRules`` with trace details."""
 
@@ -273,12 +243,15 @@ class LLMPreferenceParser:
         llm: Any | None = None,
         model_name: str | None = None,
         base_url: str | None = None,
-    ) -> None:
+        ) -> None:
         load_proxy_env()
         self.llm = llm
-        self.model_name = model_name or os.getenv("OPENAI_MODEL", DEFAULT_OPENAI_MODEL)
-        self.proxy_token = os.getenv("PROXY_TOKEN")
-        self.base_url = base_url or os.getenv("CHAT_PROXY_URL", DEFAULT_CHAT_PROXY_URL)
+        self.model_name = normalize_openai_model_name(
+            model_name or os.getenv("OPENAI_MODEL", DEFAULT_OPENAI_MODEL)
+        )
+        self.api_key = os.getenv("OPENAI_API_KEY")
+        self.proxy_token = self.api_key
+        self.base_url = base_url or os.getenv("OPENAI_BASE_URL", DEFAULT_CHAT_PROXY_URL)
 
     def parse(
         self,
@@ -449,17 +422,21 @@ class LLMPreferenceParser:
         return output
 
     def _build_default_llm(self) -> Any:
-        if not has_proxy_token(self.proxy_token):
-            raise RuntimeError("PROXY_TOKEN is not configured")
+        if not has_openai_api_key(self.api_key):
+            raise RuntimeError("OPENAI_API_KEY is not configured")
         try:
             from langchain_openai import ChatOpenAI
         except ImportError as exc:
             raise RuntimeError("langchain_openai is not installed") from exc
+        kwargs: dict[str, Any] = {
+            "model": self.model_name,
+            "api_key": self.api_key,
+            "temperature": 0,
+        }
+        if self.base_url != DEFAULT_OPENAI_BASE_URL:
+            kwargs["base_url"] = self.base_url
         return ChatOpenAI(
-            model=self.model_name,
-            api_key=self.proxy_token,
-            base_url=self.base_url,
-            temperature=0,
+            **kwargs,
         )
 
     def _invoke_openai_compatible_tool_call(
@@ -473,7 +450,7 @@ class LLMPreferenceParser:
             trace,
             name="openai_compatible_tool_call",
             purpose=(
-                "Call the proxy chat-completions API directly with function tools "
+                "Call the OpenAI Chat Completions API directly with function tools "
                 "on Python 3.14+"
             ),
             status=PreferenceToolStatus.STARTED,
@@ -484,27 +461,16 @@ class LLMPreferenceParser:
                 "free_text_length": len(payload["free_text"]),
             },
         )
-        if not has_proxy_token(self.proxy_token):
-            raise RuntimeError("PROXY_TOKEN is not configured")
+        if not has_openai_api_key(self.api_key):
+            raise RuntimeError("OPENAI_API_KEY is not configured")
 
         request_payload = self._tool_call_request_payload(payload)
-        request = urllib.request.Request(
-            chat_completions_url(self.base_url),
-            data=json.dumps(request_payload, ensure_ascii=False).encode("utf-8"),
-            headers={
-                "Authorization": f"Bearer {self.proxy_token}",
-                "Content-Type": "application/json",
-            },
-            method="POST",
+        response_payload = request_chat_completions(
+            request_payload,
+            api_key=self.api_key,
+            base_url=self.base_url,
+            timeout_seconds=60,
         )
-        try:
-            with urllib.request.urlopen(request, timeout=60) as response:
-                response_payload = json.loads(response.read().decode("utf-8"))
-        except urllib.error.HTTPError as exc:
-            body = exc.read().decode("utf-8", errors="replace")
-            raise RuntimeError(f"proxy returned HTTP {exc.code}: {body}") from exc
-        except urllib.error.URLError as exc:
-            raise RuntimeError(f"proxy request failed: {exc.reason}") from exc
 
         raw_output = self._rules_from_chat_completions_response(
             response_payload,
@@ -516,7 +482,7 @@ class LLMPreferenceParser:
             trace,
             name="openai_compatible_tool_call",
             purpose=(
-                "Call the proxy chat-completions API directly with function tools "
+                "Call the OpenAI Chat Completions API directly with function tools "
                 "on Python 3.14+"
             ),
             status=PreferenceToolStatus.SUCCESS,
@@ -563,11 +529,11 @@ class LLMPreferenceParser:
     ) -> dict[str, Any]:
         choices = response_payload.get("choices") or []
         if not choices:
-            raise ValueError("proxy response did not include choices")
+            raise ValueError("OpenAI response did not include choices")
         message = choices[0].get("message") or {}
         tool_calls = message.get("tool_calls") or []
         if not tool_calls:
-            raise ValueError("proxy response did not include a tool call")
+            raise ValueError("OpenAI response did not include a tool call")
 
         tool_call = tool_calls[0]
         function = tool_call.get("function") or {}
@@ -617,15 +583,15 @@ class LLMPreferenceParser:
             name="langchain_agent",
             purpose="Run a LangChain agent that must call the preference parser tool",
             status=PreferenceToolStatus.STARTED,
-            message="Starting proxy-backed LangChain agent.",
+            message="Starting OpenAI-backed LangChain agent.",
             input={
                 "model": self.model_name,
                 "base_url": self.base_url,
                 "free_text_length": len(payload["free_text"]),
             },
         )
-        if not has_proxy_token(self.proxy_token):
-            raise RuntimeError("PROXY_TOKEN is not configured")
+        if not has_openai_api_key(self.api_key):
+            raise RuntimeError("OPENAI_API_KEY is not configured")
         try:
             from langchain.agents import create_agent
             from langchain.agents.structured_output import ToolStrategy
@@ -649,7 +615,7 @@ class LLMPreferenceParser:
             name="langchain_agent",
             purpose="Run a LangChain agent that must call the preference parser tool",
             status=PreferenceToolStatus.SUCCESS,
-            message="Proxy-backed LangChain agent completed.",
+            message="OpenAI-backed LangChain agent completed.",
             output={
                 "event_count": len(agent_events),
                 "output_type": type(raw_output).__name__,
@@ -1107,13 +1073,13 @@ def run_interactive_cli() -> int:
     """Prompt loop for manually inspecting tool calls and trace output."""
 
     load_proxy_env()
-    model = os.getenv("OPENAI_MODEL", DEFAULT_OPENAI_MODEL)
-    base_url = os.getenv("CHAT_PROXY_URL", DEFAULT_CHAT_PROXY_URL)
-    has_token = has_proxy_token(os.getenv("PROXY_TOKEN"))
+    model = normalize_openai_model_name(os.getenv("OPENAI_MODEL", DEFAULT_OPENAI_MODEL))
+    base_url = os.getenv("OPENAI_BASE_URL", DEFAULT_CHAT_PROXY_URL)
+    has_token = has_openai_api_key(os.getenv("OPENAI_API_KEY"))
     print("PlaNU LLM preference parser")
     print(f"- model: {model}")
-    print(f"- chat_proxy_url: {base_url}")
-    print(f"- proxy_token_configured: {has_token}")
+    print(f"- openai_base_url: {base_url}")
+    print(f"- openai_api_key_configured: {has_token}")
     print("프롬프트를 입력하세요. 종료하려면 빈 줄 또는 Ctrl+C를 입력하세요.")
     while True:
         try:

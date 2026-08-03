@@ -261,14 +261,13 @@ python -m pytest backend\tests -m "not llm_live" -v
 python -m pytest backend\tests -m llm_live -v
 ```
 
-실제 LLM 파서 테스트는 비용과 네트워크 상태의 영향을 받으므로 기본 테스트에서 제외됩니다. 운영 경로와 같은 LLM/proxy를 호출하려면 명시적으로 환경 변수를 설정한 뒤 `live_llm` marker만 실행합니다. 인증값은 로그에 출력하지 않으며, trace에는 모델명, proxy 사용 여부, case 이름, latency, 성공/실패 요약만 남깁니다.
+실제 LLM 파서 테스트는 비용과 네트워크 상태의 영향을 받으므로 기본 테스트에서 제외됩니다. 운영 경로와 같은 OpenAI API를 호출하려면 명시적으로 환경 변수를 설정한 뒤 `live_llm` marker만 실행합니다. 인증값은 로그에 출력하지 않으며, trace에는 모델명, case 이름, latency, 성공/실패 요약만 남깁니다.
 
 ```bash
 cd C:\hackerton
 set RUN_LIVE_LLM_TESTS=1
-set PROXY_TOKEN=...
-set OPENAI_MODEL=openai/gpt-4.1-mini
-set CHAT_PROXY_URL=https://mlapi.run/.../v1
+set OPENAI_API_KEY=...
+set OPENAI_MODEL=gpt-4.1-mini
 python -m pytest backend\tests\live_llm -m live_llm -v -s
 ```
 
@@ -277,9 +276,8 @@ PowerShell을 쓰는 경우:
 ```powershell
 cd C:\hackerton
 $env:RUN_LIVE_LLM_TESTS = "1"
-$env:PROXY_TOKEN = "..."
-$env:OPENAI_MODEL = "openai/gpt-4.1-mini"
-$env:CHAT_PROXY_URL = "https://mlapi.run/.../v1"
+$env:OPENAI_API_KEY = "..."
+$env:OPENAI_MODEL = "gpt-4.1-mini"
 python -m pytest backend\tests\live_llm -m live_llm -v -s
 ```
 
@@ -291,7 +289,7 @@ python -m pytest backend\tests\live_llm\test_general_preference_live.py -m live_
 python -m pytest backend\tests\live_llm\test_live_llm_smoke.py -m live_llm -v -s
 ```
 
-`RUN_LIVE_LLM_TESTS=1`이 없거나 `PROXY_TOKEN`이 설정되지 않은 경우 실제 호출 없이 skip됩니다. timeout은 기본 60초이며 필요하면 `LIVE_LLM_TIMEOUT_SECONDS`로 조정할 수 있습니다.
+`RUN_LIVE_LLM_TESTS=1`이 없거나 `OPENAI_API_KEY`가 설정되지 않은 경우 실제 호출 없이 skip됩니다. timeout은 기본 60초이며 필요하면 `LIVE_LLM_TIMEOUT_SECONDS`로 조정할 수 있습니다.
 
 <br/>
 

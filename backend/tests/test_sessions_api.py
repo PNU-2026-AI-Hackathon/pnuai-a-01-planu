@@ -70,6 +70,23 @@ class ScriptedModel:
         return self.responses.pop(0)
 
 
+class ExplodingTools(SessionStateToolset):
+    def __init__(self, wrapped: SessionStateToolset, *, fail_on: str) -> None:
+        self.wrapped = wrapped
+        self.fail_on = fail_on
+
+    def has_tool(self, name: str) -> bool:
+        return self.wrapped.has_tool(name)
+
+    def run(self, name: str, arguments):
+        if name == self.fail_on:
+            raise RuntimeError("raw service failure")
+        return self.wrapped.run(name, arguments)
+
+    def specs(self):
+        return self.wrapped.specs()
+
+
 def _agent_for_store(store: SessionStore, model=None) -> SessionStateAgent:
     session_service = SessionService(SessionStoreRepository(store))
     discovery_service = CourseDiscoveryService(SessionStoreCatalogRepository(store))
@@ -79,6 +96,24 @@ def _agent_for_store(store: SessionStore, model=None) -> SessionStateAgent:
             SessionAgentTools(session_service),
             CourseDiscoveryTools(discovery_service),
         ),
+    )
+
+
+def _exploding_agent_for_store(
+    store: SessionStore,
+    model,
+    *,
+    fail_on: str,
+) -> SessionStateAgent:
+    session_service = SessionService(SessionStoreRepository(store))
+    discovery_service = CourseDiscoveryService(SessionStoreCatalogRepository(store))
+    tools = SessionStateToolset.from_agent_and_discovery_tools(
+        SessionAgentTools(session_service),
+        CourseDiscoveryTools(discovery_service),
+    )
+    return SessionStateAgent(
+        model=model,
+        tools=ExplodingTools(tools, fail_on=fail_on),
     )
 
 
@@ -331,6 +366,50 @@ def test_simple_agent_partially_applies_resolved_conditions_when_course_missing(
     assert body["changed"] is True
     assert body["partially_applied"] is True
     assert body["unresolved_requests"]
+    saved = store.get(session.session_id, touch=False)
+    assert saved.hard_constraints.required_free_days == [Day.FRI]
+
+
+def test_agent_message_tool_exception_returns_structured_agent_error() -> None:
+    store = SessionStore()
+    session = store.create("컴퓨터공학과")
+    model = ScriptedModel(
+        {
+            "tool_calls": [
+                {
+                    "name": "update_timetable_preferences",
+                    "arguments": {"hard": {"required_free_days": ["FRI"]}},
+                },
+                {
+                    "name": "reset_session_preferences",
+                    "arguments": {"target": "all"},
+                },
+            ]
+        }
+    )
+    app.dependency_overrides[get_session_state_agent] = lambda: _exploding_agent_for_store(
+        store,
+        model,
+        fail_on="reset_session_preferences",
+    )
+    client = TestClient(app)
+
+    try:
+        response = client.post(
+            f"/sessions/{session.session_id}/agent/messages",
+            json={"message": "금요일은 비우고 전체 조건은 초기화해줘."},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["success"] is False
+    assert body["changed"] is True
+    assert body["partially_applied"] is True
+    assert body["error"]["code"] == "INTERNAL_ERROR"
+    assert body["error"]["tool_name"] == "reset_session_preferences"
+    assert "raw service failure" not in response.text
     saved = store.get(session.session_id, touch=False)
     assert saved.hard_constraints.required_free_days == [Day.FRI]
 

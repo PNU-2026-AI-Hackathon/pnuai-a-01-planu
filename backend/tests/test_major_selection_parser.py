@@ -13,7 +13,8 @@ import pytest
 from pydantic import ValidationError
 
 from backend.app.models import Category, ClassTime, Course, Day, MajorSelectionParseResult
-from backend.app.services.llm_preference_parser import has_proxy_token, load_proxy_env
+from backend.app.services.llm_preference_parser import load_proxy_env
+from backend.app.services.openai_client import has_openai_api_key
 from backend.app.services.major_course_matcher import (
     INVALID_ZERO_SECTION_REASON,
     MajorCourseMatcher,
@@ -508,8 +509,8 @@ def test_real_llm_major_selection_accuracy_cases_are_opt_in() -> None:
     if os.getenv("RUN_MAJOR_SELECTION_INTEGRATION") != "1":
         pytest.skip("set RUN_MAJOR_SELECTION_INTEGRATION=1 to call the real LLM")
     load_proxy_env()
-    if not has_proxy_token(os.getenv("PROXY_TOKEN")):
-        pytest.skip("PROXY_TOKEN is not configured")
+    if not has_openai_api_key(os.getenv("OPENAI_API_KEY")):
+        pytest.skip("OPENAI_API_KEY is not configured")
 
     cases = [
         {

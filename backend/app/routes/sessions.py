@@ -49,7 +49,7 @@ async def get_major_candidates(
 
 
 @router.post("/{session_id}/agent/messages", response_model=AgentMessageResponse)
-async def post_agent_message(
+def post_agent_message(
     session_id: str,
     request: AgentMessageRequest,
     agent: SessionStateAgent = Depends(get_session_state_agent),
