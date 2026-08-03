@@ -89,6 +89,21 @@ def _repo() -> InMemoryCatalogRepository:
     return repo
 
 
+def _credit_repo() -> InMemoryCatalogRepository:
+    repo = InMemoryCatalogRepository()
+    repo.register(
+        "credits",
+        kind=CatalogKind.ELECTIVE,
+        courses=[
+            _course("C101-001", "저학점A", day=Day.MON, start="09:00", end="10:00", credit=1),
+            _course("C102-001", "저학점B", day=Day.TUE, start="09:00", end="10:00", credit=1),
+            _course("C103-001", "고학점C", day=Day.WED, start="09:00", end="10:00", credit=3),
+            _course("C104-001", "고학점D", day=Day.THU, start="09:00", end="10:00", credit=3),
+        ],
+    )
+    return repo
+
+
 def _source(catalog_id: str, section_id: str) -> SectionSource:
     return SectionSource(catalog_id=catalog_id, section_id=section_id)
 
@@ -330,6 +345,135 @@ def test_search_node_limit_has_its_own_termination_reason() -> None:
         reason.code == GenerationFailureCode.SEARCH_LIMIT_REACHED
         for reason in result.failure_reasons
     )
+
+
+def test_skip_branch_stops_immediately_after_max_results() -> None:
+    request = TimetableGenerationRequest(
+        candidate_course_ids=["G101", "G102"],
+        candidate_section_sources_by_course={
+            "G101": [_source("general", "G101-001")],
+            "G102": [_source("general", "G102-001")],
+        },
+        target_additional_course_count=1,
+        max_results=1,
+        max_search_nodes=10,
+    )
+
+    first = _service(_repo()).generate(request)
+    second = _service(_repo()).generate(request)
+
+    assert len(first.candidates) == 1
+    assert first.termination_reason == SearchTerminationReason.MAX_RESULTS_REACHED
+    assert first.search_nodes_visited == 1
+    assert first.search_nodes_visited == second.search_nodes_visited
+
+
+def test_search_nodes_never_exceed_max_search_nodes() -> None:
+    request = TimetableGenerationRequest(
+        candidate_course_ids=["G101", "G102"],
+        candidate_section_sources_by_course={
+            "G101": [_source("general", "G101-001")],
+            "G102": [_source("general", "G102-001")],
+        },
+        target_additional_course_count=1,
+        max_results=10,
+        max_search_nodes=1,
+    )
+
+    result = _service(_repo()).generate(request)
+
+    assert result.search_nodes_visited <= request.max_search_nodes
+    assert result.termination_reason == SearchTerminationReason.MAX_SEARCH_NODES_REACHED
+    assert any(
+        reason.code == GenerationFailureCode.SEARCH_LIMIT_REACHED
+        for reason in result.failure_reasons
+    )
+
+
+def test_target_credit_unreachable_uses_credit_failure_code() -> None:
+    result = _service(_credit_repo()).generate(
+        TimetableGenerationRequest(
+            candidate_course_ids=["C101", "C102"],
+            candidate_section_sources_by_course={
+                "C101": [_source("credits", "C101-001")],
+                "C102": [_source("credits", "C102-001")],
+            },
+            target_additional_course_count=None,
+            target_additional_credits=3,
+        )
+    )
+
+    assert any(
+        reason.code == GenerationFailureCode.TARGET_CREDITS_UNREACHABLE
+        for reason in result.failure_reasons
+    )
+    assert not all(
+        reason.code == GenerationFailureCode.TARGET_COURSE_COUNT_UNREACHABLE
+        for reason in result.failure_reasons
+    )
+
+
+def test_target_course_count_unreachable_uses_course_count_failure_code() -> None:
+    result = _service(_credit_repo()).generate(
+        TimetableGenerationRequest(
+            candidate_course_ids=["C103"],
+            candidate_section_sources_by_course={
+                "C103": [_source("credits", "C103-001")],
+            },
+            target_additional_course_count=2,
+        )
+    )
+
+    assert any(
+        reason.code == GenerationFailureCode.TARGET_COURSE_COUNT_UNREACHABLE
+        for reason in result.failure_reasons
+    )
+
+
+def test_course_count_and_credit_targets_are_both_hard_constraints() -> None:
+    credit_short = _service(_credit_repo()).generate(
+        TimetableGenerationRequest(
+            candidate_course_ids=["C101", "C102"],
+            candidate_section_sources_by_course={
+                "C101": [_source("credits", "C101-001")],
+                "C102": [_source("credits", "C102-001")],
+            },
+            target_additional_course_count=2,
+            target_additional_credits=5,
+        )
+    )
+    count_short = _service(_credit_repo()).generate(
+        TimetableGenerationRequest(
+            candidate_course_ids=["C103"],
+            candidate_section_sources_by_course={
+                "C103": [_source("credits", "C103-001")],
+            },
+            target_additional_course_count=2,
+            target_additional_credits=3,
+        )
+    )
+    success = _service(_credit_repo()).generate(
+        TimetableGenerationRequest(
+            candidate_course_ids=["C103", "C104"],
+            candidate_section_sources_by_course={
+                "C103": [_source("credits", "C103-001")],
+                "C104": [_source("credits", "C104-001")],
+            },
+            target_additional_course_count=2,
+            target_additional_credits=6,
+        )
+    )
+
+    assert any(
+        reason.code == GenerationFailureCode.TARGET_CREDITS_UNREACHABLE
+        for reason in credit_short.failure_reasons
+    )
+    assert any(
+        reason.code == GenerationFailureCode.TARGET_COURSE_COUNT_UNREACHABLE
+        for reason in count_short.failure_reasons
+    )
+    assert success.success is True
+    assert success.candidates[0].added_section_ids == ["C103-001", "C104-001"]
 
 
 def test_validation_service_and_tools_do_not_change_state_or_score() -> None:

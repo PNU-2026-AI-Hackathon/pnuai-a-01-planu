@@ -171,7 +171,7 @@ class TimetableCandidateGenerationService:
 
             selected_credits = sum(section.credit for section in selected)
             remaining_courses = ordered_course_ids[index:]
-            if not _can_reach_targets(
+            unreachable_reason = _get_unreachable_target_reason(
                 selected_count=len(selected),
                 selected_credits=selected_credits,
                 remaining_sections_by_course=[
@@ -179,11 +179,13 @@ class TimetableCandidateGenerationService:
                 ],
                 target_count=target_count,
                 target_credits=request.target_additional_credits,
-            ):
+            )
+            if unreachable_reason is not None:
+                message, constraint = _unreachable_target_message(unreachable_reason)
                 failures.add(
-                    GenerationFailureCode.TARGET_COURSE_COUNT_UNREACHABLE,
-                    "남은 후보로 목표 조건을 만족할 수 없습니다.",
-                    constraint="target_additional_course_count",
+                    unreachable_reason,
+                    message,
+                    constraint=constraint,
                 )
                 return
 
@@ -207,10 +209,16 @@ class TimetableCandidateGenerationService:
                     if target_count is not None and len(selected) >= target_count:
                         return
                 elif index >= len(ordered_course_ids):
+                    code = _unmet_target_reason(
+                        selected,
+                        target_count=target_count,
+                        target_credits=request.target_additional_credits,
+                    )
+                    message, constraint = _unreachable_target_message(code)
                     failures.add(
-                        GenerationFailureCode.TARGET_COURSE_COUNT_UNREACHABLE,
-                        "목표 과목 수 또는 학점을 만족하지 못했습니다.",
-                        constraint="target",
+                        code,
+                        message,
+                        constraint=constraint,
                     )
                 if index >= len(ordered_course_ids):
                     return
@@ -229,9 +237,22 @@ class TimetableCandidateGenerationService:
             must_take = course_id in unresolved_required
             if not must_take:
                 backtrack(index + 1, selected, selected_course_ids)
+                if termination_reason is not SearchTerminationReason.SEARCH_EXHAUSTED:
+                    return
 
             accepted_branch = False
             for section in candidates_by_course[course_id]:
+                if termination_reason is not SearchTerminationReason.SEARCH_EXHAUSTED:
+                    return
+                if nodes >= request.max_search_nodes:
+                    termination_reason = SearchTerminationReason.MAX_SEARCH_NODES_REACHED
+                    failures.add(
+                        GenerationFailureCode.SEARCH_LIMIT_REACHED,
+                        "탐색 노드 제한에 도달해 생성을 중단했습니다.",
+                        constraint="max_search_nodes",
+                        count=request.max_search_nodes,
+                    )
+                    return
                 nodes += 1
                 validation = self.validation_service.can_add_section(
                     [*fixed_sections, *selected],
@@ -489,23 +510,50 @@ def _targets_met(
     return True
 
 
-def _can_reach_targets(
+def _get_unreachable_target_reason(
     *,
     selected_count: int,
     selected_credits: float,
     remaining_sections_by_course: list[list[CourseSection]],
     target_count: int | None,
     target_credits: float | None,
-) -> bool:
+) -> GenerationFailureCode | None:
     if target_count is not None and selected_count > target_count:
-        return False
+        return GenerationFailureCode.TARGET_COURSE_COUNT_UNREACHABLE
     if target_count is not None and selected_count + len(remaining_sections_by_course) < target_count:
-        return False
+        return GenerationFailureCode.TARGET_COURSE_COUNT_UNREACHABLE
     if target_credits is not None:
         max_remaining = sum(
             max((section.credit for section in sections), default=0)
             for sections in remaining_sections_by_course
         )
         if selected_credits + max_remaining < target_credits:
-            return False
-    return True
+            return GenerationFailureCode.TARGET_CREDITS_UNREACHABLE
+    return None
+
+
+def _unmet_target_reason(
+    selected: list[CourseSection],
+    *,
+    target_count: int | None,
+    target_credits: float | None,
+) -> GenerationFailureCode:
+    if target_count is not None and len(selected) != target_count:
+        return GenerationFailureCode.TARGET_COURSE_COUNT_UNREACHABLE
+    if target_credits is not None and sum(section.credit for section in selected) < target_credits:
+        return GenerationFailureCode.TARGET_CREDITS_UNREACHABLE
+    return GenerationFailureCode.TARGET_COURSE_COUNT_UNREACHABLE
+
+
+def _unreachable_target_message(
+    code: GenerationFailureCode,
+) -> tuple[str, str]:
+    if code is GenerationFailureCode.TARGET_CREDITS_UNREACHABLE:
+        return (
+            "남은 후보의 최대 학점을 포함해도 목표 학점을 만족할 수 없습니다.",
+            "target_additional_credits",
+        )
+    return (
+        "남은 후보로 목표 과목 수를 만족할 수 없습니다.",
+        "target_additional_course_count",
+    )
