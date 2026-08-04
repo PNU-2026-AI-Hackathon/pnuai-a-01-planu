@@ -20,7 +20,13 @@ logger = logging.getLogger(__name__)
 
 
 class TimetableRankingService:
-    """Apply scoring service to candidates and assign deterministic ranks."""
+    """Apply scoring service to candidates and assign deterministic ranks.
+
+    This is a trusted internal API for candidates that should already have
+    passed generation and Hard validation. Ranking is fail-fast: if any
+    candidate is invalid or missing section details, the whole request returns a
+    failure result instead of silently dropping or repairing that candidate.
+    """
 
     def __init__(
         self,

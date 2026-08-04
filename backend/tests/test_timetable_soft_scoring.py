@@ -192,8 +192,10 @@ def test_start_and_end_preferences_are_partial_linear_scores() -> None:
     end_component = _component(scored, ScoreComponentCode.PREFERRED_END_TIME)
     assert start_component.score == 4
     assert start_component.details["max_difference_minutes"] == 60
+    assert start_component.details["violated_days"] == ["MON"]
     assert end_component.score == -8
     assert end_component.details["max_difference_minutes"] == 90
+    assert end_component.details["violated_days"] == ["MON"]
     assert scored.total_score == -4
 
 
@@ -239,6 +241,15 @@ def test_compact_schedule_counts_only_between_classes_on_same_day() -> None:
     assert component.details["total_gap_minutes"] == 180
     assert component.details["long_gap_count"] == 1
     assert component.score == -6
+    assert component.satisfied is False
+    assert any(
+        item.code is PreferenceEvidenceCode.COMPACT_SCHEDULE_MODERATE
+        for item in scored.unsatisfied_preferences
+    )
+    assert not any(
+        item.code is PreferenceEvidenceCode.COMPACT_SCHEDULE_MODERATE
+        for item in scored.satisfied_preferences
+    )
     assert scored.trade_offs[0].values["gaps_by_day"] == {"MON": [180]}
 
 
@@ -301,7 +312,7 @@ def test_scores_are_absolute_not_relative_and_allow_values_above_100() -> None:
     assert with_other.ranked_candidates[0].total_score == solo.total_score
 
 
-def test_ranking_tie_breakers_are_stable_and_not_input_order() -> None:
+def test_empty_soft_preferences_do_not_use_gap_as_tie_breaker() -> None:
     no_gap = _candidate("c-no-gap", ["A-001", "B-001"], order=1)
     gap = _candidate("a-gap", ["C-001", "D-001"], order=2)
     sections = [
@@ -319,10 +330,134 @@ def test_ranking_tie_breakers_are_stable_and_not_input_order() -> None:
     )
 
     assert [item.candidate_id for item in ranked.ranked_candidates] == [
-        "c-no-gap",
         "a-gap",
+        "c-no-gap",
     ]
     assert [item.rank for item in ranked.ranked_candidates] == [1, 2]
+
+
+def test_compact_schedule_true_uses_gap_as_tie_breaker_when_scores_match() -> None:
+    no_gap = _candidate("z-no-gap", ["A-001", "B-001"], order=1)
+    short_gap = _candidate("a-short-gap", ["C-001", "D-001"], order=2)
+    sections = [
+        _section("A-001", "A", day=Day.MON, start="09:00", end="10:00"),
+        _section("B-001", "B", day=Day.MON, start="10:00", end="11:00"),
+        _section("C-001", "C", day=Day.MON, start="09:00", end="10:00"),
+        _section("D-001", "D", day=Day.MON, start="11:00", end="12:00"),
+    ]
+    policy = TimetableScoringPolicy(gap_penalty_per_minute=0, long_gap_penalty=0)
+
+    ranked = TimetableRankingService(policy=policy).rank(
+        candidates=[short_gap, no_gap],
+        sections=_resolved_all(sections),
+        soft_preferences=SoftPreferences(compact_schedule=True),
+        max_ranked_results=2,
+        scoring_policy=policy,
+    )
+
+    assert [item.total_score for item in ranked.ranked_candidates] == [8, 8]
+    assert [item.candidate_id for item in ranked.ranked_candidates] == [
+        "z-no-gap",
+        "a-short-gap",
+    ]
+
+
+def test_latest_end_is_ignored_without_end_time_preference() -> None:
+    early_end = _candidate("z-early-end", ["A-001"])
+    late_end = _candidate("a-late-end", ["B-001"])
+    sections = [
+        _section("A-001", "A", day=Day.MON, start="14:00", end="15:00"),
+        _section("B-001", "B", day=Day.MON, start="17:00", end="18:00"),
+    ]
+
+    ranked = TimetableRankingService().rank(
+        candidates=[early_end, late_end],
+        sections=_resolved_all(sections),
+        soft_preferences=SoftPreferences(),
+        max_ranked_results=2,
+    )
+
+    assert [item.candidate_id for item in ranked.ranked_candidates] == [
+        "a-late-end",
+        "z-early-end",
+    ]
+
+
+def test_latest_end_is_used_when_end_time_preference_is_set_and_scores_match() -> None:
+    early_end = _candidate("z-early-end", ["A-001"])
+    late_end = _candidate("a-late-end", ["B-001"])
+    sections = [
+        _section("A-001", "A", day=Day.MON, start="14:00", end="15:00"),
+        _section("B-001", "B", day=Day.MON, start="17:00", end="18:00"),
+    ]
+
+    ranked = TimetableRankingService().rank(
+        candidates=[late_end, early_end],
+        sections=_resolved_all(sections),
+        soft_preferences=SoftPreferences(preferred_latest_end_time="19:00"),
+        max_ranked_results=2,
+    )
+
+    assert [item.total_score for item in ranked.ranked_candidates] == [10, 10]
+    assert [item.candidate_id for item in ranked.ranked_candidates] == [
+        "z-early-end",
+        "a-late-end",
+    ]
+
+
+def test_compact_schedule_satisfied_evidence_matches_component_status() -> None:
+    sections = [
+        _section("A-001", "A", day=Day.MON, start="09:00", end="10:00"),
+        _section("B-001", "B", day=Day.MON, start="10:30", end="11:30"),
+    ]
+
+    scored = TimetableScoringService().score_candidate(
+        candidate=_candidate("compact-ok", ["A-001", "B-001"]),
+        sections=_resolved_all(sections),
+        soft_preferences=SoftPreferences(compact_schedule=True),
+    )
+
+    component = _component(scored, ScoreComponentCode.COMPACT_SCHEDULE)
+    assert component.satisfied is True
+    assert any(
+        item.code is PreferenceEvidenceCode.COMPACT_SCHEDULE_STRONG
+        for item in scored.satisfied_preferences
+    )
+    assert not any(
+        item.code is PreferenceEvidenceCode.COMPACT_SCHEDULE_STRONG
+        for item in scored.unsatisfied_preferences
+    )
+
+
+def test_time_preference_details_include_all_violated_days() -> None:
+    sections = [
+        _section("M-001", "M", day=Day.MON, start="09:00", end="18:30"),
+        _section("W-001", "W", day=Day.WED, start="09:00", end="16:00"),
+        _section("F-001", "F", day=Day.FRI, start="09:00", end="17:30"),
+        _section("T-001", "T", day=Day.TUE, start="11:00", end="18:30"),
+        _section("R-001", "R", day=Day.THU, start="11:00", end="18:30"),
+    ]
+
+    scored = TimetableScoringService().score_candidate(
+        candidate=_candidate(
+            "violated-days",
+            ["M-001", "W-001", "F-001", "T-001", "R-001"],
+        ),
+        sections=_resolved_all(sections),
+        soft_preferences=SoftPreferences(
+            preferred_earliest_start_time="10:00",
+            preferred_latest_end_time="17:00",
+        ),
+    )
+
+    assert _component(
+        scored,
+        ScoreComponentCode.PREFERRED_START_TIME,
+    ).details["violated_days"] == ["MON", "WED", "FRI"]
+    assert _component(
+        scored,
+        ScoreComponentCode.PREFERRED_END_TIME,
+    ).details["violated_days"] == ["MON", "TUE", "THU", "FRI"]
 
 
 def test_final_tie_uses_candidate_id() -> None:

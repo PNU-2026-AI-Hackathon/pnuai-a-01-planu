@@ -108,6 +108,7 @@ class TimetableScoringService:
             active_policy,
             components,
             satisfied,
+            unsatisfied,
             trade_offs,
         )
 
@@ -140,9 +141,21 @@ class TimetableScoringService:
             trade_offs=trade_offs,
             tie_breaker={
                 "satisfied_count": len(satisfied),
-                "disliked_course_count": len(included_disliked),
-                "total_gap_minutes": gap["total_gap_minutes"],
-                "latest_end_minutes": latest_end,
+                "disliked_course_count": (
+                    len(included_disliked)
+                    if soft_preferences.disliked_course_ids
+                    else 0
+                ),
+                "total_gap_minutes": (
+                    gap["total_gap_minutes"]
+                    if soft_preferences.compact_schedule is True
+                    else 0
+                ),
+                "latest_end_minutes": (
+                    latest_end
+                    if soft_preferences.preferred_latest_end_time is not None
+                    else 0
+                ),
             },
         )
 
@@ -237,6 +250,14 @@ class TimetableScoringService:
             day: max(0, preferred - start)
             for day, start in first_by_day.items()
         }
+        violated_days = [
+            day
+            for day, delta in sorted(
+                early_deltas.items(),
+                key=lambda item: list(Day).index(item[0]),
+            )
+            if delta > 0
+        ]
         max_delta = max(early_deltas.values(), default=0)
         score = policy.preferred_start_time_weight - (
             policy.early_start_penalty_per_minute * sum(early_deltas.values())
@@ -268,6 +289,7 @@ class TimetableScoringService:
                 },
                 "total_early_minutes": sum(early_deltas.values()),
                 "max_difference_minutes": max_delta,
+                "violated_days": [day.value for day in violated_days],
             },
         ))
 
@@ -288,6 +310,14 @@ class TimetableScoringService:
             day: max(0, end - preferred)
             for day, end in last_by_day.items()
         }
+        violated_days = [
+            day
+            for day, delta in sorted(
+                late_deltas.items(),
+                key=lambda item: list(Day).index(item[0]),
+            )
+            if delta > 0
+        ]
         max_delta = max(late_deltas.values(), default=0)
         score = policy.preferred_end_time_weight - (
             policy.late_end_penalty_per_minute * sum(late_deltas.values())
@@ -319,6 +349,7 @@ class TimetableScoringService:
                 },
                 "total_late_minutes": sum(late_deltas.values()),
                 "max_difference_minutes": max_delta,
+                "violated_days": [day.value for day in violated_days],
             },
         ))
 
@@ -389,6 +420,7 @@ class TimetableScoringService:
         policy: TimetableScoringPolicy,
         components: list[ScoreComponent],
         satisfied: list[PreferenceEvidence],
+        unsatisfied: list[PreferenceEvidence],
         trade_offs: list[ScoringTradeOff],
     ) -> None:
         summary = self._gap_summary(sections, policy)
@@ -401,18 +433,20 @@ class TimetableScoringService:
             - policy.gap_penalty_per_minute * summary["total_gap_minutes"]
             - policy.long_gap_penalty * summary["long_gap_count"]
         )
-        satisfied.append(self._evidence(
+        is_satisfied = summary["total_gap_minutes"] <= policy.long_gap_threshold_minutes
+        evidence = self._evidence(
             trade_code,
             ScoreComponentCode.COMPACT_SCHEDULE,
             total_gap_minutes=summary["total_gap_minutes"],
             long_gap_count=summary["long_gap_count"],
-        ))
+        )
+        (satisfied if is_satisfied else unsatisfied).append(evidence)
         components.append(ScoreComponent(
             code=ScoreComponentCode.COMPACT_SCHEDULE,
             label="Compact schedule",
             score=round(score, 6),
             weight=policy.compact_schedule_weight,
-            satisfied=summary["total_gap_minutes"] <= policy.long_gap_threshold_minutes,
+            satisfied=is_satisfied,
             details=summary,
         ))
 
