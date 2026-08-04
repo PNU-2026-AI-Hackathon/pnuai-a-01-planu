@@ -32,6 +32,10 @@ from .session_agent_tools import SessionAgentTools
 from .session_command_tools import SessionCommandTools
 from .session_query_tools import SessionQueryTools
 from .timetable_generation_tools import TimetableGenerationTools
+from .timetable_scoring_tools import (
+    ScoreTimetableCandidateRequest,
+    TimetableScoringTools,
+)
 
 __all__ = [
     "BoolPreferenceInput",
@@ -56,9 +60,11 @@ __all__ = [
     "SessionToolErrorCode",
     "SessionToolResult",
     "SoftPreferencesPatch",
+    "ScoreTimetableCandidateRequest",
     "TextValueInput",
     "TimeInput",
     "TimetableGenerationTools",
+    "TimetableScoringTools",
     "UpdateSelectedMajorCoursesInput",
     "UpdateSessionProfileInput",
     "UpdateTimetablePreferencesInput",
