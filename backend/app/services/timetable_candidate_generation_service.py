@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from collections import Counter
 
-from ..models.course_discovery import CourseSection
 from ..models.timetable_generation import (
     GeneratedTimetableCandidate,
     GenerationFailureCode,
     GenerationFailureReason,
+    ResolvedSection,
     SearchTerminationReason,
     SectionSource,
     TimetableGenerationError,
@@ -91,7 +91,7 @@ class TimetableCandidateGenerationService:
                 ),
             )
 
-        fixed_course_ids = {section.course_id for section in fixed_sections}
+        fixed_course_ids = {item.section.course_id for item in fixed_sections}
         required_course_ids = set(request.required_course_ids)
         unresolved_required = required_course_ids - fixed_course_ids
         available_course_ids = set(candidates_by_course)
@@ -153,7 +153,7 @@ class TimetableCandidateGenerationService:
 
         def backtrack(
             index: int,
-            selected: list[CourseSection],
+            selected: list[ResolvedSection],
             selected_course_ids: set[str],
         ) -> None:
             nonlocal nodes, termination_reason
@@ -169,7 +169,7 @@ class TimetableCandidateGenerationService:
                 )
                 return
 
-            selected_credits = sum(section.credit for section in selected)
+            selected_credits = sum(item.section.credit for item in selected)
             remaining_courses = ordered_course_ids[index:]
             unreachable_reason = _get_unreachable_target_reason(
                 selected_count=len(selected),
@@ -241,7 +241,7 @@ class TimetableCandidateGenerationService:
                     return
 
             accepted_branch = False
-            for section in candidates_by_course[course_id]:
+            for item in candidates_by_course[course_id]:
                 if termination_reason is not SearchTerminationReason.SEARCH_EXHAUSTED:
                     return
                 if nodes >= request.max_search_nodes:
@@ -256,7 +256,7 @@ class TimetableCandidateGenerationService:
                 nodes += 1
                 validation = self.validation_service.can_add_section(
                     [*fixed_sections, *selected],
-                    section,
+                    item,
                     required_course_ids=[],
                     excluded_course_ids=request.excluded_course_ids,
                     required_free_days=request.required_free_days,
@@ -267,14 +267,15 @@ class TimetableCandidateGenerationService:
                 if not validation.valid:
                     for violation in validation.violations:
                         if (
-                            violation.section_id == section.section_id
-                            or section.section_id in violation.conflicting_section_ids
+                            violation.section_id == item.section.section_id
+                            or item.source_key in violation.conflicting_section_ids
+                            or item.section.section_id in violation.conflicting_section_ids
                         ):
                             failures.add(
                                 _failure_code_for_violation(violation.code),
                                 violation.message,
-                                course_id=section.course_id,
-                                section_id=section.section_id,
+                                course_id=item.section.course_id,
+                                section_id=item.source_key,
                                 conflicting_section_ids=violation.conflicting_section_ids,
                                 constraint=violation.constraint,
                             )
@@ -291,7 +292,7 @@ class TimetableCandidateGenerationService:
                 accepted_branch = True
                 backtrack(
                     index + 1,
-                    [*selected, section],
+                    [*selected, item],
                     {*selected_course_ids, course_id},
                 )
                 if termination_reason is not SearchTerminationReason.SEARCH_EXHAUSTED:
@@ -319,35 +320,49 @@ class TimetableCandidateGenerationService:
             error=None,
         )
 
-    def _resolve_sources(self, sources: list[SectionSource]) -> list[CourseSection]:
+    def _resolve_sources(self, sources: list[SectionSource]) -> list[ResolvedSection]:
         sections = [
-            self.catalog_repository.get_section(source.catalog_id, source.section_id)
+            ResolvedSection(
+                catalog_id=source.catalog_id,
+                section=self.catalog_repository.get_section(
+                    source.catalog_id,
+                    source.section_id,
+                ),
+            )
             for source in sources
         ]
-        return sorted(sections, key=lambda section: (section.course_id, section.section_id))
+        return sorted(
+            sections,
+            key=lambda item: (
+                item.section.course_id,
+                item.catalog_id,
+                item.section.section_id,
+            ),
+        )
 
     def _resolve_candidate_sections(
         self,
         request: TimetableGenerationRequest,
-    ) -> dict[str, list[CourseSection]]:
-        result: dict[str, list[CourseSection]] = {}
-        for course_id in request.ordered_candidate_course_ids:
+    ) -> dict[str, list[ResolvedSection]]:
+        result: dict[str, list[ResolvedSection]] = {}
+        for course_id in request.candidate_course_ids_for_search:
             sections = self._resolve_sources(
                 request.candidate_section_sources_by_course[course_id]
             )
-            for section in sections:
-                if section.course_id != course_id:
+            for item in sections:
+                if item.section.course_id != course_id:
                     raise ValueError(
-                        f"section {section.section_id} belongs to {section.course_id}, not {course_id}"
+                        f"section {item.source_key} belongs to {item.section.course_id}, not {course_id}"
                     )
             result[course_id] = sorted(
                 sections,
-                key=lambda section: (
+                key=lambda item: (
                     min(
                         (meeting.day.value, meeting.start_minutes)
-                        for meeting in section.class_times
+                        for meeting in item.section.class_times
                     ),
-                    section.section_id,
+                    item.catalog_id,
+                    item.section.section_id,
                 ),
             )
         return result
@@ -357,8 +372,8 @@ class TimetableCandidateGenerationService:
         results: list[GeneratedTimetableCandidate],
         *,
         seen_candidate_ids: set[str],
-        fixed_sections: list[CourseSection],
-        added_sections: list[CourseSection],
+        fixed_sections: list[ResolvedSection],
+        added_sections: list[ResolvedSection],
         request: TimetableGenerationRequest,
     ) -> None:
         all_sections = [*fixed_sections, *added_sections]
@@ -375,21 +390,29 @@ class TimetableCandidateGenerationService:
             return
         ordered_added_sections = sorted(
             added_sections,
-            key=lambda section: (section.course_id, section.section_id),
+            key=lambda item: (
+                item.section.course_id,
+                item.catalog_id,
+                item.section.section_id,
+            ),
         )
         ordered_sections = [*fixed_sections, *ordered_added_sections]
-        section_ids = [section.section_id for section in ordered_sections]
-        candidate_id = GeneratedTimetableCandidate.build_id(section_ids)
+        section_ids = [item.section.section_id for item in ordered_sections]
+        section_sources = [item.source for item in ordered_sections]
+        candidate_id = GeneratedTimetableCandidate.build_source_id(section_sources)
         if candidate_id in seen_candidate_ids:
             return
         seen_candidate_ids.add(candidate_id)
         results.append(GeneratedTimetableCandidate(
             candidate_id=candidate_id,
             section_ids=section_ids,
-            fixed_section_ids=[section.section_id for section in fixed_sections],
-            added_section_ids=[section.section_id for section in ordered_added_sections],
-            course_ids=[section.course_id for section in ordered_sections],
-            total_credits=sum(section.credit for section in all_sections),
+            section_sources=section_sources,
+            fixed_section_ids=[item.section.section_id for item in fixed_sections],
+            fixed_section_sources=[item.source for item in fixed_sections],
+            added_section_ids=[item.section.section_id for item in ordered_added_sections],
+            added_section_sources=[item.source for item in ordered_added_sections],
+            course_ids=[item.section.course_id for item in ordered_sections],
+            total_credits=sum(item.section.credit for item in all_sections),
             validation=validation,
             generation_order=len(results) + 1,
         ))
@@ -417,7 +440,8 @@ class TimetableCandidateGenerationService:
             search_truncated=termination_reason
             is not SearchTerminationReason.SEARCH_EXHAUSTED,
             termination_reason=termination_reason,
-            failure_reasons=failures.reasons(),
+            failure_reasons=[] if candidates else failures.reasons(),
+            search_diagnostics=failures.reasons(),
             message=message,
             error=error,
         )
@@ -498,14 +522,14 @@ def _failure_code_for_violation(
 
 
 def _targets_met(
-    selected: list[CourseSection],
+    selected: list[ResolvedSection],
     *,
     target_count: int | None,
     target_credits: float | None,
 ) -> bool:
     if target_count is not None and len(selected) != target_count:
         return False
-    if target_credits is not None and sum(section.credit for section in selected) < target_credits:
+    if target_credits is not None and sum(item.section.credit for item in selected) < target_credits:
         return False
     return True
 
@@ -514,7 +538,7 @@ def _get_unreachable_target_reason(
     *,
     selected_count: int,
     selected_credits: float,
-    remaining_sections_by_course: list[list[CourseSection]],
+    remaining_sections_by_course: list[list[ResolvedSection]],
     target_count: int | None,
     target_credits: float | None,
 ) -> GenerationFailureCode | None:
@@ -524,7 +548,7 @@ def _get_unreachable_target_reason(
         return GenerationFailureCode.TARGET_COURSE_COUNT_UNREACHABLE
     if target_credits is not None:
         max_remaining = sum(
-            max((section.credit for section in sections), default=0)
+            max((item.section.credit for item in sections), default=0)
             for sections in remaining_sections_by_course
         )
         if selected_credits + max_remaining < target_credits:
@@ -533,14 +557,14 @@ def _get_unreachable_target_reason(
 
 
 def _unmet_target_reason(
-    selected: list[CourseSection],
+    selected: list[ResolvedSection],
     *,
     target_count: int | None,
     target_credits: float | None,
 ) -> GenerationFailureCode:
     if target_count is not None and len(selected) != target_count:
         return GenerationFailureCode.TARGET_COURSE_COUNT_UNREACHABLE
-    if target_credits is not None and sum(section.credit for section in selected) < target_credits:
+    if target_credits is not None and sum(item.section.credit for item in selected) < target_credits:
         return GenerationFailureCode.TARGET_CREDITS_UNREACHABLE
     return GenerationFailureCode.TARGET_COURSE_COUNT_UNREACHABLE
 

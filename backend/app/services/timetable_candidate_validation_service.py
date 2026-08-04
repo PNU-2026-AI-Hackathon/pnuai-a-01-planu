@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from ..models.timetable_generation import (
+    ResolvedSection,
     TimetableValidationRequest,
     TimetableValidationResult,
     TimetableViolation,
     TimetableViolationCode,
 )
 from ..repositories.catalog_repository import CatalogRepository
+from ..repositories.exceptions import CatalogNotFoundError, SectionNotFoundError
 from .timetable_validation_service import TimetableValidationService
 
 
@@ -30,16 +32,22 @@ class TimetableCandidateValidationService:
     ) -> TimetableValidationResult:
         try:
             sections = [
-                self.catalog_repository.get_section(source.catalog_id, source.section_id)
+                ResolvedSection(
+                    catalog_id=source.catalog_id,
+                    section=self.catalog_repository.get_section(
+                        source.catalog_id,
+                        source.section_id,
+                    ),
+                )
                 for source in request.section_sources
             ]
-        except Exception as exc:
+        except (CatalogNotFoundError, SectionNotFoundError):
             return TimetableValidationResult(
                 valid=False,
                 violations=[
                     TimetableViolation(
                         code=TimetableViolationCode.INVALID_VALIDATION_REQUEST,
-                        message=str(exc),
+                        message="요청한 catalog 또는 section을 찾을 수 없습니다.",
                         constraint="section_sources",
                     )
                 ],

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+from functools import lru_cache
 from pathlib import Path
 
 from .core.errors import AppError
@@ -39,6 +40,7 @@ from .services.session_service import SessionService
 from .services.timetable_generation_service import TimetableGenerationService
 from .services.timetable_candidate_generation_service import TimetableCandidateGenerationService
 from .services.timetable_candidate_validation_service import TimetableCandidateValidationService
+from .services.timetable_validation_service import TimetableValidationService
 from .services.ranking_template_service import RankingTemplateService
 from .services.timetable_ranker import TimetableRanker
 from .services.timetable_ranking_service import TimetableRankingService
@@ -56,21 +58,8 @@ _SESSION_QUERY_TOOLS = SessionQueryTools(_SESSION_SERVICE)
 _SESSION_COMMAND_TOOLS = SessionCommandTools(_SESSION_SERVICE)
 _COURSE_DISCOVERY_SERVICE = CourseDiscoveryService(_CATALOG_REPOSITORY)
 _COURSE_DISCOVERY_TOOLS = CourseDiscoveryTools(_COURSE_DISCOVERY_SERVICE)
-_TIMETABLE_CANDIDATE_VALIDATION_SERVICE = TimetableCandidateValidationService(
-    catalog_repository=_CATALOG_REPOSITORY,
-)
-_TIMETABLE_CANDIDATE_GENERATION_SERVICE = TimetableCandidateGenerationService(
-    catalog_repository=_CATALOG_REPOSITORY,
-)
-_TIMETABLE_GENERATION_TOOLS = TimetableGenerationTools(
-    generation_service=_TIMETABLE_CANDIDATE_GENERATION_SERVICE,
-    validation_service=_TIMETABLE_CANDIDATE_VALIDATION_SERVICE,
-)
-_SESSION_STATE_TOOLSET = SessionStateToolset.from_agent_and_discovery_tools(
-    _SESSION_AGENT_TOOLS,
-    _COURSE_DISCOVERY_TOOLS,
-    _TIMETABLE_GENERATION_TOOLS,
-)
+
+
 def _build_session_state_model() -> SessionStateModel:
     provider = os.getenv("SESSION_STATE_MODEL_PROVIDER", "simple").strip().lower()
     environment = os.getenv("APP_ENV", "development").strip().lower()
@@ -87,18 +76,16 @@ def _build_session_state_model() -> SessionStateModel:
     return SimpleSessionStateModel()
 
 
-_SESSION_STATE_AGENT = SessionStateAgent(
-    model=_build_session_state_model(),
-    tools=_SESSION_STATE_TOOLSET,
-)
-
-
 def get_session_store() -> SessionStore:
     return session_store
 
 
 def get_session_repository() -> SessionRepository:
     return _SESSION_REPOSITORY
+
+
+def get_catalog_repository() -> SessionStoreCatalogRepository:
+    return _CATALOG_REPOSITORY
 
 
 def get_session_service() -> SessionService:
@@ -121,12 +108,75 @@ def get_course_discovery_tools() -> CourseDiscoveryTools:
     return _COURSE_DISCOVERY_TOOLS
 
 
+@lru_cache
+def get_course_restriction_policy() -> CourseRestrictionPolicy:
+    try:
+        rules = load_department_restriction_rules(_COURSE_RESTRICTIONS_PATH)
+    except CourseRestrictionLoadError as exc:
+        raise AppError(
+            "COURSE_RESTRICTION_LOAD_FAILED",
+            "교양 수강 제한 데이터를 로딩하지 못했습니다.",
+            status_code=500,
+        ) from exc
+    return CourseRestrictionPolicy(rules=rules)
+
+
+@lru_cache
+def get_timetable_validation_service() -> TimetableValidationService:
+    return TimetableValidationService(
+        restriction_policy=get_course_restriction_policy(),
+    )
+
+
+@lru_cache
+def get_timetable_candidate_validation_service() -> TimetableCandidateValidationService:
+    return TimetableCandidateValidationService(
+        catalog_repository=get_catalog_repository(),
+        validation_service=get_timetable_validation_service(),
+    )
+
+
+@lru_cache
+def get_timetable_candidate_generation_service() -> TimetableCandidateGenerationService:
+    return TimetableCandidateGenerationService(
+        catalog_repository=get_catalog_repository(),
+        validation_service=get_timetable_validation_service(),
+    )
+
+
+@lru_cache
+def get_timetable_generation_tools() -> TimetableGenerationTools:
+    return TimetableGenerationTools(
+        generation_service=get_timetable_candidate_generation_service(),
+        validation_service=get_timetable_candidate_validation_service(),
+    )
+
+
+@lru_cache
 def get_session_state_toolset() -> SessionStateToolset:
-    return _SESSION_STATE_TOOLSET
+    return SessionStateToolset.from_agent_and_discovery_tools(
+        _SESSION_AGENT_TOOLS,
+        _COURSE_DISCOVERY_TOOLS,
+        get_timetable_generation_tools(),
+    )
 
 
+@lru_cache
 def get_session_state_agent() -> SessionStateAgent:
-    return _SESSION_STATE_AGENT
+    return SessionStateAgent(
+        model=_build_session_state_model(),
+        tools=get_session_state_toolset(),
+    )
+
+
+def clear_dependency_caches() -> None:
+    get_course_restriction_policy.cache_clear()
+    get_timetable_validation_service.cache_clear()
+    get_timetable_candidate_validation_service.cache_clear()
+    get_timetable_candidate_generation_service.cache_clear()
+    get_timetable_generation_tools.cache_clear()
+    get_session_state_toolset.cache_clear()
+    get_session_state_agent.cache_clear()
 
 
 def get_major_selection_parser() -> MajorSelectionParser:
@@ -163,18 +213,6 @@ def get_timetable_ranking_service() -> TimetableRankingService:
         template_service=template_service,
         ranker=TimetableRanker(template_service=template_service),
     )
-
-
-def get_course_restriction_policy() -> CourseRestrictionPolicy:
-    try:
-        rules = load_department_restriction_rules(_COURSE_RESTRICTIONS_PATH)
-    except CourseRestrictionLoadError as exc:
-        raise AppError(
-            "COURSE_RESTRICTION_LOAD_FAILED",
-            "교양 수강 제한 데이터를 로딩하지 못했습니다.",
-            status_code=500,
-        ) from exc
-    return CourseRestrictionPolicy(rules=rules)
 
 
 def get_general_course_pool_service() -> GeneralCoursePoolService:

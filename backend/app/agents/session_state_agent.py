@@ -219,8 +219,11 @@ class AgentTimetableCandidate(BaseModel):
 
     candidate_id: str
     section_ids: list[str]
+    section_sources: list[dict[str, str]] = Field(default_factory=list)
     fixed_section_ids: list[str]
+    fixed_section_sources: list[dict[str, str]] = Field(default_factory=list)
     added_section_ids: list[str]
+    added_section_sources: list[dict[str, str]] = Field(default_factory=list)
     course_ids: list[str]
     total_credits: float
     valid: bool
@@ -1217,8 +1220,19 @@ def _agent_timetable_candidates(
         AgentTimetableCandidate(
             candidate_id=candidate.candidate_id,
             section_ids=list(candidate.section_ids),
+            section_sources=[
+                source.model_dump(mode="json") for source in candidate.section_sources
+            ],
             fixed_section_ids=list(candidate.fixed_section_ids),
+            fixed_section_sources=[
+                source.model_dump(mode="json")
+                for source in candidate.fixed_section_sources
+            ],
             added_section_ids=list(candidate.added_section_ids),
+            added_section_sources=[
+                source.model_dump(mode="json")
+                for source in candidate.added_section_sources
+            ],
             course_ids=list(candidate.course_ids),
             total_credits=candidate.total_credits,
             valid=candidate.validation.valid,
