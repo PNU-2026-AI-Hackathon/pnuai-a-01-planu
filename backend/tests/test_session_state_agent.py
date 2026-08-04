@@ -12,6 +12,7 @@ from backend.app.agent_tools import (
     SessionAgentTools,
     SessionCommandTools,
     SessionQueryTools,
+    TimetableGenerationTools,
 )
 from backend.app.agents import (
     SessionStateAgent,
@@ -22,6 +23,17 @@ from backend.app.models import CatalogKind, Category, ClassTime, Course, Day
 from backend.app.repositories import InMemoryCatalogRepository, InMemorySessionRepository
 from backend.app.services.course_discovery_service import CourseDiscoveryService
 from backend.app.services.session_service import SessionService
+from backend.app.services.timetable_candidate_generation_service import (
+    TimetableCandidateGenerationService,
+)
+from backend.app.services.timetable_candidate_validation_service import (
+    TimetableCandidateValidationService,
+)
+from backend.app.services.timetable_preparation_service import (
+    TimetablePreparationIssueCode,
+    TimetablePreparationOptions,
+    TimetablePreparationService,
+)
 
 
 class MutableClock:
@@ -135,6 +147,14 @@ def _agent_with_discovery(
         SessionStateToolset.from_agent_and_discovery_tools(
             SessionAgentTools(service),
             CourseDiscoveryTools(CourseDiscoveryService(catalog_repository)),
+            TimetableGenerationTools(
+                generation_service=TimetableCandidateGenerationService(
+                    catalog_repository=catalog_repository,
+                ),
+                validation_service=TimetableCandidateValidationService(
+                    catalog_repository=catalog_repository,
+                ),
+            ),
         )
     )
     return (
@@ -984,6 +1004,231 @@ def test_discovery_tools_are_registered_with_single_agent_toolset() -> None:
         "get_session_summary",
         "get_session_summary",
     ]
+
+
+def test_timetable_generation_tools_are_registered_with_single_agent_toolset() -> None:
+    agent, service, tools, _catalogs = _agent_with_discovery(
+        ScriptedModel({"message": "확인했습니다.", "tool_calls": []})
+    )
+    session_id = _create_session(service)
+
+    specs = {spec.name for spec in tools.specs()}
+    result = _run(agent, session_id, "현재 조건을 보여줘")
+
+    assert result.success is True
+    assert {
+        "generate_timetable_candidates",
+        "validate_timetable_candidate",
+    } <= specs
+    assert len(specs) == len(tools.specs())
+
+
+def test_generation_tool_result_is_returned_without_saving_to_session() -> None:
+    agent, service, tools, _catalogs = _agent_with_discovery(
+        ScriptedModel(
+            {
+                "tool_calls": [
+                    _tool(
+                        "generate_timetable_candidates",
+                        fixed_section_sources=[
+                            {"catalog_id": "major-1", "section_id": "MAJ101-001"}
+                        ],
+                        candidate_course_ids=["GEN101"],
+                        candidate_section_sources_by_course={
+                            "GEN101": [
+                                {"catalog_id": "elective-1", "section_id": "GEN101-001"}
+                            ]
+                        },
+                        required_free_days=["FRI"],
+                        department="정보컴퓨터공학부",
+                        target_additional_course_count=1,
+                        max_results=3,
+                        max_search_nodes=100,
+                    )
+                ]
+            },
+            {"message": "현재 조건에서 시간표 후보 1개를 찾았습니다.", "tool_calls": []},
+        )
+    )
+    session_id = _create_session(service)
+    SessionAgentTools(service).update_session_profile(
+        {
+            "session_id": session_id,
+            "department": "정보컴퓨터공학부",
+            "major_catalog_id": "major-1",
+            "elective_catalog_id": "elective-1",
+        }
+    )
+    service.replace_selected_major_courses(session_id, ["MAJ101-001"])
+
+    result = _run(agent, session_id, "금요일 비우고 교양 한 과목 추가한 시간표를 만들어줘")
+
+    assert result.success is True
+    assert result.changed is False
+    assert result.generation_summary is not None
+    assert result.generation_summary.generated_candidate_count == 1
+    assert result.generation_summary.applied_hard_constraints["required_free_days"] == ["FRI"]
+    assert result.timetable_candidates[0].fixed_section_ids == ["MAJ101-001"]
+    assert result.timetable_candidates[0].added_section_ids == ["GEN101-001"]
+    assert result.timetable_candidates[0].valid is True
+    assert service.get_session(session_id).selected_major_course_ids == ["MAJ101-001"]
+    assert [name for name, _args in tools.calls] == [
+        "get_session_summary",
+        "generate_timetable_candidates",
+        "get_session_summary",
+    ]
+
+
+def test_generation_failure_reasons_are_capped_and_user_facing() -> None:
+    agent, service, tools, _catalogs = _agent_with_discovery(
+        ScriptedModel(
+            {
+                "tool_calls": [
+                    _tool(
+                        "generate_timetable_candidates",
+                        fixed_section_sources=[
+                            {"catalog_id": "major-1", "section_id": "MAJ101-001"}
+                        ],
+                        candidate_course_ids=["GEN101"],
+                        candidate_section_sources_by_course={
+                            "GEN101": [
+                                {"catalog_id": "elective-1", "section_id": "GEN101-001"}
+                            ]
+                        },
+                        required_free_days=["WED"],
+                        department="정보컴퓨터공학부",
+                        target_additional_course_count=1,
+                        max_results=3,
+                        max_search_nodes=100,
+                    )
+                ]
+            },
+            {"message": "조건을 만족하는 시간표 후보를 만들지 못했습니다.", "tool_calls": []},
+        )
+    )
+    session_id = _create_session(service)
+
+    result = _run(agent, session_id, "수요일 공강으로 시간표 후보를 만들어줘")
+
+    assert result.success is True
+    assert result.timetable_candidates == []
+    assert result.generation_failure_reasons
+    assert {
+        reason.code for reason in result.generation_failure_reasons
+    } <= {"REQUIRED_FREE_DAY_VIOLATION", "TARGET_COURSE_COUNT_UNREACHABLE"}
+    assert "자동 완화" not in result.message
+    assert "generate_timetable_candidates" in [name for name, _args in tools.calls]
+
+
+def test_validation_tool_result_is_returned_for_explicit_section_check() -> None:
+    agent, service, tools, _catalogs = _agent_with_discovery(
+        ScriptedModel(
+            {
+                "tool_calls": [
+                    _tool(
+                        "validate_timetable_candidate",
+                        section_sources=[
+                            {"catalog_id": "major-1", "section_id": "MAJ101-001"},
+                            {"catalog_id": "elective-1", "section_id": "GEN102-001"},
+                        ],
+                    )
+                ]
+            },
+            {"message": "section 조합을 검증했습니다.", "tool_calls": []},
+        )
+    )
+    session_id = _create_session(service)
+
+    result = _run(agent, session_id, "이 section 조합을 검증해줘")
+
+    assert result.success is True
+    assert result.validation_results[0].valid is False
+    assert "TIME_CONFLICT" in result.validation_results[0].violation_codes
+    assert "generate_timetable_candidates" not in [name for name, _args in tools.calls]
+
+
+def test_preparation_service_builds_generation_request_from_discovery_candidates() -> None:
+    agent, service, tools, _catalogs = _agent_with_discovery(
+        ScriptedModel(
+            {
+                "tool_calls": [
+                    _tool(
+                        "discover_courses",
+                        catalog_id="elective-1",
+                        category="GENERAL_ELECTIVE",
+                        excluded_days=["FRI"],
+                        limit=3,
+                    )
+                ]
+            },
+            {"message": "후보를 찾았습니다.", "tool_calls": []},
+        )
+    )
+    session_id = _create_session(service)
+    SessionAgentTools(service).update_session_profile(
+        {
+            "session_id": session_id,
+            "department": "정보컴퓨터공학부",
+            "major_catalog_id": "major-1",
+            "elective_catalog_id": "elective-1",
+        }
+    )
+    service.replace_selected_major_courses(session_id, ["MAJ101-001"])
+
+    result = _run(agent, session_id, "금요일 없는 교양 후보를 찾아줘")
+    assert result.state_summary is not None
+    discovery = tools.results[1]
+    prepared = TimetablePreparationService().prepare(
+        result.state_summary,
+        TimetablePreparationOptions(
+            candidate_catalog_id="elective-1",
+            discovered_candidates=discovery.candidates,
+            target_additional_course_count=1,
+        ),
+    )
+
+    assert prepared.ready is True
+    assert prepared.request is not None
+    assert prepared.request.fixed_section_sources[0].section_id == "MAJ101-001"
+    assert "GEN103" not in prepared.request.candidate_section_sources_by_course
+    assert len(prepared.request.candidate_section_sources_by_course) == 3
+    assert all(
+        source.catalog_id == "elective-1"
+        for sources in prepared.request.candidate_section_sources_by_course.values()
+        for source in sources
+    )
+
+
+def test_preparation_service_requires_major_section_when_only_course_id_is_selected() -> None:
+    agent, service, _tools, _catalogs = _agent_with_discovery(
+        ScriptedModel({"message": "확인했습니다.", "tool_calls": []})
+    )
+    session_id = _create_session(service)
+    SessionAgentTools(service).update_session_profile(
+        {
+            "session_id": session_id,
+            "department": "정보컴퓨터공학부",
+            "major_catalog_id": "major-1",
+            "elective_catalog_id": "elective-1",
+        }
+    )
+    service.replace_selected_major_courses(session_id, ["MAJ101"])
+
+    result = _run(agent, session_id, "현재 조건을 보여줘")
+    assert result.state_summary is not None
+    prepared = TimetablePreparationService().prepare(
+        result.state_summary,
+        TimetablePreparationOptions(
+            candidate_catalog_id="elective-1",
+            discovered_candidates=[],
+            target_additional_course_count=1,
+        ),
+    )
+
+    assert prepared.ready is False
+    assert TimetablePreparationIssueCode.MAJOR_SECTION_UNCONFIRMED in {
+        issue.code for issue in prepared.issues
+    }
 
 
 def test_explicit_major_course_search_returns_candidate_without_state_change() -> None:

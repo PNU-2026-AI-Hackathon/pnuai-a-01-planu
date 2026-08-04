@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from backend.app.agent_tools.timetable_generation_tools import TimetableGenerationTools
+from backend.app import deps
 from backend.app.models.course import Category, ClassTime, Course, Day
 from backend.app.models.course_discovery import CatalogKind
 from backend.app.models.timetable_generation import (
@@ -112,6 +113,58 @@ def _service(repo: InMemoryCatalogRepository) -> TimetableCandidateGenerationSer
     return TimetableCandidateGenerationService(catalog_repository=repo)
 
 
+def _restricted_tool_repo() -> InMemoryCatalogRepository:
+    repo = InMemoryCatalogRepository()
+    repo.register(
+        "restricted",
+        kind=CatalogKind.ELECTIVE,
+        courses=[
+            _course(
+                "REQ101-001",
+                "열린교필",
+                category=Category.GENERAL_REQUIRED,
+                day=Day.MON,
+                start="09:00",
+                end="10:00",
+            ),
+            _course(
+                "REQ102-001",
+                "규칙없는교필",
+                category=Category.GENERAL_REQUIRED,
+                day=Day.TUE,
+                start="09:00",
+                end="10:00",
+            ),
+        ],
+    )
+    return repo
+
+
+def _restricted_tools(repo: InMemoryCatalogRepository) -> TimetableGenerationTools:
+    validation_service = TimetableValidationService(
+        restriction_policy=CourseRestrictionPolicy(
+            rules=[
+                DepartmentRestrictionRule(
+                    course_code="REQ101",
+                    division="001",
+                    allowed_departments=frozenset({"정보컴퓨터공학부"}),
+                    blocked_departments=frozenset({"기계공학부"}),
+                )
+            ]
+        )
+    )
+    return TimetableGenerationTools(
+        generation_service=TimetableCandidateGenerationService(
+            catalog_repository=repo,
+            validation_service=validation_service,
+        ),
+        validation_service=TimetableCandidateValidationService(
+            catalog_repository=repo,
+            validation_service=validation_service,
+        ),
+    )
+
+
 def test_generation_request_normalizes_duplicates_and_rejects_bad_values() -> None:
     request = TimetableGenerationRequest(
         fixed_section_sources=[
@@ -126,6 +179,8 @@ def test_generation_request_normalizes_duplicates_and_rejects_bad_values() -> No
 
     assert request.fixed_section_sources == [_source("major", "M001-001")]
     assert request.candidate_course_ids == ["G101"]
+    assert request.candidate_course_ids_for_search == ["G101"]
+    assert request.ordered_candidate_course_ids == ["G101"]
 
     try:
         TimetableGenerationRequest(
@@ -137,6 +192,175 @@ def test_generation_request_normalizes_duplicates_and_rejects_bad_values() -> No
         assert "greater than or equal to 0" in str(exc)
     else:
         raise AssertionError("negative target should fail")
+
+
+def test_agent_tool_generation_applies_allowed_department_restriction() -> None:
+    tools = _restricted_tools(_restricted_tool_repo())
+
+    result = tools.generate_timetable_candidates(
+        {
+            "candidate_course_ids": ["REQ101"],
+            "candidate_section_sources_by_course": {
+                "REQ101": [{"catalog_id": "restricted", "section_id": "REQ101-001"}]
+            },
+            "department": "정보컴퓨터공학부",
+            "target_additional_course_count": 1,
+        }
+    )
+
+    assert result.success is True
+    assert result.candidates[0].section_sources == [_source("restricted", "REQ101-001")]
+    assert result.failure_reasons == []
+
+
+def test_dependency_provider_injects_shared_real_restriction_policy(monkeypatch) -> None:
+    rules = [
+        DepartmentRestrictionRule(
+            course_code="REQ101",
+            division="001",
+            allowed_departments=frozenset({"정보컴퓨터공학부"}),
+            blocked_departments=frozenset({"기계공학부"}),
+        )
+    ]
+    monkeypatch.setattr(
+        deps,
+        "load_department_restriction_rules",
+        lambda _path: rules,
+    )
+    deps.clear_dependency_caches()
+
+    validation_service = deps.get_timetable_validation_service()
+    generation_service = deps.get_timetable_candidate_generation_service()
+    candidate_validation_service = deps.get_timetable_candidate_validation_service()
+
+    assert generation_service.validation_service is validation_service
+    assert candidate_validation_service.validation_service is validation_service
+    assert validation_service.restriction_policy.rules_by_course_section
+
+    deps.clear_dependency_caches()
+
+
+def test_agent_tool_generation_rejects_blocked_department() -> None:
+    tools = _restricted_tools(_restricted_tool_repo())
+
+    result = tools.generate_timetable_candidates(
+        {
+            "candidate_course_ids": ["REQ101"],
+            "candidate_section_sources_by_course": {
+                "REQ101": [{"catalog_id": "restricted", "section_id": "REQ101-001"}]
+            },
+            "department": "기계공학부",
+            "target_additional_course_count": 1,
+        }
+    )
+
+    assert result.success is False
+    assert GenerationFailureCode.DEPARTMENT_INELIGIBLE in {
+        reason.code for reason in result.failure_reasons
+    }
+
+
+def test_agent_tool_generation_rejects_missing_general_required_rule() -> None:
+    tools = _restricted_tools(_restricted_tool_repo())
+
+    result = tools.generate_timetable_candidates(
+        {
+            "candidate_course_ids": ["REQ102"],
+            "candidate_section_sources_by_course": {
+                "REQ102": [{"catalog_id": "restricted", "section_id": "REQ102-001"}]
+            },
+            "department": "정보컴퓨터공학부",
+            "target_additional_course_count": 1,
+        }
+    )
+
+    assert result.success is False
+    assert GenerationFailureCode.DEPARTMENT_INELIGIBLE in {
+        reason.code for reason in result.failure_reasons
+    }
+    assert any("규칙" in reason.message for reason in result.failure_reasons)
+
+
+def test_same_section_id_from_different_catalogs_remains_distinct_in_validation() -> None:
+    repo = InMemoryCatalogRepository()
+    repo.register(
+        "catalog-a",
+        kind=CatalogKind.ELECTIVE,
+        courses=[_course("DUP101-001", "중복A", day=Day.MON, start="09:00", end="10:00")],
+    )
+    repo.register(
+        "catalog-b",
+        kind=CatalogKind.ELECTIVE,
+        courses=[_course("DUP101-001", "중복B", day=Day.MON, start="09:30", end="10:30")],
+    )
+    tools = TimetableGenerationTools(
+        generation_service=TimetableCandidateGenerationService(catalog_repository=repo),
+        validation_service=TimetableCandidateValidationService(catalog_repository=repo),
+    )
+
+    result = tools.validate_timetable_candidate(
+        {
+            "section_sources": [
+                {"catalog_id": "catalog-a", "section_id": "DUP101-001"},
+                {"catalog_id": "catalog-b", "section_id": "DUP101-001"},
+            ]
+        }
+    )
+
+    assert result.checked_section_ids == ["DUP101-001", "DUP101-001"]
+    assert result.checked_section_sources == [
+        _source("catalog-a", "DUP101-001"),
+        _source("catalog-b", "DUP101-001"),
+    ]
+
+
+def test_same_section_id_from_different_catalogs_builds_distinct_candidate_ids() -> None:
+    repo = InMemoryCatalogRepository()
+    for catalog_id, course_name in (("catalog-a", "중복A"), ("catalog-b", "중복B")):
+        repo.register(
+            catalog_id,
+            kind=CatalogKind.ELECTIVE,
+            courses=[
+                _course(
+                    "DUP101-001",
+                    course_name,
+                    day=Day.MON,
+                    start="09:00",
+                    end="10:00",
+                ),
+                _course(
+                    "GEN201-001",
+                    "추가교양",
+                    day=Day.TUE,
+                    start="10:00",
+                    end="11:00",
+                ),
+            ],
+        )
+    service = TimetableCandidateGenerationService(catalog_repository=repo)
+
+    first = service.generate(
+        TimetableGenerationRequest(
+            fixed_section_sources=[_source("catalog-a", "DUP101-001")],
+            candidate_course_ids=["GEN201"],
+            candidate_section_sources_by_course={
+                "GEN201": [_source("catalog-a", "GEN201-001")]
+            },
+        )
+    )
+    second = service.generate(
+        TimetableGenerationRequest(
+            fixed_section_sources=[_source("catalog-b", "DUP101-001")],
+            candidate_course_ids=["GEN201"],
+            candidate_section_sources_by_course={
+                "GEN201": [_source("catalog-b", "GEN201-001")]
+            },
+        )
+    )
+
+    assert first.candidates[0].candidate_id != second.candidates[0].candidate_id
+    assert first.candidates[0].fixed_section_sources == [_source("catalog-a", "DUP101-001")]
+    assert second.candidates[0].fixed_section_sources == [_source("catalog-b", "DUP101-001")]
 
 
 def test_generate_prunes_conflicts_and_keeps_one_section_per_course() -> None:
@@ -161,7 +385,11 @@ def test_generate_prunes_conflicts_and_keeps_one_section_per_course() -> None:
         len(candidate.added_section_ids) == len(set(candidate.course_ids) - {"M001"})
         for candidate in result.candidates
     )
-    assert any(reason.code == GenerationFailureCode.TIME_CONFLICT for reason in result.failure_reasons)
+    assert result.failure_reasons == []
+    assert any(
+        reason.code == GenerationFailureCode.TIME_CONFLICT
+        for reason in result.search_diagnostics
+    )
 
 
 def test_fixed_timetable_is_validated_before_search_starts() -> None:

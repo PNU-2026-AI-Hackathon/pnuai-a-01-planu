@@ -38,6 +38,15 @@ from ..models.course_discovery import (
     CourseDiscoveryResult,
     DiscoveryResolution,
 )
+from ..models.timetable_generation import (
+    GeneratedTimetableCandidate,
+    GenerationFailureCode,
+    GenerationFailureReason,
+    TimetableGenerationRequest,
+    TimetableGenerationResult,
+    TimetableValidationRequest,
+    TimetableValidationResult,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +60,8 @@ READ_ONLY_TOOL_NAMES = {
     "discover_courses",
     "get_course_sections",
     "get_section_details",
+    "generate_timetable_candidates",
+    "validate_timetable_candidate",
 }
 
 
@@ -186,6 +197,63 @@ class ConfirmationRequest(BaseModel):
     candidates: list[AgentCourseCandidate] = Field(default_factory=list)
 
 
+class AgentTimetableGenerationSummary(BaseModel):
+    """Compact, user-safe summary of a timetable generation result."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    generated_candidate_count: int
+    total_candidates_found: int
+    search_nodes_visited: int
+    search_truncated: bool
+    termination_reason: str
+    applied_hard_constraints: dict[str, Any] = Field(default_factory=dict)
+    target_additional_course_count: int | None = None
+    target_additional_credits: float | None = None
+
+
+class AgentTimetableCandidate(BaseModel):
+    """A generated timetable candidate safe to return from an agent run."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    candidate_id: str
+    section_ids: list[str]
+    section_sources: list[dict[str, str]] = Field(default_factory=list)
+    fixed_section_ids: list[str]
+    fixed_section_sources: list[dict[str, str]] = Field(default_factory=list)
+    added_section_ids: list[str]
+    added_section_sources: list[dict[str, str]] = Field(default_factory=list)
+    course_ids: list[str]
+    total_credits: float
+    valid: bool
+    generation_order: int
+
+
+class AgentGenerationFailureReason(BaseModel):
+    """User-facing generation failure reason capped for agent output."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    code: str
+    message: str
+    course_id: str | None = None
+    section_id: str | None = None
+    constraint: str | None = None
+    count: int = 1
+
+
+class AgentValidationResult(BaseModel):
+    """Compact validation result returned when validation is requested."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    valid: bool
+    checked_section_ids: list[str]
+    violation_codes: list[str] = Field(default_factory=list)
+    violation_messages: list[str] = Field(default_factory=list)
+
+
 class SessionStateAgentResult(BaseModel):
     """Final structured result of a session-state agent run."""
 
@@ -203,6 +271,11 @@ class SessionStateAgentResult(BaseModel):
     unresolved_requests: list[UnresolvedSessionRequest] = Field(default_factory=list)
     discovery_results: list[AgentDiscoveryResult] = Field(default_factory=list)
     candidate_courses: list[AgentCourseCandidate] = Field(default_factory=list)
+    timetable_candidates: list[AgentTimetableCandidate] = Field(default_factory=list)
+    generation_summary: AgentTimetableGenerationSummary | None = None
+    generation_failure_reasons: list[AgentGenerationFailureReason] = Field(default_factory=list)
+    generation_truncated: bool = False
+    validation_results: list[AgentValidationResult] = Field(default_factory=list)
     needs_confirmation: bool = False
     confirmation_request: ConfirmationRequest | None = None
     error: SessionStateAgentError | None = None
@@ -289,20 +362,27 @@ class SessionStateToolset:
         cls,
         session_tools: object,
         discovery_tools: object,
+        timetable_tools: object | None = None,
     ) -> "SessionStateToolset":
-        return cls(
-            {
-                "get_session_summary": session_tools.get_session_summary,
-                "update_session_profile": session_tools.update_session_profile,
-                "update_selected_major_courses": session_tools.update_selected_major_courses,
-                "update_timetable_preferences": session_tools.update_timetable_preferences,
-                "reset_session_preferences": session_tools.reset_session_preferences,
-                "search_courses_by_name": discovery_tools.search_courses_by_name,
-                "discover_courses": discovery_tools.discover_courses,
-                "get_course_sections": discovery_tools.get_course_sections,
-                "get_section_details": discovery_tools.get_section_details,
-            }
-        )
+        tools = {
+            "get_session_summary": session_tools.get_session_summary,
+            "update_session_profile": session_tools.update_session_profile,
+            "update_selected_major_courses": session_tools.update_selected_major_courses,
+            "update_timetable_preferences": session_tools.update_timetable_preferences,
+            "reset_session_preferences": session_tools.reset_session_preferences,
+            "search_courses_by_name": discovery_tools.search_courses_by_name,
+            "discover_courses": discovery_tools.discover_courses,
+            "get_course_sections": discovery_tools.get_course_sections,
+            "get_section_details": discovery_tools.get_section_details,
+        }
+        if timetable_tools is not None:
+            tools.update(
+                {
+                    "generate_timetable_candidates": timetable_tools.generate_timetable_candidates,
+                    "validate_timetable_candidate": timetable_tools.validate_timetable_candidate,
+                }
+            )
+        return cls(tools)
 
     def has_tool(self, name: str) -> bool:
         return name in self._tools
@@ -331,6 +411,8 @@ _TOOL_INPUT_MODELS: dict[str, type[BaseModel]] = {
     "discover_courses": CourseDiscoveryRequest,
     "get_course_sections": CourseSectionsInput,
     "get_section_details": SectionDetailsInput,
+    "generate_timetable_candidates": TimetableGenerationRequest,
+    "validate_timetable_candidate": TimetableValidationRequest,
     "set_department": DepartmentInput,
     "register_major_catalog": CatalogInput,
     "register_elective_catalog": CatalogInput,
@@ -376,6 +458,16 @@ _TOOL_DESCRIPTIONS: dict[str, str] = {
     "discover_courses": "Read-only structured catalog discovery by optional query and filters.",
     "get_course_sections": "Read-only lookup of sections for one course id.",
     "get_section_details": "Read-only lookup of one concrete section id.",
+    "generate_timetable_candidates": (
+        "Generate timetable candidates from structured section sources. Use this only after concrete "
+        "fixed_section_sources and candidate_section_sources_by_course are prepared. Do not pass the full "
+        "natural-language message. Hard constraints filter candidates; Soft preferences are not scored or used "
+        "as final ranking. The result is not saved to session state."
+    ),
+    "validate_timetable_candidate": (
+        "Validate one concrete section combination against Hard rules. This read-only tool does not mutate "
+        "session or catalog state, and Soft preference mismatches are not validation errors."
+    ),
     "set_department": "Set the user's department when the department text is explicit.",
     "register_major_catalog": "Store an already parsed major catalog id.",
     "register_elective_catalog": "Store an already parsed elective catalog id.",
@@ -461,6 +553,8 @@ class SessionStateAgent:
         transcript: list[dict[str, Any]] = []
         unresolved_requests: list[UnresolvedSessionRequest] = []
         discovery_results: list[AgentDiscoveryResult] = []
+        generation_results: list[tuple[TimetableGenerationRequest, TimetableGenerationResult]] = []
+        validation_results: list[AgentValidationResult] = []
         changed = False
         mutation_tool_call_count = 0
         last_summary: SessionStateSummary | None = None
@@ -530,8 +624,16 @@ class SessionStateAgent:
                     _unresolved_requests_from_failed_tools(failed_tools)
                 )
                 candidate_courses = _candidate_courses_from_discovery(discovery_results)
+                generation_request, generation_result = (
+                    generation_results[-1] if generation_results else (None, None)
+                )
                 confirmation_request = _confirmation_request_from_discovery(
                     discovery_results
+                )
+                generation_failure_reasons = (
+                    _agent_generation_failure_reasons(generation_result.failure_reasons)
+                    if generation_result is not None
+                    else []
                 )
                 needs_confirmation = bool(
                     confirmation_request
@@ -557,6 +659,23 @@ class SessionStateAgent:
                     unresolved_requests=unresolved_requests,
                     discovery_results=discovery_results,
                     candidate_courses=candidate_courses,
+                    timetable_candidates=(
+                        _agent_timetable_candidates(generation_result.candidates)
+                        if generation_result is not None
+                        else []
+                    ),
+                    generation_summary=(
+                        _agent_generation_summary(generation_request, generation_result)
+                        if generation_request is not None and generation_result is not None
+                        else None
+                    ),
+                    generation_failure_reasons=generation_failure_reasons,
+                    generation_truncated=(
+                        False
+                        if generation_result is None
+                        else generation_result.search_truncated
+                    ),
+                    validation_results=validation_results,
                     needs_confirmation=needs_confirmation,
                     confirmation_request=confirmation_request,
                     error=(
@@ -632,6 +751,12 @@ class SessionStateAgent:
                 discovery_result = _agent_discovery_result(tool_call.name, result.result)
                 if discovery_result is not None:
                     discovery_results.append(discovery_result)
+                generation_result = _generation_result(tool_call.name, arguments, result.result)
+                if generation_result is not None:
+                    generation_results.append(generation_result)
+                validation_result = _validation_result(tool_call.name, result.result)
+                if validation_result is not None:
+                    validation_results.append(validation_result)
                 changed = changed or bool(getattr(result.result, "changed", False))
                 state_summary = getattr(result.result, "state_summary", None)
                 if state_summary is not None:
@@ -687,7 +812,7 @@ class SessionStateAgent:
         result = self.tools.run(name, arguments)
         error = getattr(result, "error", None)
         changed = bool(getattr(result, "changed", False))
-        success = bool(getattr(result, "success", False))
+        success = _tool_execution_success(name, result)
         message = getattr(result, "message", None)
         session_id = getattr(result, "session_id", None) or arguments.get("session_id")
         error_code = None
@@ -996,6 +1121,170 @@ def _agent_error_from_tool_result(
 
 def _failed_tools(executed: list[ExecutedSessionTool]) -> list[ExecutedSessionTool]:
     return [tool for tool in executed if not tool.success]
+
+
+def _tool_execution_success(name: str, result: Any) -> bool:
+    if name == "generate_timetable_candidates":
+        try:
+            generation = TimetableGenerationResult.model_validate(
+                result.model_dump() if hasattr(result, "model_dump") else result
+            )
+        except ValidationError:
+            return False
+        return generation.error is None
+    if name == "validate_timetable_candidate":
+        try:
+            TimetableValidationResult.model_validate(
+                result.model_dump() if hasattr(result, "model_dump") else result
+            )
+        except ValidationError:
+            return False
+        return True
+    return bool(getattr(result, "success", False))
+
+
+def _generation_result(
+    tool_name: str,
+    arguments: Mapping[str, object],
+    result: Any,
+) -> tuple[TimetableGenerationRequest, TimetableGenerationResult] | None:
+    if tool_name != "generate_timetable_candidates":
+        return None
+    try:
+        request = TimetableGenerationRequest.model_validate(arguments)
+        generation = TimetableGenerationResult.model_validate(
+            result.model_dump() if hasattr(result, "model_dump") else result
+        )
+    except ValidationError:
+        logger.warning("session_state_agent_unexpected_generation_result")
+        return None
+    return request, generation
+
+
+def _validation_result(
+    tool_name: str,
+    result: Any,
+) -> AgentValidationResult | None:
+    if tool_name != "validate_timetable_candidate":
+        return None
+    try:
+        validation = TimetableValidationResult.model_validate(
+            result.model_dump() if hasattr(result, "model_dump") else result
+        )
+    except ValidationError:
+        logger.warning("session_state_agent_unexpected_validation_result")
+        return None
+    return AgentValidationResult(
+        valid=validation.valid,
+        checked_section_ids=list(validation.checked_section_ids),
+        violation_codes=[violation.code.value for violation in validation.violations],
+        violation_messages=[violation.message for violation in validation.violations[:3]],
+    )
+
+
+def _agent_generation_summary(
+    request: TimetableGenerationRequest,
+    result: TimetableGenerationResult,
+) -> AgentTimetableGenerationSummary:
+    applied_hard_constraints: dict[str, Any] = {}
+    if request.required_course_ids:
+        applied_hard_constraints["required_course_ids"] = list(request.required_course_ids)
+    if request.excluded_course_ids:
+        applied_hard_constraints["excluded_course_ids"] = list(request.excluded_course_ids)
+    if request.required_free_days:
+        applied_hard_constraints["required_free_days"] = [
+            day.value for day in request.required_free_days
+        ]
+    if request.earliest_start_time is not None:
+        applied_hard_constraints["earliest_start_time"] = request.earliest_start_time
+    if request.latest_end_time is not None:
+        applied_hard_constraints["latest_end_time"] = request.latest_end_time
+    if request.department is not None:
+        applied_hard_constraints["department"] = request.department
+    return AgentTimetableGenerationSummary(
+        generated_candidate_count=len(result.candidates),
+        total_candidates_found=result.total_candidates_found,
+        search_nodes_visited=result.search_nodes_visited,
+        search_truncated=result.search_truncated,
+        termination_reason=result.termination_reason.value,
+        applied_hard_constraints=applied_hard_constraints,
+        target_additional_course_count=request.target_additional_course_count,
+        target_additional_credits=request.target_additional_credits,
+    )
+
+
+def _agent_timetable_candidates(
+    candidates: list[GeneratedTimetableCandidate],
+) -> list[AgentTimetableCandidate]:
+    return [
+        AgentTimetableCandidate(
+            candidate_id=candidate.candidate_id,
+            section_ids=list(candidate.section_ids),
+            section_sources=[
+                source.model_dump(mode="json") for source in candidate.section_sources
+            ],
+            fixed_section_ids=list(candidate.fixed_section_ids),
+            fixed_section_sources=[
+                source.model_dump(mode="json")
+                for source in candidate.fixed_section_sources
+            ],
+            added_section_ids=list(candidate.added_section_ids),
+            added_section_sources=[
+                source.model_dump(mode="json")
+                for source in candidate.added_section_sources
+            ],
+            course_ids=list(candidate.course_ids),
+            total_credits=candidate.total_credits,
+            valid=candidate.validation.valid,
+            generation_order=candidate.generation_order,
+        )
+        for candidate in sorted(candidates, key=lambda item: item.generation_order)
+    ]
+
+
+def _agent_generation_failure_reasons(
+    reasons: list[GenerationFailureReason],
+    *,
+    limit: int = 3,
+) -> list[AgentGenerationFailureReason]:
+    return [
+        AgentGenerationFailureReason(
+            code=reason.code.value,
+            message=_generation_failure_message(reason),
+            course_id=reason.course_id,
+            section_id=reason.section_id,
+            constraint=reason.constraint,
+            count=reason.count,
+        )
+        for reason in reasons[:limit]
+    ]
+
+
+def _generation_failure_message(reason: GenerationFailureReason) -> str:
+    messages = {
+        GenerationFailureCode.FIXED_TIMETABLE_CONFLICT: (
+            "선택한 전공 분반끼리 시간이 겹치거나 현재 Hard 조건과 충돌합니다."
+        ),
+        GenerationFailureCode.REQUIRED_COURSE_UNAVAILABLE: (
+            "필수로 지정한 과목의 모든 분반이 현재 조건에서 사용할 수 없습니다."
+        ),
+        GenerationFailureCode.CAMPUS_MOVEMENT_VIOLATION: (
+            "연속 수업 사이 캠퍼스 이동이 현재 이동 규칙상 어렵습니다."
+        ),
+        GenerationFailureCode.TARGET_COURSE_COUNT_UNREACHABLE: (
+            "현재 후보와 조건으로는 요청한 과목 수를 채울 수 없습니다."
+        ),
+        GenerationFailureCode.TARGET_CREDITS_UNREACHABLE: (
+            "현재 후보와 조건으로는 요청한 학점을 채울 수 없습니다."
+        ),
+        GenerationFailureCode.SEARCH_LIMIT_REACHED: (
+            "탐색 제한에 도달해 현재 제한 안에서만 후보를 확인했습니다."
+        ),
+        GenerationFailureCode.INVALID_GENERATION_REQUEST: (
+            "시간표 생성 요청의 section 또는 조건 구성이 올바르지 않습니다."
+        ),
+    }
+    return messages.get(reason.code, reason.message)
 
 
 def _unresolved_requests_from_failed_tools(

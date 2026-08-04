@@ -8,6 +8,7 @@ from hashlib import sha256
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .course import Day, time_to_minutes
+from .course_discovery import CourseSection
 
 
 class GenerationFailureCode(str, Enum):
@@ -59,6 +60,28 @@ class SectionSource(_Model):
 
     catalog_id: str = Field(min_length=1)
     section_id: str = Field(min_length=1)
+
+    @property
+    def key(self) -> str:
+        return f"{self.catalog_id}:{self.section_id}"
+
+
+class ResolvedSection(_Model):
+    """A schedulable section resolved from a catalog-aware source."""
+
+    catalog_id: str = Field(min_length=1)
+    section: CourseSection
+
+    @property
+    def source(self) -> SectionSource:
+        return SectionSource(
+            catalog_id=self.catalog_id,
+            section_id=self.section.section_id,
+        )
+
+    @property
+    def source_key(self) -> str:
+        return self.source.key
 
 
 class TimetableGenerationRequest(_Model):
@@ -158,10 +181,18 @@ class TimetableGenerationRequest(_Model):
         return self
 
     @property
-    def ordered_candidate_course_ids(self) -> list[str]:
+    def candidate_course_ids_for_search(self) -> list[str]:
+        """Return a stable search order seed, not the caller's input order."""
+
         if self.candidate_course_ids:
             return sorted(self.candidate_course_ids)
         return sorted(self.candidate_section_sources_by_course)
+
+    @property
+    def ordered_candidate_course_ids(self) -> list[str]:
+        """Deprecated alias; this does not preserve caller input order."""
+
+        return self.candidate_course_ids_for_search
 
 
 class TimetableValidationRequest(_Model):
@@ -224,6 +255,7 @@ class TimetableValidationResult(_Model):
     valid: bool
     violations: list[TimetableViolation] = Field(default_factory=list)
     checked_section_ids: list[str] = Field(default_factory=list)
+    checked_section_sources: list[SectionSource] = Field(default_factory=list)
 
 
 class GenerationFailureReason(_Model):
@@ -239,8 +271,11 @@ class GenerationFailureReason(_Model):
 class GeneratedTimetableCandidate(_Model):
     candidate_id: str = Field(min_length=1)
     section_ids: list[str]
+    section_sources: list[SectionSource] = Field(default_factory=list)
     fixed_section_ids: list[str]
+    fixed_section_sources: list[SectionSource] = Field(default_factory=list)
     added_section_ids: list[str]
+    added_section_sources: list[SectionSource] = Field(default_factory=list)
     course_ids: list[str]
     total_credits: float = Field(ge=0)
     validation: TimetableValidationResult
@@ -249,6 +284,13 @@ class GeneratedTimetableCandidate(_Model):
     @classmethod
     def build_id(cls, section_ids: list[str]) -> str:
         digest = sha256("\n".join(sorted(section_ids)).encode("utf-8")).hexdigest()
+        return f"tt-{digest[:16]}"
+
+    @classmethod
+    def build_source_id(cls, section_sources: list[SectionSource]) -> str:
+        digest = sha256(
+            "\n".join(sorted(source.key for source in section_sources)).encode("utf-8")
+        ).hexdigest()
         return f"tt-{digest[:16]}"
 
 
@@ -265,5 +307,6 @@ class TimetableGenerationResult(_Model):
     search_truncated: bool = False
     termination_reason: SearchTerminationReason = SearchTerminationReason.SEARCH_EXHAUSTED
     failure_reasons: list[GenerationFailureReason] = Field(default_factory=list)
+    search_diagnostics: list[GenerationFailureReason] = Field(default_factory=list)
     message: str
     error: TimetableGenerationError | None = None
