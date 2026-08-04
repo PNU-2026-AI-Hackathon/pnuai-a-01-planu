@@ -3,6 +3,10 @@
 from .session_state_agent import (
     AgentCourseCandidate,
     AgentDiscoveryResult,
+    AgentGenerationFailureReason,
+    AgentTimetableCandidate,
+    AgentTimetableGenerationSummary,
+    AgentValidationResult,
     ConfirmationRequest,
     DEFAULT_MAX_MUTATION_TOOL_CALLS,
     DEFAULT_MAX_TOOL_CALLS,
@@ -21,6 +25,10 @@ from .session_state_agent import (
 __all__ = [
     "AgentCourseCandidate",
     "AgentDiscoveryResult",
+    "AgentGenerationFailureReason",
+    "AgentTimetableCandidate",
+    "AgentTimetableGenerationSummary",
+    "AgentValidationResult",
     "ConfirmationRequest",
     "DEFAULT_MAX_TOOL_CALLS",
     "DEFAULT_MAX_MUTATION_TOOL_CALLS",

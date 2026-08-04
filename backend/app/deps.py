@@ -7,7 +7,13 @@ import os
 from pathlib import Path
 
 from .core.errors import AppError
-from .agent_tools import CourseDiscoveryTools, SessionAgentTools, SessionCommandTools, SessionQueryTools
+from .agent_tools import (
+    CourseDiscoveryTools,
+    SessionAgentTools,
+    SessionCommandTools,
+    SessionQueryTools,
+    TimetableGenerationTools,
+)
 from .agents import SessionStateAgent, SessionStateToolset
 from .agents.simple_session_model import LlmSessionStateModel, SimpleSessionStateModel, SessionStateModel
 from .models.course import Category
@@ -31,6 +37,8 @@ from .services.major_selection_parser import MajorSelectionParser
 from .services.session_store import SessionStore, session_store
 from .services.session_service import SessionService
 from .services.timetable_generation_service import TimetableGenerationService
+from .services.timetable_candidate_generation_service import TimetableCandidateGenerationService
+from .services.timetable_candidate_validation_service import TimetableCandidateValidationService
 from .services.ranking_template_service import RankingTemplateService
 from .services.timetable_ranker import TimetableRanker
 from .services.timetable_ranking_service import TimetableRankingService
@@ -48,9 +56,20 @@ _SESSION_QUERY_TOOLS = SessionQueryTools(_SESSION_SERVICE)
 _SESSION_COMMAND_TOOLS = SessionCommandTools(_SESSION_SERVICE)
 _COURSE_DISCOVERY_SERVICE = CourseDiscoveryService(_CATALOG_REPOSITORY)
 _COURSE_DISCOVERY_TOOLS = CourseDiscoveryTools(_COURSE_DISCOVERY_SERVICE)
+_TIMETABLE_CANDIDATE_VALIDATION_SERVICE = TimetableCandidateValidationService(
+    catalog_repository=_CATALOG_REPOSITORY,
+)
+_TIMETABLE_CANDIDATE_GENERATION_SERVICE = TimetableCandidateGenerationService(
+    catalog_repository=_CATALOG_REPOSITORY,
+)
+_TIMETABLE_GENERATION_TOOLS = TimetableGenerationTools(
+    generation_service=_TIMETABLE_CANDIDATE_GENERATION_SERVICE,
+    validation_service=_TIMETABLE_CANDIDATE_VALIDATION_SERVICE,
+)
 _SESSION_STATE_TOOLSET = SessionStateToolset.from_agent_and_discovery_tools(
     _SESSION_AGENT_TOOLS,
     _COURSE_DISCOVERY_TOOLS,
+    _TIMETABLE_GENERATION_TOOLS,
 )
 def _build_session_state_model() -> SessionStateModel:
     provider = os.getenv("SESSION_STATE_MODEL_PROVIDER", "simple").strip().lower()

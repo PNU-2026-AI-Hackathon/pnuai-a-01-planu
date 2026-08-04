@@ -31,6 +31,7 @@ from .course_discovery_tools import (
 from .session_agent_tools import SessionAgentTools
 from .session_command_tools import SessionCommandTools
 from .session_query_tools import SessionQueryTools
+from .timetable_generation_tools import TimetableGenerationTools
 
 __all__ = [
     "BoolPreferenceInput",
@@ -57,6 +58,7 @@ __all__ = [
     "SoftPreferencesPatch",
     "TextValueInput",
     "TimeInput",
+    "TimetableGenerationTools",
     "UpdateSelectedMajorCoursesInput",
     "UpdateSessionProfileInput",
     "UpdateTimetablePreferencesInput",
