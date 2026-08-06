@@ -4,11 +4,10 @@ import 'package:flutter/material.dart';
 import 'models/app_flow_state.dart';
 import 'models/major_models.dart';
 import 'repositories/major_repository.dart';
-import 'screens/department_select_screen.dart';
+import 'screens/chat_home_screen.dart';
 import 'screens/file_upload_screen2.dart';
 import 'screens/file_upload_screen3.dart';
 import 'screens/general_preference_screen.dart';
-import 'screens/guide_screen.dart';
 import 'screens/major_prompt_screen.dart';
 import 'services/major_api.dart';
 import 'services/planu_api.dart';
@@ -34,32 +33,6 @@ class _PlaNUAppState extends State<PlaNUApp> {
   void _reset() {
     _flow.reset();
     _navigatorKey.currentState!.popUntil((route) => route.isFirst);
-  }
-
-  void _start(BuildContext context) {
-    Navigator.of(context).push<void>(
-      MaterialPageRoute<void>(
-        settings: const RouteSettings(name: '/department'),
-        builder: (departmentContext) => DepartmentSelectScreen(
-          onDepartmentSelected: (department) {
-            _flow.department = department;
-            _openMajorUpload(departmentContext);
-          },
-        ),
-      ),
-    );
-  }
-
-  void _openMajorUpload(BuildContext context) {
-    Navigator.of(context).push<void>(
-      MaterialPageRoute<void>(
-        settings: const RouteSettings(name: '/major-upload'),
-        builder: (uploadContext) => FileUploadScreen2(
-          onPickMajorCatalog: _pickCatalog,
-          onContinue: (file) => _uploadMajor(file, uploadContext),
-        ),
-      ),
-    );
   }
 
   Future<CatalogFile?> _pickCatalog() async {
@@ -153,7 +126,17 @@ class _PlaNUAppState extends State<PlaNUApp> {
     debugShowCheckedModeBanner: false,
     title: 'PlaNU',
     home: Builder(
-      builder: (context) => GuideScreen(onNext: () => _start(context)),
+      builder: (context) => ChatHomeScreen(
+        api: _api,
+        onContinue: (data) {
+          _flow.department = data['selectedDepartment']?.toString() ?? '';
+          _flow.sessionId = data['sessionId']?.toString();
+          _flow.majorCatalogName = data['parsedCourseCount'] != null ? 'uploaded' : null;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('다음 단계 연결은 다음 작업에서 이어집니다.')),
+          );
+        },
+      ),
     ),
   );
 }
