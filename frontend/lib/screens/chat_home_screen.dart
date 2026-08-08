@@ -1,11 +1,11 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:file_picker/file_picker.dart' as picker;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../models/major_models.dart';
-import '../models/quick_preference.dart';
 import '../services/planu_api.dart';
 import 'file_upload_screen2.dart';
 
@@ -36,8 +36,6 @@ class _ChatHomeScreenState extends State<ChatHomeScreen> {
   static const Color _success = Color(0xFF10B981);
 
   final TextEditingController _departmentController = TextEditingController();
-  final TextEditingController _freeTextController = TextEditingController();
-  final FocusNode _freeTextFocusNode = FocusNode();
 
   List<String> _departments = const <String>[];
   String? _selectedDepartment;
@@ -49,7 +47,6 @@ class _ChatHomeScreenState extends State<ChatHomeScreen> {
   String? _sessionId;
   int _parsedCourseCount = 0;
   List<String> _catalogWarnings = const [];
-  Set<QuickPreference> _selectedQuickPreferences = <QuickPreference>{};
   String? _assistantHint;
   bool _isLoadingDepartments = false;
   String? _departmentError;
@@ -62,12 +59,8 @@ class _ChatHomeScreenState extends State<ChatHomeScreen> {
 
   bool get _hasValidUploadedCatalog => _uploadSucceeded && _sessionId != null;
 
-  bool get _hasAnyPreference =>
-      _freeTextController.text.trim().isNotEmpty ||
-      _selectedQuickPreferences.isNotEmpty;
-
   bool get _canContinue =>
-      _hasValidDepartment && _hasValidUploadedCatalog && _hasAnyPreference;
+      _hasValidDepartment && _hasValidUploadedCatalog;
 
   @override
   void initState() {
@@ -78,8 +71,6 @@ class _ChatHomeScreenState extends State<ChatHomeScreen> {
   @override
   void dispose() {
     _departmentController.dispose();
-    _freeTextController.dispose();
-    _freeTextFocusNode.dispose();
     super.dispose();
   }
 
@@ -170,6 +161,17 @@ class _ChatHomeScreenState extends State<ChatHomeScreen> {
     return null;
   }
 
+  Future<Uint8List> _readFileBytes(CatalogFile file) async {
+    if (file.bytes != null && file.bytes!.isNotEmpty) {
+      return file.bytes!;
+    }
+    final path = file.path;
+    if (path == null || path.isEmpty) {
+      throw const ApiError('INVALID_FILE', '업로드할 수 있는 파일 데이터가 없습니다.');
+    }
+    return await File(path).readAsBytes();
+  }
+
   Future<void> _uploadCatalog() async {
     final file = _selectedFile;
     final department = (_selectedDepartment ?? _departmentController.text).trim();
@@ -182,10 +184,11 @@ class _ChatHomeScreenState extends State<ChatHomeScreen> {
     });
 
     try {
+      final bytes = await _readFileBytes(file);
       final response = await _api.uploadMajorDetails(
         department: department,
         fileName: file.name,
-        bytes: file.bytes ?? Uint8List(0),
+        bytes: bytes,
       );
       if (!mounted) return;
       setState(() {
@@ -203,11 +206,12 @@ class _ChatHomeScreenState extends State<ChatHomeScreen> {
         _uploadError = error.message;
         _assistantHint = '업로드에 실패했습니다. 다시 시도해 주세요.';
       });
+      debugPrint('catalog upload failed: ${error.code} ${error.message}');
     } on Object catch (error) {
       if (!mounted) return;
       setState(() {
         _uploadSucceeded = false;
-        _uploadError = '업로드 중 문제가 발생했습니다.';
+        _uploadError = '업로드할 수 있는 파일 형식이 아니거나 파일을 읽지 못했습니다.';
         _assistantHint = '업로드에 실패했습니다. 다시 시도해 주세요.';
       });
       debugPrint('catalog upload failed: $error');
@@ -218,20 +222,9 @@ class _ChatHomeScreenState extends State<ChatHomeScreen> {
     }
   }
 
-  void _togglePreference(QuickPreference preference) {
-    setState(() {
-      if (_selectedQuickPreferences.contains(preference)) {
-        _selectedQuickPreferences.remove(preference);
-      } else {
-        _selectedQuickPreferences.add(preference);
-      }
-    });
-  }
-
   void _reset() {
     setState(() {
       _departmentController.clear();
-      _freeTextController.clear();
       _selectedDepartment = null;
       _selectedFile = null;
       _fileError = null;
@@ -241,7 +234,6 @@ class _ChatHomeScreenState extends State<ChatHomeScreen> {
       _sessionId = null;
       _parsedCourseCount = 0;
       _catalogWarnings = const [];
-      _selectedQuickPreferences = <QuickPreference>{};
       _assistantHint = null;
     });
   }
@@ -253,8 +245,8 @@ class _ChatHomeScreenState extends State<ChatHomeScreen> {
       'sessionId': _sessionId,
       'parsedCourseCount': _parsedCourseCount,
       'catalogWarnings': _catalogWarnings,
-      'selectedQuickPreferences': _selectedQuickPreferences.toList(),
-      'freeText': _freeTextController.text.trim(),
+      'selectedQuickPreferences': const [],
+      'freeText': '',
     });
   }
 
@@ -294,7 +286,7 @@ class _ChatHomeScreenState extends State<ChatHomeScreen> {
                 const SizedBox(height: 24),
                 _ChatBubble(
                   title: '안녕하세요. PlaNU입니다.',
-                  body: '전공 수강편람 파일을 업로드하고\n원하는 시간표 조건을 말씀해주세요.\n\n예:\n- 금요일은 반드시 공강\n- 오전 10시 이전 수업 제외\n- 18학점 구성\n- 인공지능 관련 교양 선호',
+                  body: '전공 수강편람 파일을 업로드하면\n시간표를 바로 구성할 수 있어요.\n\n먼저 학과와 전공 수강편람을 선택해 주세요.',
                 ),
                 const SizedBox(height: 24),
                 _SectionCard(
@@ -459,52 +451,6 @@ class _ChatHomeScreenState extends State<ChatHomeScreen> {
                           ),
                         ),
                       ],
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 18),
-                _SectionCard(
-                  title: '원하는 시간표 조건',
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      TextField(
-                        key: const Key('free-text-field'),
-                        controller: _freeTextController,
-                        focusNode: _freeTextFocusNode,
-                        minLines: 3,
-                        maxLines: 5,
-                        maxLength: 2000,
-                        decoration: InputDecoration(
-                          hintText: '예: 금요일은 공강으로 하고 오전 10시 이전 수업은 제외해주세요.',
-                          filled: true,
-                          fillColor: Colors.white,
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      Text('빠른 조건', style: theme.textTheme.titleSmall?.copyWith(color: _ink)),
-                      const SizedBox(height: 10),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: QuickPreference.values.map((preference) {
-                          final selected = _selectedQuickPreferences.contains(preference);
-                          return FilterChip(
-                            key: Key('quick-pref-${preference.key}'),
-                            label: Text(preference.label),
-                            selected: selected,
-                            onSelected: (_) => _togglePreference(preference),
-                            showCheckmark: true,
-                            selectedColor: const Color(0xFFE5E7EB),
-                            side: const BorderSide(color: _hairline),
-                            labelStyle: TextStyle(color: selected ? _ink : _body),
-                            avatar: selected ? const Icon(Icons.check, size: 16) : null,
-                          );
-                        }).toList(),
-                      ),
                     ],
                   ),
                 ),

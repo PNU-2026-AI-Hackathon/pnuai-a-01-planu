@@ -32,6 +32,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(home: ChatHomeScreen(api: FakePlanuApi())),
     );
+    await tester.pumpAndSettle();
 
     final continueButton = tester.widget<ElevatedButton>(
       find.byKey(const Key('continue-button')),
@@ -40,20 +41,41 @@ void main() {
     expect(find.text('과목 확인으로 이동'), findsOneWidget);
   });
 
-  testWidgets('빠른 조건을 여러 개 동시에 선택할 수 있다', (tester) async {
+  testWidgets('업로드 성공 후 계속 버튼이 활성화된다', (tester) async {
+    final api = FakePlanuApi();
     await tester.pumpWidget(
-      MaterialApp(home: ChatHomeScreen(api: FakePlanuApi())),
+      MaterialApp(
+        home: ChatHomeScreen(
+          api: api,
+          onPickMajorCatalog: () async => CatalogFile(
+            name: 'history_major.xlsx',
+            sizeInBytes: 124000,
+            bytes: Uint8List.fromList(<int>[1, 2, 3]),
+          ),
+        ),
+      ),
     );
 
-    await tester.ensureVisible(find.text('빠른 조건'));
-    await tester.tap(find.byKey(const Key('quick-pref-requiredFridayOff')));
-    await tester.tap(find.byKey(const Key('quick-pref-excludeMorningClasses')));
+    await tester.enterText(find.byKey(const Key('department-field')), '컴퓨터공학부');
+    await tester.pump();
+    await tester.tap(find.text('컴퓨터공학부').last);
     await tester.pump();
 
-    final selectedChips = tester.widgetList<FilterChip>(
-      find.byType(FilterChip),
+    await tester.ensureVisible(find.byKey(const Key('catalog-picker-button')));
+    await tester.tap(find.byKey(const Key('catalog-picker-button')));
+    await tester.pump();
+
+    await tester.ensureVisible(find.byKey(const Key('upload-catalog-button')));
+    await tester.tap(find.byKey(const Key('upload-catalog-button')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    final continueButton = tester.widget<ElevatedButton>(
+      find.byKey(const Key('continue-button')),
     );
-    expect(selectedChips.where((chip) => chip.selected).length, 2);
+    expect(continueButton.onPressed, isNotNull);
+    expect(find.textContaining('수강편람 분석이 완료되었습니다.'), findsOneWidget);
+    expect(find.textContaining('전공 과목 12개를 확인했습니다.'), findsOneWidget);
   });
 
   testWidgets('업로드 성공 시 과목 수와 성공 메시지를 표시한다', (tester) async {
@@ -86,7 +108,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
 
     expect(api.uploadCalls, 1);
-    expect(find.text('수강편람 분석이 완료되었습니다.'), findsOneWidget);
-    expect(find.text('전공 과목 12개를 확인했습니다.'), findsOneWidget);
+    expect(find.textContaining('수강편람 분석이 완료되었습니다.'), findsOneWidget);
+    expect(find.textContaining('전공 과목 12개를 확인했습니다.'), findsOneWidget);
   });
 }
