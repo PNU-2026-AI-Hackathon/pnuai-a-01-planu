@@ -16,6 +16,16 @@ class PlanuApi {
     required String department,
     required String fileName,
     required Uint8List bytes,
+  }) async => (await uploadMajorDetails(
+    department: department,
+    fileName: fileName,
+    bytes: bytes,
+  ))['session_id'] as String;
+
+  Future<Map<String, dynamic>> uploadMajorDetails({
+    required String department,
+    required String fileName,
+    required Uint8List bytes,
   }) async {
     final request =
         http.MultipartRequest('POST', Uri.parse('$baseUrl/catalog/major'))
@@ -30,7 +40,7 @@ class PlanuApi {
     final response = await http.Response.fromStream(
       await _client.send(request),
     );
-    return (await _decode(response))['session_id'] as String;
+    return _decode(response);
   }
 
   Future<Map<String, dynamic>> prepareGeneral({
