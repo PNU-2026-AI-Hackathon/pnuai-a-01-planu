@@ -13,6 +13,7 @@ from backend.app.agent_tools import (
     SessionCommandTools,
     SessionQueryTools,
     TimetableGenerationTools,
+    TimetableScoringTools,
 )
 from backend.app.agents import (
     SessionStateAgent,
@@ -155,6 +156,7 @@ def _agent_with_discovery(
                     catalog_repository=catalog_repository,
                 ),
             ),
+            TimetableScoringTools(),
         )
     )
     return (
@@ -221,6 +223,73 @@ def _course(
         professor="김교수",
         class_times=class_times or [_class_time(Day.MON, "10:00", "11:15")],
     )
+
+
+def _class_time_json(day: str, start: str, end: str) -> dict[str, str]:
+    return {
+        "day": day,
+        "start": start,
+        "end": end,
+        "classroom": "609-313",
+        "building_code": "609",
+    }
+
+
+def _section_json(
+    catalog_id: str,
+    section_id: str,
+    course_id: str,
+    course_name: str,
+    *,
+    day: str,
+    start: str = "10:00",
+    end: str = "11:15",
+) -> dict[str, object]:
+    return {
+        "catalog_id": catalog_id,
+        "section": {
+            "section_id": section_id,
+            "course_id": course_id,
+            "course_code": course_id,
+            "course_name": course_name,
+            "category": "GENERAL_ELECTIVE" if course_id.startswith("GEN") else "MAJOR_REQUIRED",
+            "area": 3 if course_id.startswith("GEN") else None,
+            "department": "교양교육원" if course_id.startswith("GEN") else "정보컴퓨터공학부",
+            "credit": 3,
+            "division": section_id.rsplit("-", 1)[-1],
+            "professor": "김교수",
+            "class_times": [_class_time_json(day, start, end)],
+        },
+    }
+
+
+def _candidate_json(
+    candidate_id: str,
+    added_section_id: str,
+    added_course_id: str,
+) -> dict[str, object]:
+    section_sources = [
+        {"catalog_id": "major-1", "section_id": "MAJ101-001"},
+        {"catalog_id": "elective-1", "section_id": added_section_id},
+    ]
+    return {
+        "candidate_id": candidate_id,
+        "section_ids": ["MAJ101-001", added_section_id],
+        "section_sources": section_sources,
+        "fixed_section_ids": ["MAJ101-001"],
+        "fixed_section_sources": [section_sources[0]],
+        "added_section_ids": [added_section_id],
+        "added_section_sources": [section_sources[1]],
+        "course_ids": ["MAJ101", added_course_id],
+        "total_credits": 6,
+        "validation": {
+            "valid": True,
+            "violations": [],
+            "checked_section_ids": ["MAJ101-001", added_section_id],
+            "checked_section_sources": section_sources,
+        },
+        "generation_order": 1 if added_course_id == "GEN101" else 2,
+    }
 
 
 def _register_test_catalogs(repository: InMemoryCatalogRepository) -> None:
@@ -1019,6 +1088,8 @@ def test_timetable_generation_tools_are_registered_with_single_agent_toolset() -
     assert {
         "generate_timetable_candidates",
         "validate_timetable_candidate",
+        "score_timetable_candidate",
+        "rank_timetable_candidates",
     } <= specs
     assert len(specs) == len(tools.specs())
 
@@ -1059,6 +1130,7 @@ def test_generation_tool_result_is_returned_without_saving_to_session() -> None:
             "elective_catalog_id": "elective-1",
         }
     )
+
     service.replace_selected_major_courses(session_id, ["MAJ101-001"])
 
     result = _run(agent, session_id, "금요일 비우고 교양 한 과목 추가한 시간표를 만들어줘")
@@ -1078,6 +1150,178 @@ def test_generation_tool_result_is_returned_without_saving_to_session() -> None:
         "get_session_summary",
     ]
 
+
+def test_generation_then_ranking_result_is_returned_without_auto_selecting_top_candidate() -> None:
+    candidates = [
+        _candidate_json("candidate-free-fri", "GEN101-001", "GEN101"),
+        _candidate_json("candidate-friday-class", "GEN103-001", "GEN103"),
+    ]
+    sections = [
+        _section_json(
+            "major-1",
+            "MAJ101-001",
+            "MAJ101",
+            "컴퓨터프로그래밍",
+            day="MON",
+        ),
+        _section_json(
+            "elective-1",
+            "GEN101-001",
+            "GEN101",
+            "컴퓨터와사회",
+            day="WED",
+        ),
+        _section_json(
+            "elective-1",
+            "GEN103-001",
+            "GEN103",
+            "금요일세미나",
+            day="FRI",
+        ),
+    ]
+    agent, service, tools, _catalogs = _agent_with_discovery(
+        ScriptedModel(
+            {
+                "tool_calls": [
+                    _tool(
+                        "generate_timetable_candidates",
+                        fixed_section_sources=[
+                            {"catalog_id": "major-1", "section_id": "MAJ101-001"}
+                        ],
+                        candidate_course_ids=["GEN101", "GEN103"],
+                        candidate_section_sources_by_course={
+                            "GEN101": [
+                                {"catalog_id": "elective-1", "section_id": "GEN101-001"}
+                            ],
+                            "GEN103": [
+                                {"catalog_id": "elective-1", "section_id": "GEN103-001"}
+                            ],
+                        },
+                        department="정보컴퓨터공학부",
+                        target_additional_course_count=1,
+                        max_results=3,
+                        max_search_nodes=100,
+                    )
+                ]
+            },
+            {
+                "tool_calls": [
+                    _tool(
+                        "rank_timetable_candidates",
+                        candidates=candidates,
+                        sections=sections,
+                        max_ranked_results=1,
+                    )
+                ]
+            },
+            {"message": "유효한 후보 2개 중 선호 기준 상위 1개를 보여드립니다.", "tool_calls": []},
+        )
+    )
+    session_id = _create_session(service)
+    SessionAgentTools(service).update_session_profile(
+        {
+            "session_id": session_id,
+            "department": "정보컴퓨터공학부",
+            "major_catalog_id": "major-1",
+            "elective_catalog_id": "elective-1",
+        }
+    )
+    SessionAgentTools(service).update_timetable_preferences(
+        {
+            "session_id": session_id,
+            "soft": {"preferred_free_days": ["FRI"]},
+        }
+    )
+    service.replace_selected_major_courses(session_id, ["MAJ101-001"])
+
+    result = _run(agent, session_id, "금요일 공강 선호 기준으로 시간표 하나만 추천해줘")
+
+    assert result.success is True
+    assert result.ranking_applied is True
+    assert result.ranking_summary is not None
+    assert result.ranking_summary.evaluated_candidate_count == 2
+    assert result.ranking_summary.returned_candidate_count == 1
+    assert result.ranking_summary.soft_preferences_present is True
+    assert result.effective_soft_preferences == {
+        "preferred_free_days": ["FRI"],
+        "preferred_earliest_start_time": None,
+        "preferred_latest_end_time": None,
+        "preferred_course_ids": [],
+        "disliked_course_ids": [],
+        "compact_schedule": None,
+    }
+    assert [candidate.candidate_id for candidate in result.ranked_timetable_candidates] == [
+        "candidate-free-fri"
+    ]
+    top = result.ranked_timetable_candidates[0]
+    assert top.rank == 1
+    assert top.comparison_score > 0
+    assert top.sections[1].course_name == "컴퓨터와사회"
+    assert top.satisfied_preferences[0].code == "FREE_DAY_PREFERENCE_SATISFIED"
+    assert service.get_session(session_id).selected_major_course_ids == ["MAJ101-001"]
+    assert tools.calls[2][1]["soft_preferences"]["preferred_free_days"] == ["FRI"]
+    assert [name for name, _args in tools.calls] == [
+        "get_session_summary",
+        "generate_timetable_candidates",
+        "rank_timetable_candidates",
+        "get_session_summary",
+    ]
+
+
+def test_ranking_failure_keeps_generated_candidates_and_reports_ranking_error() -> None:
+    candidates = [_candidate_json("candidate-missing-section", "GEN101-001", "GEN101")]
+    agent, service, tools, _catalogs = _agent_with_discovery(
+        ScriptedModel(
+            {
+                "tool_calls": [
+                    _tool(
+                        "generate_timetable_candidates",
+                        fixed_section_sources=[
+                            {"catalog_id": "major-1", "section_id": "MAJ101-001"}
+                        ],
+                        candidate_course_ids=["GEN101"],
+                        candidate_section_sources_by_course={
+                            "GEN101": [
+                                {"catalog_id": "elective-1", "section_id": "GEN101-001"}
+                            ]
+                        },
+                        department="정보컴퓨터공학부",
+                        target_additional_course_count=1,
+                        max_results=3,
+                        max_search_nodes=100,
+                    )
+                ]
+            },
+            {
+                "tool_calls": [
+                    _tool(
+                        "rank_timetable_candidates",
+                        candidates=candidates,
+                        sections=[],
+                        soft_preferences={"preferred_free_days": ["FRI"]},
+                        max_ranked_results=3,
+                    )
+                ]
+            },
+            {"message": "ranking 실패를 확인했습니다.", "tool_calls": []},
+        )
+    )
+    session_id = _create_session(service)
+
+    result = _run(agent, session_id, "시간표 추천해줘")
+
+    assert result.success is False
+    assert result.timetable_candidates
+    assert result.ranking_applied is False
+    assert result.ranking_error is not None
+    assert result.ranking_error.code == "SECTION_DETAILS_MISSING"
+    assert result.ranked_timetable_candidates == []
+    assert [name for name, _args in tools.calls] == [
+        "get_session_summary",
+        "generate_timetable_candidates",
+        "rank_timetable_candidates",
+        "get_session_summary",
+    ]
 
 def test_generation_failure_reasons_are_capped_and_user_facing() -> None:
     agent, service, tools, _catalogs = _agent_with_discovery(
