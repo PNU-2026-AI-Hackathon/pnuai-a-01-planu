@@ -376,7 +376,7 @@ def test_revision_rejects_fixed_major_section_replacement() -> None:
     assert result.needs_confirmation is True
     assert result.replaceable_section_ids == []
     assert result.generation_request is None
-    assert any("\ud655\uc815 \uc804\uacf5" in reason for reason in result.confirmation_reasons)
+    assert any("확정 전공" in reason for reason in result.confirmation_reasons)
 
 
 def test_elective_revision_uses_elective_catalog_without_major_fallback() -> None:

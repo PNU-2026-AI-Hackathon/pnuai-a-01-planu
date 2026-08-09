@@ -78,13 +78,13 @@ class TimetableRevisionPreparationService:
             violates_hard = source is not None and self._violates_hard(source, hard)
             if targeted and section_id in fixed_section_ids:
                 confirmation_reasons.append(
-                    "\ud655\uc815 \uc804\uacf5 \uacfc\ubaa9\uc740 \ubd80\ubd84 \uc218\uc815\uc73c\ub85c \uad50\uccb4\ud560 \uc218 \uc5c6\uc2b5\ub2c8\ub2e4. "
-                    "\uc804\uacf5 \uad6c\uc131\uc744 \ubcc0\uacbd\ud558\ub824\uba74 \uc804\uacf5 \uc120\ud0dd\uc744 \ub2e4\uc2dc \uc124\uc815\ud574 \uc8fc\uc138\uc694."
+                    "확정 전공 과목은 부분 수정으로 교체할 수 없습니다. "
+                    "전공 구성을 변경하려면 전공 선택을 다시 설정해 주세요."
                 )
             if violates_hard and section_id in fixed_section_ids:
                 confirmation_reasons.append(
-                    f"\ud655\uc815 \uc804\uacf5 \ubd84\ubc18 {section_id}\uc774 \ud604\uc7ac Hard \uc870\uac74\uacfc \ucda9\ub3cc\ud569\ub2c8\ub2e4. "
-                    "\uc804\uacf5 \uc120\ud0dd \ub610\ub294 \uc804\uccb4 \uc870\uac74\uc744 \ub2e4\uc2dc \ud655\uc778\ud574 \uc8fc\uc138\uc694."
+                    f"확정 전공 분반 {section_id}이 현재 Hard 조건과 충돌합니다. "
+                    "전공 선택 또는 전체 조건을 다시 확인해 주세요."
                 )
             if targeted and section_id not in fixed_section_ids:
                 replaceable_section_ids.append(section_id)
