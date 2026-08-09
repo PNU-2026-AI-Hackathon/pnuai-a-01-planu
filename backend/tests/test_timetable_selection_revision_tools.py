@@ -77,6 +77,26 @@ def _candidate() -> GeneratedTimetableCandidate:
     )
 
 
+
+def _revised_candidate() -> GeneratedTimetableCandidate:
+    fixed = SectionSource(catalog_id="major-catalog", section_id="MAJ101-001")
+    added = SectionSource(catalog_id="elective-catalog", section_id="GEN102-001")
+    sources = [fixed, added]
+    return GeneratedTimetableCandidate(
+        candidate_id=GeneratedTimetableCandidate.build_source_id(sources),
+        section_ids=["MAJ101-001", "GEN102-001"],
+        section_sources=sources,
+        fixed_section_ids=["MAJ101-001"],
+        fixed_section_sources=[fixed],
+        added_section_ids=["GEN102-001"],
+        added_section_sources=[added],
+        course_ids=["MAJ101", "GEN102"],
+        total_credits=6,
+        validation=TimetableValidationResult(valid=True, checked_section_ids=[]),
+        generation_order=1,
+    )
+
+
 def _selection_tools(
     service: SessionService,
     catalog_repository: InMemoryCatalogRepository,
@@ -197,9 +217,135 @@ def test_prepare_timetable_revision_locks_untargeted_fixed_sections() -> None:
     assert result.locked_section_ids == ["MAJ101-001"]
     assert result.replaceable_section_ids == ["GEN101-001"]
     assert result.generation_request is not None
+    assert result.generation_request.session_id == state.session_id
     assert result.generation_request.fixed_section_sources == [
         SectionSource(catalog_id="major-catalog", section_id="MAJ101-001")
     ]
+
+
+def test_revision_generation_candidate_is_cached_and_selectable() -> None:
+    class GenerationService:
+        def generate(self, request: TimetableGenerationRequest) -> TimetableGenerationResult:
+            assert request.session_id == "session-1"
+            return TimetableGenerationResult(
+                success=True,
+                candidates=[_revised_candidate()],
+                total_candidates_found=1,
+                search_nodes_visited=1,
+                message="generated revision",
+            )
+
+    service = _service()
+    state = service.create_session()
+    catalog = InMemoryCatalogRepository()
+    catalog.register(
+        "major-catalog",
+        kind=CatalogKind.MAJOR,
+        courses=[_course("MAJ101-001", category=Category.MAJOR_REQUIRED)],
+    )
+    catalog.register(
+        "elective-catalog",
+        kind=CatalogKind.ELECTIVE,
+        courses=[
+            _course("GEN101-001", category=Category.GENERAL_ELECTIVE),
+            _course("GEN102-001", category=Category.GENERAL_ELECTIVE),
+        ],
+    )
+    service.register_major_catalog(state.session_id, "major-catalog")
+    service.register_elective_catalog(state.session_id, "elective-catalog")
+    service.select_timetable_candidate(state.session_id, _candidate())
+    recent = RecentTimetableCandidateRepository()
+    selection_tools = TimetableSelectionTools(
+        session_service=service,
+        revision_preparation_service=TimetableRevisionPreparationService(
+            session_service=service,
+            catalog_repository=catalog,
+        ),
+        recent_candidate_repository=recent,
+    )
+    generation_tools = TimetableGenerationTools(
+        generation_service=GenerationService(),
+        validation_service=object(),
+        recent_candidate_repository=recent,
+    )
+
+    prepared = selection_tools.prepare_timetable_revision(
+        TimetableRevisionRequest(
+            session_id=state.session_id,
+            replace_section_ids=["GEN101-001"],
+        )
+    )
+    assert prepared.generation_request is not None
+    generated = generation_tools.generate_timetable_candidates(
+        prepared.generation_request.model_dump(mode="json")
+    )
+    selected = selection_tools.select_timetable_candidate(
+        {"session_id": state.session_id, "candidate_id": _revised_candidate().candidate_id}
+    )
+
+    assert generated.success is True
+    assert selected.success is True
+    assert selected.selected_timetable is not None
+    assert selected.selected_timetable.candidate_id == _revised_candidate().candidate_id
+
+
+def test_failed_generation_clears_previous_recent_candidates() -> None:
+    class SuccessGenerationService:
+        def generate(self, request: TimetableGenerationRequest) -> TimetableGenerationResult:
+            return TimetableGenerationResult(
+                success=True,
+                candidates=[_candidate()],
+                total_candidates_found=1,
+                search_nodes_visited=1,
+                message="generated",
+            )
+
+    class FailedGenerationService:
+        def generate(self, request: TimetableGenerationRequest) -> TimetableGenerationResult:
+            return TimetableGenerationResult(
+                success=False,
+                candidates=[],
+                total_candidates_found=0,
+                search_nodes_visited=1,
+                message="no candidates",
+            )
+
+    service = _service()
+    state = service.create_session()
+    catalog = InMemoryCatalogRepository()
+    recent = RecentTimetableCandidateRepository()
+    selection_tools = TimetableSelectionTools(
+        session_service=service,
+        revision_preparation_service=TimetableRevisionPreparationService(
+            session_service=service,
+            catalog_repository=catalog,
+        ),
+        recent_candidate_repository=recent,
+    )
+    success_tools = TimetableGenerationTools(
+        generation_service=SuccessGenerationService(),
+        validation_service=object(),
+        recent_candidate_repository=recent,
+    )
+    failed_tools = TimetableGenerationTools(
+        generation_service=FailedGenerationService(),
+        validation_service=object(),
+        recent_candidate_repository=recent,
+    )
+
+    success_tools.generate_timetable_candidates({"session_id": state.session_id})
+    first_selection = selection_tools.select_timetable_candidate(
+        {"session_id": state.session_id, "candidate_id": _candidate().candidate_id}
+    )
+    failed_tools.generate_timetable_candidates({"session_id": state.session_id})
+    stale_selection = selection_tools.select_timetable_candidate(
+        {"session_id": state.session_id, "candidate_id": _candidate().candidate_id}
+    )
+
+    assert first_selection.success is True
+    assert stale_selection.success is False
+    assert stale_selection.error is not None
+    assert stale_selection.error.field == "candidate_id"
 
 
 def test_revision_rejects_fixed_major_section_replacement() -> None:
@@ -230,7 +376,7 @@ def test_revision_rejects_fixed_major_section_replacement() -> None:
     assert result.needs_confirmation is True
     assert result.replaceable_section_ids == []
     assert result.generation_request is None
-    assert any("??" in reason for reason in result.confirmation_reasons)
+    assert any("\ud655\uc815 \uc804\uacf5" in reason for reason in result.confirmation_reasons)
 
 
 def test_elective_revision_uses_elective_catalog_without_major_fallback() -> None:

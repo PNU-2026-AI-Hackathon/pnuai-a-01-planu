@@ -32,6 +32,10 @@ class RecentTimetableCandidateRepository:
                 for candidate in candidates
             }
 
+    def clear_candidates(self, session_id: str) -> None:
+        with self._lock:
+            self._candidates_by_session.pop(session_id, None)
+
     def get_candidate(
         self,
         session_id: str,

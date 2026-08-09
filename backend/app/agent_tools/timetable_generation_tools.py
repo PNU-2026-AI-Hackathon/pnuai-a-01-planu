@@ -76,6 +76,8 @@ class TimetableGenerationTools:
                     message=message,
                 ),
             )
+        if request.session_id is not None and self._recent_candidate_repository is not None:
+            self._recent_candidate_repository.clear_candidates(request.session_id)
         result = self._generation_service.generate(request)
         if (
             request.session_id is not None

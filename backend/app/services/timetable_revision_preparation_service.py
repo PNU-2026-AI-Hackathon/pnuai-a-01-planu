@@ -78,12 +78,13 @@ class TimetableRevisionPreparationService:
             violates_hard = source is not None and self._violates_hard(source, hard)
             if targeted and section_id in fixed_section_ids:
                 confirmation_reasons.append(
-                    "?? ?? ??? ?? ???? ?? ?????. "
-                    "?? ??? ????? ?? ??? ?? ??? ???."
+                    "\ud655\uc815 \uc804\uacf5 \uacfc\ubaa9\uc740 \ubd80\ubd84 \uc218\uc815\uc73c\ub85c \uad50\uccb4\ud560 \uc218 \uc5c6\uc2b5\ub2c8\ub2e4. "
+                    "\uc804\uacf5 \uad6c\uc131\uc744 \ubcc0\uacbd\ud558\ub824\uba74 \uc804\uacf5 \uc120\ud0dd\uc744 \ub2e4\uc2dc \uc124\uc815\ud574 \uc8fc\uc138\uc694."
                 )
             if violates_hard and section_id in fixed_section_ids:
                 confirmation_reasons.append(
-                    f"?? ?? ?? {section_id}? ?? Hard ??? ?????."
+                    f"\ud655\uc815 \uc804\uacf5 \ubd84\ubc18 {section_id}\uc774 \ud604\uc7ac Hard \uc870\uac74\uacfc \ucda9\ub3cc\ud569\ub2c8\ub2e4. "
+                    "\uc804\uacf5 \uc120\ud0dd \ub610\ub294 \uc804\uccb4 \uc870\uac74\uc744 \ub2e4\uc2dc \ud655\uc778\ud574 \uc8fc\uc138\uc694."
                 )
             if targeted and section_id not in fixed_section_ids:
                 replaceable_section_ids.append(section_id)
@@ -98,6 +99,7 @@ class TimetableRevisionPreparationService:
         generation_request = None
         if not confirmation_reasons:
             generation_request = TimetableGenerationRequest(
+                session_id=request.session_id,
                 fixed_section_sources=locked_sources,
                 required_course_ids=list(dict.fromkeys(request.required_course_ids)),
                 excluded_course_ids=list(
