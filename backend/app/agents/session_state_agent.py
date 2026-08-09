@@ -27,6 +27,7 @@ from ..agent_tools import (
     SessionToolError,
     SessionToolResult,
     TimeInput,
+    ScoreTimetableCandidateRequest,
     ResetSessionPreferencesInput,
     UpdateSelectedMajorCoursesInput,
     UpdateSessionProfileInput,
@@ -40,12 +41,22 @@ from ..models.course_discovery import (
 )
 from ..models.timetable_generation import (
     GeneratedTimetableCandidate,
+    ResolvedSection,
     GenerationFailureCode,
     GenerationFailureReason,
     TimetableGenerationRequest,
     TimetableGenerationResult,
     TimetableValidationRequest,
     TimetableValidationResult,
+)
+from ..models.timetable_scoring import (
+    PreferenceEvidence,
+    ScoredTimetableCandidate,
+    ScoreComponent,
+    ScoringTradeOff,
+    TimetableRankingResult,
+    TimetableScoringError,
+    TimetableScoringRequest,
 )
 
 logger = logging.getLogger(__name__)
@@ -62,6 +73,8 @@ READ_ONLY_TOOL_NAMES = {
     "get_section_details",
     "generate_timetable_candidates",
     "validate_timetable_candidate",
+    "score_timetable_candidate",
+    "rank_timetable_candidates",
 }
 
 
@@ -230,6 +243,96 @@ class AgentTimetableCandidate(BaseModel):
     generation_order: int
 
 
+class AgentTimetableSection(BaseModel):
+    """User-safe course and section detail for a ranked candidate."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    catalog_id: str
+    section_id: str
+    course_id: str
+    course_code: str
+    course_name: str
+    division: str
+    professor: str
+    credit: float
+    class_times: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class AgentScoredPreferenceEvidence(BaseModel):
+    """Compact scoring evidence safe for user explanation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    code: str
+    component_code: str | None = None
+    values: dict[str, Any] = Field(default_factory=dict)
+
+
+class AgentScoreComponent(BaseModel):
+    """Compact score component safe for user explanation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    code: str
+    label: str
+    score: float
+    satisfied: bool
+    details: dict[str, Any] = Field(default_factory=dict)
+
+
+class AgentTimetableTradeOff(BaseModel):
+    """Compact trade-off evidence safe for user explanation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    code: str
+    values: dict[str, Any] = Field(default_factory=dict)
+
+
+class AgentRankedTimetableCandidate(BaseModel):
+    """A ranked timetable candidate preserving ranking tool order."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    rank: int
+    candidate_id: str
+    comparison_score: float
+    total_credits: float
+    section_ids: list[str]
+    sections: list[AgentTimetableSection] = Field(default_factory=list)
+    score_components: list[AgentScoreComponent] = Field(default_factory=list)
+    satisfied_preferences: list[AgentScoredPreferenceEvidence] = Field(default_factory=list)
+    unsatisfied_preferences: list[AgentScoredPreferenceEvidence] = Field(default_factory=list)
+    trade_offs: list[AgentTimetableTradeOff] = Field(default_factory=list)
+    tie_breaker: dict[str, Any] = Field(default_factory=dict)
+
+
+class AgentRankingSummary(BaseModel):
+    """Compact summary of a timetable ranking run."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    ranking_applied: bool = False
+    evaluated_candidate_count: int = 0
+    returned_candidate_count: int = 0
+    soft_preferences_present: bool = False
+    scoring_policy_id: str | None = None
+    highest_score: float | None = None
+    lowest_score: float | None = None
+    has_tied_scores: bool = False
+    message: str | None = None
+
+
+class AgentRankingError(BaseModel):
+    """Structured ranking failure preserved separately from generation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    code: str
+    message: str
+    candidate_id: str | None = None
+
 class AgentGenerationFailureReason(BaseModel):
     """User-facing generation failure reason capped for agent output."""
 
@@ -272,6 +375,11 @@ class SessionStateAgentResult(BaseModel):
     discovery_results: list[AgentDiscoveryResult] = Field(default_factory=list)
     candidate_courses: list[AgentCourseCandidate] = Field(default_factory=list)
     timetable_candidates: list[AgentTimetableCandidate] = Field(default_factory=list)
+    ranked_timetable_candidates: list[AgentRankedTimetableCandidate] = Field(default_factory=list)
+    ranking_summary: AgentRankingSummary | None = None
+    ranking_applied: bool = False
+    effective_soft_preferences: dict[str, Any] | None = None
+    ranking_error: AgentRankingError | None = None
     generation_summary: AgentTimetableGenerationSummary | None = None
     generation_failure_reasons: list[AgentGenerationFailureReason] = Field(default_factory=list)
     generation_truncated: bool = False
@@ -363,6 +471,7 @@ class SessionStateToolset:
         session_tools: object,
         discovery_tools: object,
         timetable_tools: object | None = None,
+        scoring_tools: object | None = None,
     ) -> "SessionStateToolset":
         tools = {
             "get_session_summary": session_tools.get_session_summary,
@@ -380,6 +489,13 @@ class SessionStateToolset:
                 {
                     "generate_timetable_candidates": timetable_tools.generate_timetable_candidates,
                     "validate_timetable_candidate": timetable_tools.validate_timetable_candidate,
+                }
+            )
+        if scoring_tools is not None:
+            tools.update(
+                {
+                    "score_timetable_candidate": scoring_tools.score_timetable_candidate,
+                    "rank_timetable_candidates": scoring_tools.rank_timetable_candidates,
                 }
             )
         return cls(tools)
@@ -413,6 +529,8 @@ _TOOL_INPUT_MODELS: dict[str, type[BaseModel]] = {
     "get_section_details": SectionDetailsInput,
     "generate_timetable_candidates": TimetableGenerationRequest,
     "validate_timetable_candidate": TimetableValidationRequest,
+    "score_timetable_candidate": ScoreTimetableCandidateRequest,
+    "rank_timetable_candidates": TimetableScoringRequest,
     "set_department": DepartmentInput,
     "register_major_catalog": CatalogInput,
     "register_elective_catalog": CatalogInput,
@@ -467,6 +585,14 @@ _TOOL_DESCRIPTIONS: dict[str, str] = {
     "validate_timetable_candidate": (
         "Validate one concrete section combination against Hard rules. This read-only tool does not mutate "
         "session or catalog state, and Soft preference mismatches are not validation errors."
+    ),
+    "score_timetable_candidate": (
+        "Structurally evaluate one Hard-valid timetable candidate against Soft preferences. This read-only "
+        "tool does not replace Hard validation, does not mutate state, and returns comparison-only scores."
+    ),
+    "rank_timetable_candidates": (
+        "Rank multiple Hard-valid timetable candidates by Soft preferences using only the scoring service. "
+        "This read-only tool does not relax Hard constraints, does not choose a candidate, and does not save results."
     ),
     "set_department": "Set the user's department when the department text is explicit.",
     "register_major_catalog": "Store an already parsed major catalog id.",
@@ -555,6 +681,7 @@ class SessionStateAgent:
         discovery_results: list[AgentDiscoveryResult] = []
         generation_results: list[tuple[TimetableGenerationRequest, TimetableGenerationResult]] = []
         validation_results: list[AgentValidationResult] = []
+        ranking_results: list[tuple[TimetableScoringRequest | None, TimetableRankingResult]] = []
         changed = False
         mutation_tool_call_count = 0
         last_summary: SessionStateSummary | None = None
@@ -627,6 +754,9 @@ class SessionStateAgent:
                 generation_request, generation_result = (
                     generation_results[-1] if generation_results else (None, None)
                 )
+                ranking_request, ranking_result = (
+                    ranking_results[-1] if ranking_results else (None, None)
+                )
                 confirmation_request = _confirmation_request_from_discovery(
                     discovery_results
                 )
@@ -663,6 +793,27 @@ class SessionStateAgent:
                         _agent_timetable_candidates(generation_result.candidates)
                         if generation_result is not None
                         else []
+                    ),
+                    ranked_timetable_candidates=(
+                        _agent_ranked_timetable_candidates(ranking_request, ranking_result)
+                        if ranking_result is not None and ranking_result.success
+                        else []
+                    ),
+                    ranking_summary=(
+                        _agent_ranking_summary(ranking_request, ranking_result)
+                        if ranking_result is not None
+                        else None
+                    ),
+                    ranking_applied=ranking_result is not None and ranking_result.success,
+                    effective_soft_preferences=(
+                        ranking_request.soft_preferences.model_dump(mode="json")
+                        if ranking_request is not None
+                        else None
+                    ),
+                    ranking_error=(
+                        _agent_ranking_error(ranking_result.error)
+                        if ranking_result is not None and ranking_result.error is not None
+                        else None
                     ),
                     generation_summary=(
                         _agent_generation_summary(generation_request, generation_result)
@@ -709,6 +860,12 @@ class SessionStateAgent:
                 )
 
                 arguments = {**tool_call.arguments}
+                if (
+                    tool_call.name == "rank_timetable_candidates"
+                    and "soft_preferences" not in arguments
+                    and last_summary is not None
+                ):
+                    arguments["soft_preferences"] = last_summary.soft_preferences.model_dump(mode="json")
                 if "session_id" in _TOOL_INPUT_MODELS[tool_call.name].model_fields:
                     # Tool calls must operate on the URL session, never on a model-supplied session id.
                     arguments["session_id"] = request.session_id
@@ -757,6 +914,9 @@ class SessionStateAgent:
                 validation_result = _validation_result(tool_call.name, result.result)
                 if validation_result is not None:
                     validation_results.append(validation_result)
+                ranking_result = _ranking_result(tool_call.name, arguments, result.result)
+                if ranking_result is not None:
+                    ranking_results.append(ranking_result)
                 changed = changed or bool(getattr(result.result, "changed", False))
                 state_summary = getattr(result.result, "state_summary", None)
                 if state_summary is not None:
@@ -1140,6 +1300,22 @@ def _tool_execution_success(name: str, result: Any) -> bool:
         except ValidationError:
             return False
         return True
+    if name == "score_timetable_candidate":
+        try:
+            ScoredTimetableCandidate.model_validate(
+                result.model_dump() if hasattr(result, "model_dump") else result
+            )
+            return True
+        except ValidationError:
+            return False
+    if name == "rank_timetable_candidates":
+        try:
+            ranking = TimetableRankingResult.model_validate(
+                result.model_dump() if hasattr(result, "model_dump") else result
+            )
+        except ValidationError:
+            return False
+        return ranking.success
     return bool(getattr(result, "success", False))
 
 
@@ -1181,6 +1357,168 @@ def _validation_result(
         violation_messages=[violation.message for violation in validation.violations[:3]],
     )
 
+
+def _ranking_result(
+    tool_name: str,
+    arguments: Mapping[str, object],
+    result: Any,
+) -> tuple[TimetableScoringRequest | None, TimetableRankingResult] | None:
+    if tool_name != "rank_timetable_candidates":
+        return None
+    try:
+        request = TimetableScoringRequest.model_validate(arguments)
+    except ValidationError:
+        logger.warning("session_state_agent_unexpected_ranking_request")
+        request = None
+    try:
+        ranking = TimetableRankingResult.model_validate(
+            result.model_dump() if hasattr(result, "model_dump") else result
+        )
+    except ValidationError:
+        logger.warning("session_state_agent_unexpected_ranking_result")
+        return None
+    return request, ranking
+
+
+def _agent_ranked_timetable_candidates(
+    request: TimetableScoringRequest | None,
+    result: TimetableRankingResult,
+) -> list[AgentRankedTimetableCandidate]:
+    section_map = _resolved_section_map([] if request is None else request.sections)
+    return [
+        _agent_ranked_timetable_candidate(candidate, section_map)
+        for candidate in result.ranked_candidates
+    ]
+
+
+def _agent_ranked_timetable_candidate(
+    candidate: ScoredTimetableCandidate,
+    section_map: dict[str, ResolvedSection],
+) -> AgentRankedTimetableCandidate:
+    return AgentRankedTimetableCandidate(
+        rank=candidate.rank or 0,
+        candidate_id=candidate.candidate_id,
+        comparison_score=candidate.total_score,
+        total_credits=candidate.candidate.total_credits,
+        section_ids=list(candidate.candidate.section_ids),
+        sections=[
+            _agent_timetable_section(section)
+            for section in _sections_for_candidate(candidate, section_map)
+        ],
+        score_components=[_agent_score_component(component) for component in candidate.score_components],
+        satisfied_preferences=[
+            _agent_scored_preference_evidence(evidence)
+            for evidence in candidate.satisfied_preferences
+        ],
+        unsatisfied_preferences=[
+            _agent_scored_preference_evidence(evidence)
+            for evidence in candidate.unsatisfied_preferences
+        ],
+        trade_offs=[_agent_timetable_trade_off(trade_off) for trade_off in candidate.trade_offs],
+        tie_breaker=dict(candidate.tie_breaker),
+    )
+
+
+def _resolved_section_map(sections: list[ResolvedSection]) -> dict[str, ResolvedSection]:
+    mapping: dict[str, ResolvedSection] = {}
+    for section in sections:
+        mapping[section.source.key] = section
+        mapping[section.section.section_id] = section
+    return mapping
+
+
+def _sections_for_candidate(
+    candidate: ScoredTimetableCandidate,
+    section_map: dict[str, ResolvedSection],
+) -> list[ResolvedSection]:
+    resolved: list[ResolvedSection] = []
+    for source in candidate.candidate.section_sources:
+        section = section_map.get(source.key) or section_map.get(source.section_id)
+        if section is not None:
+            resolved.append(section)
+    if not resolved:
+        for section_id in candidate.candidate.section_ids:
+            section = section_map.get(section_id)
+            if section is not None:
+                resolved.append(section)
+    return resolved
+
+
+def _agent_timetable_section(section: ResolvedSection) -> AgentTimetableSection:
+    course_section = section.section
+    return AgentTimetableSection(
+        catalog_id=section.catalog_id,
+        section_id=course_section.section_id,
+        course_id=course_section.course_id,
+        course_code=course_section.course_code,
+        course_name=course_section.course_name,
+        division=course_section.division,
+        professor=course_section.professor,
+        credit=course_section.credit,
+        class_times=[meeting.model_dump(mode="json") for meeting in course_section.class_times],
+    )
+
+
+def _agent_score_component(component: ScoreComponent) -> AgentScoreComponent:
+    return AgentScoreComponent(
+        code=component.code.value,
+        label=component.label,
+        score=component.score,
+        satisfied=component.satisfied,
+        details=dict(component.details),
+    )
+
+
+def _agent_scored_preference_evidence(
+    evidence: PreferenceEvidence,
+) -> AgentScoredPreferenceEvidence:
+    return AgentScoredPreferenceEvidence(
+        code=evidence.code.value,
+        component_code=None if evidence.component_code is None else evidence.component_code.value,
+        values=dict(evidence.values),
+    )
+
+
+def _agent_timetable_trade_off(trade_off: ScoringTradeOff) -> AgentTimetableTradeOff:
+    return AgentTimetableTradeOff(
+        code=trade_off.code.value,
+        values=dict(trade_off.values),
+    )
+
+
+def _agent_ranking_summary(
+    request: TimetableScoringRequest | None,
+    result: TimetableRankingResult,
+) -> AgentRankingSummary:
+    scores = [candidate.total_score for candidate in result.ranked_candidates]
+    return AgentRankingSummary(
+        ranking_applied=result.success,
+        evaluated_candidate_count=result.total_candidates,
+        returned_candidate_count=result.returned_candidates,
+        soft_preferences_present=(
+            _soft_preferences_present(request.soft_preferences)
+            if request is not None
+            else False
+        ),
+        scoring_policy_id=result.scoring_policy.policy_id,
+        highest_score=max(scores) if scores else None,
+        lowest_score=min(scores) if scores else None,
+        has_tied_scores=len(scores) != len(set(scores)),
+        message=result.message,
+    )
+
+
+def _agent_ranking_error(error: TimetableScoringError) -> AgentRankingError:
+    return AgentRankingError(
+        code=error.code.value,
+        message=error.message,
+        candidate_id=error.candidate_id,
+    )
+
+
+def _soft_preferences_present(preferences: object) -> bool:
+    data = preferences.model_dump(mode="json") if hasattr(preferences, "model_dump") else {}
+    return any(bool(value) for value in data.values())
 
 def _agent_generation_summary(
     request: TimetableGenerationRequest,

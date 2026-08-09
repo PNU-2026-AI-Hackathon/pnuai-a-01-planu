@@ -14,6 +14,7 @@ from .agent_tools import (
     SessionCommandTools,
     SessionQueryTools,
     TimetableGenerationTools,
+    TimetableScoringTools,
 )
 from .agents import SessionStateAgent, SessionStateToolset
 from .agents.simple_session_model import LlmSessionStateModel, SimpleSessionStateModel, SessionStateModel
@@ -44,6 +45,8 @@ from .services.timetable_validation_service import TimetableValidationService
 from .services.ranking_template_service import RankingTemplateService
 from .services.timetable_ranker import TimetableRanker
 from .services.timetable_ranking_service import TimetableRankingService
+from .services.timetable_scoring_service import TimetableScoringService
+from .services.timetable_soft_ranking_service import TimetableRankingService as SoftTimetableRankingService
 
 
 _BACKEND_DIR = Path(__file__).resolve().parents[1]
@@ -153,11 +156,32 @@ def get_timetable_generation_tools() -> TimetableGenerationTools:
 
 
 @lru_cache
+def get_timetable_scoring_service() -> TimetableScoringService:
+    return TimetableScoringService()
+
+
+@lru_cache
+def get_timetable_soft_ranking_service() -> SoftTimetableRankingService:
+    return SoftTimetableRankingService(
+        scoring_service=get_timetable_scoring_service(),
+    )
+
+
+@lru_cache
+def get_timetable_scoring_tools() -> TimetableScoringTools:
+    return TimetableScoringTools(
+        scoring_service=get_timetable_scoring_service(),
+        ranking_service=get_timetable_soft_ranking_service(),
+    )
+
+
+@lru_cache
 def get_session_state_toolset() -> SessionStateToolset:
     return SessionStateToolset.from_agent_and_discovery_tools(
         _SESSION_AGENT_TOOLS,
         _COURSE_DISCOVERY_TOOLS,
         get_timetable_generation_tools(),
+        scoring_tools=get_timetable_scoring_tools(),
     )
 
 
@@ -175,6 +199,9 @@ def clear_dependency_caches() -> None:
     get_timetable_candidate_validation_service.cache_clear()
     get_timetable_candidate_generation_service.cache_clear()
     get_timetable_generation_tools.cache_clear()
+    get_timetable_scoring_service.cache_clear()
+    get_timetable_soft_ranking_service.cache_clear()
+    get_timetable_scoring_tools.cache_clear()
     get_session_state_toolset.cache_clear()
     get_session_state_agent.cache_clear()
 
