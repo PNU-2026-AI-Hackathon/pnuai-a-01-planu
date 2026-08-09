@@ -21,6 +21,7 @@ from .agents import SessionStateAgent, SessionStateToolset
 from .agents.simple_session_model import LlmSessionStateModel, SimpleSessionStateModel, SessionStateModel
 from .models.course import Category
 from .repositories import SessionRepository, SessionStoreCatalogRepository, SessionStoreRepository
+from .repositories.recent_timetable_candidate_repository import RecentTimetableCandidateRepository
 from .services.course_discovery_service import CourseDiscoveryService
 from .services.course_loader import CourseCatalogLoadError, load_courses
 from .services.course_restriction_loader import (
@@ -57,6 +58,7 @@ _COURSE_RESTRICTIONS_PATH = _BACKEND_DIR / "data" / "course_restrictions.json"
 logger = logging.getLogger(__name__)
 _SESSION_REPOSITORY = SessionStoreRepository(session_store)
 _CATALOG_REPOSITORY = SessionStoreCatalogRepository(session_store)
+_RECENT_TIMETABLE_CANDIDATE_REPOSITORY = RecentTimetableCandidateRepository()
 _SESSION_SERVICE = SessionService(_SESSION_REPOSITORY)
 _SESSION_AGENT_TOOLS = SessionAgentTools(_SESSION_SERVICE)
 _SESSION_QUERY_TOOLS = SessionQueryTools(_SESSION_SERVICE)
@@ -70,6 +72,7 @@ _TIMETABLE_REVISION_PREPARATION_SERVICE = TimetableRevisionPreparationService(
 _TIMETABLE_SELECTION_TOOLS = TimetableSelectionTools(
     session_service=_SESSION_SERVICE,
     revision_preparation_service=_TIMETABLE_REVISION_PREPARATION_SERVICE,
+    recent_candidate_repository=_RECENT_TIMETABLE_CANDIDATE_REPOSITORY,
 )
 
 
@@ -121,6 +124,10 @@ def get_course_discovery_tools() -> CourseDiscoveryTools:
     return _COURSE_DISCOVERY_TOOLS
 
 
+def get_recent_timetable_candidate_repository() -> RecentTimetableCandidateRepository:
+    return _RECENT_TIMETABLE_CANDIDATE_REPOSITORY
+
+
 def get_timetable_revision_preparation_service() -> TimetableRevisionPreparationService:
     return _TIMETABLE_REVISION_PREPARATION_SERVICE
 
@@ -170,6 +177,7 @@ def get_timetable_generation_tools() -> TimetableGenerationTools:
     return TimetableGenerationTools(
         generation_service=get_timetable_candidate_generation_service(),
         validation_service=get_timetable_candidate_validation_service(),
+        recent_candidate_repository=get_recent_timetable_candidate_repository(),
     )
 
 

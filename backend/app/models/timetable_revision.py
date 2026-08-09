@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from .session_preferences import HardConstraints, SoftPreferences
 from .timetable_generation import SectionSource, TimetableGenerationRequest
 
 
@@ -26,8 +25,6 @@ class TimetableRevisionRequest(_RevisionModel):
     excluded_course_ids: list[str] = Field(default_factory=list)
     excluded_section_ids: list[str] = Field(default_factory=list)
     required_course_ids: list[str] = Field(default_factory=list)
-    temporary_hard_constraints: HardConstraints | None = None
-    temporary_soft_preferences: SoftPreferences | None = None
     target_additional_course_count: int | None = Field(default=1, ge=0)
     max_results: int = Field(default=3, ge=1)
 
@@ -52,10 +49,8 @@ class TimetableRevisionRequest(_RevisionModel):
             and not self.excluded_course_ids
             and not self.excluded_section_ids
             and not self.required_course_ids
-            and self.temporary_hard_constraints is None
-            and self.temporary_soft_preferences is None
         ):
-            raise ValueError("at least one revision change or temporary preference is required")
+            raise ValueError("at least one revision target is required")
         return self
 
 

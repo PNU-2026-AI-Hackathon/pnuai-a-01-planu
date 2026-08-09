@@ -53,7 +53,7 @@ class TimetableRevisionPreparationService:
                 message="현재 선택된 시간표를 다시 확인해야 합니다.",
             )
 
-        hard = request.temporary_hard_constraints or state.hard_constraints
+        hard = state.hard_constraints
         replace_section_ids = set(request.replace_section_ids)
         excluded_section_ids = set(request.excluded_section_ids)
         replace_course_ids = set(request.replace_course_ids)
@@ -76,11 +76,19 @@ class TimetableRevisionPreparationService:
                 or (course_id is not None and course_id in excluded_course_ids)
             )
             violates_hard = source is not None and self._violates_hard(source, hard)
-            if violates_hard and section_id in fixed_section_ids and not targeted:
+            if targeted and section_id in fixed_section_ids:
                 confirmation_reasons.append(
-                    f"확정 전공 분반 {section_id}이 새 Hard 조건과 충돌합니다."
+                    "?? ?? ??? ?? ???? ?? ?????. "
+                    "?? ??? ????? ?? ??? ?? ??? ???."
                 )
-            if targeted or (violates_hard and section_id not in fixed_section_ids):
+            if violates_hard and section_id in fixed_section_ids:
+                confirmation_reasons.append(
+                    f"?? ?? ?? {section_id}? ?? Hard ??? ?????."
+                )
+            if targeted and section_id not in fixed_section_ids:
+                replaceable_section_ids.append(section_id)
+                continue
+            if violates_hard and section_id not in fixed_section_ids:
                 replaceable_section_ids.append(section_id)
                 continue
             if source is not None:
@@ -181,9 +189,9 @@ class TimetableRevisionPreparationService:
     ) -> list[dict[str, object]]:
         if not replaceable_section_ids and not request.required_course_ids:
             return []
-        catalog_id = state.elective_catalog_id or state.major_catalog_id
+        catalog_id = state.elective_catalog_id
         if catalog_id is None:
-            return [{"reason": "catalog_id_required"}]
+            return [{"reason": "elective_catalog_id_required"}]
         course_ids = [
             course_by_section_id[section_id]
             for section_id in replaceable_section_ids

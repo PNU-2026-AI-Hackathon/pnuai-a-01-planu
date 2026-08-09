@@ -23,6 +23,7 @@ from ..services.timetable_candidate_generation_service import (
 from ..services.timetable_candidate_validation_service import (
     TimetableCandidateValidationService,
 )
+from ..repositories.recent_timetable_candidate_repository import RecentTimetableCandidateRepository
 
 
 class TimetableGenerationTools:
@@ -33,9 +34,11 @@ class TimetableGenerationTools:
         *,
         generation_service: TimetableCandidateGenerationService,
         validation_service: TimetableCandidateValidationService,
+        recent_candidate_repository: RecentTimetableCandidateRepository | None = None,
     ) -> None:
         self._generation_service = generation_service
         self._validation_service = validation_service
+        self._recent_candidate_repository = recent_candidate_repository
 
     def generate_timetable_candidates(
         self,
@@ -47,7 +50,7 @@ class TimetableGenerationTools:
         sections. This tool does not accept the user's whole natural-language
         request, excludes combinations that violate Hard constraints, does not
         calculate Soft preference scores, applies result and search limits, and
-        never saves generated candidates to session state.
+        stores generated candidates only in the server-side recent-candidate cache when session_id is supplied; it never selects a candidate.
         """
 
         try:
@@ -73,7 +76,17 @@ class TimetableGenerationTools:
                     message=message,
                 ),
             )
-        return self._generation_service.generate(request)
+        result = self._generation_service.generate(request)
+        if (
+            request.session_id is not None
+            and result.success
+            and self._recent_candidate_repository is not None
+        ):
+            self._recent_candidate_repository.save_candidates(
+                request.session_id,
+                result.candidates,
+            )
+        return result
 
     def validate_timetable_candidate(
         self,

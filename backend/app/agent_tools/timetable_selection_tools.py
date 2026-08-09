@@ -4,24 +4,28 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, Field, ValidationError
 
-from ..models.timetable_generation import GeneratedTimetableCandidate
 from ..models.timetable_revision import (
     TimetableRevisionPreparationResult,
     TimetableRevisionRequest,
+)
+from ..repositories.recent_timetable_candidate_repository import (
+    RecentTimetableCandidateRepository,
+    TimetableCandidateNotFoundError,
 )
 from ..services.session_service import SessionService
 from ..services.timetable_revision_preparation_service import (
     TimetableRevisionPreparationService,
 )
-from .errors import service_error_result, validation_error_result
+from .errors import error_result, service_error_result, validation_error_result
+from .schemas import SessionToolErrorCode
 from .schemas import SessionIdInput, SessionStateSummary, SessionToolResult
 
 
 class SelectTimetableCandidateInput(BaseModel):
-    session_id: str
-    candidate: GeneratedTimetableCandidate
+    session_id: str = Field(min_length=1)
+    candidate_id: str = Field(min_length=1)
 
 
 class TimetableSelectionTools:
@@ -32,25 +36,39 @@ class TimetableSelectionTools:
         *,
         session_service: SessionService,
         revision_preparation_service: TimetableRevisionPreparationService,
+        recent_candidate_repository: RecentTimetableCandidateRepository,
     ) -> None:
         self._session_service = session_service
         self._revision_preparation_service = revision_preparation_service
+        self._recent_candidate_repository = recent_candidate_repository
 
     def select_timetable_candidate(
         self,
         data: SelectTimetableCandidateInput | Mapping[str, object],
     ) -> SessionToolResult:
-        """Store a timetable only after the user explicitly selects it."""
+        """Store a server-generated timetable only after explicit user selection."""
 
         try:
             request = SelectTimetableCandidateInput.model_validate(data)
             before = self._session_service.get_session(request.session_id)
+            candidate = self._recent_candidate_repository.get_candidate(
+                request.session_id,
+                request.candidate_id,
+            )
             after = self._session_service.select_timetable_candidate(
                 request.session_id,
-                request.candidate,
+                candidate,
             )
         except ValidationError as exc:
             return validation_error_result(exc)
+        except TimetableCandidateNotFoundError as exc:
+            return error_result(
+                message=str(exc),
+                code=SessionToolErrorCode.INVALID_VALUE,
+                session_id=exc.session_id,
+                field="candidate_id",
+                value=exc.candidate_id,
+            )
         except Exception as exc:
             return service_error_result(
                 exc,
