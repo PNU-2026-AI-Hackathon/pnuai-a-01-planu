@@ -15,6 +15,7 @@ from .agent_tools import (
     SessionQueryTools,
     TimetableGenerationTools,
     TimetableScoringTools,
+    TimetableSelectionTools,
 )
 from .agents import SessionStateAgent, SessionStateToolset
 from .agents.simple_session_model import LlmSessionStateModel, SimpleSessionStateModel, SessionStateModel
@@ -46,6 +47,7 @@ from .services.ranking_template_service import RankingTemplateService
 from .services.timetable_ranker import TimetableRanker
 from .services.timetable_ranking_service import TimetableRankingService
 from .services.timetable_scoring_service import TimetableScoringService
+from .services.timetable_revision_preparation_service import TimetableRevisionPreparationService
 from .services.timetable_soft_ranking_service import TimetableRankingService as SoftTimetableRankingService
 
 
@@ -61,6 +63,14 @@ _SESSION_QUERY_TOOLS = SessionQueryTools(_SESSION_SERVICE)
 _SESSION_COMMAND_TOOLS = SessionCommandTools(_SESSION_SERVICE)
 _COURSE_DISCOVERY_SERVICE = CourseDiscoveryService(_CATALOG_REPOSITORY)
 _COURSE_DISCOVERY_TOOLS = CourseDiscoveryTools(_COURSE_DISCOVERY_SERVICE)
+_TIMETABLE_REVISION_PREPARATION_SERVICE = TimetableRevisionPreparationService(
+    session_service=_SESSION_SERVICE,
+    catalog_repository=_CATALOG_REPOSITORY,
+)
+_TIMETABLE_SELECTION_TOOLS = TimetableSelectionTools(
+    session_service=_SESSION_SERVICE,
+    revision_preparation_service=_TIMETABLE_REVISION_PREPARATION_SERVICE,
+)
 
 
 def _build_session_state_model() -> SessionStateModel:
@@ -109,6 +119,14 @@ def get_course_discovery_service() -> CourseDiscoveryService:
 
 def get_course_discovery_tools() -> CourseDiscoveryTools:
     return _COURSE_DISCOVERY_TOOLS
+
+
+def get_timetable_revision_preparation_service() -> TimetableRevisionPreparationService:
+    return _TIMETABLE_REVISION_PREPARATION_SERVICE
+
+
+def get_timetable_selection_tools() -> TimetableSelectionTools:
+    return _TIMETABLE_SELECTION_TOOLS
 
 
 @lru_cache
@@ -182,6 +200,7 @@ def get_session_state_toolset() -> SessionStateToolset:
         _COURSE_DISCOVERY_TOOLS,
         get_timetable_generation_tools(),
         scoring_tools=get_timetable_scoring_tools(),
+        selection_tools=get_timetable_selection_tools(),
     )
 
 

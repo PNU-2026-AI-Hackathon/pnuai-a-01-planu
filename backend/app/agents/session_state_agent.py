@@ -28,6 +28,7 @@ from ..agent_tools import (
     SessionToolResult,
     TimeInput,
     ScoreTimetableCandidateRequest,
+    SelectTimetableCandidateInput,
     ResetSessionPreferencesInput,
     UpdateSelectedMajorCoursesInput,
     UpdateSessionProfileInput,
@@ -49,6 +50,7 @@ from ..models.timetable_generation import (
     TimetableValidationRequest,
     TimetableValidationResult,
 )
+from ..models.timetable_revision import TimetableRevisionRequest
 from ..models.timetable_scoring import (
     PreferenceEvidence,
     ScoredTimetableCandidate,
@@ -75,6 +77,8 @@ READ_ONLY_TOOL_NAMES = {
     "validate_timetable_candidate",
     "score_timetable_candidate",
     "rank_timetable_candidates",
+    "get_selected_timetable",
+    "prepare_timetable_revision",
 }
 
 
@@ -472,6 +476,7 @@ class SessionStateToolset:
         discovery_tools: object,
         timetable_tools: object | None = None,
         scoring_tools: object | None = None,
+        selection_tools: object | None = None,
     ) -> "SessionStateToolset":
         tools = {
             "get_session_summary": session_tools.get_session_summary,
@@ -489,6 +494,15 @@ class SessionStateToolset:
                 {
                     "generate_timetable_candidates": timetable_tools.generate_timetable_candidates,
                     "validate_timetable_candidate": timetable_tools.validate_timetable_candidate,
+                }
+            )
+        if selection_tools is not None:
+            tools.update(
+                {
+                    "select_timetable_candidate": selection_tools.select_timetable_candidate,
+                    "get_selected_timetable": selection_tools.get_selected_timetable,
+                    "clear_selected_timetable": selection_tools.clear_selected_timetable,
+                    "prepare_timetable_revision": selection_tools.prepare_timetable_revision,
                 }
             )
         if scoring_tools is not None:
@@ -531,6 +545,10 @@ _TOOL_INPUT_MODELS: dict[str, type[BaseModel]] = {
     "validate_timetable_candidate": TimetableValidationRequest,
     "score_timetable_candidate": ScoreTimetableCandidateRequest,
     "rank_timetable_candidates": TimetableScoringRequest,
+    "select_timetable_candidate": SelectTimetableCandidateInput,
+    "get_selected_timetable": SessionIdInput,
+    "clear_selected_timetable": SessionIdInput,
+    "prepare_timetable_revision": TimetableRevisionRequest,
     "set_department": DepartmentInput,
     "register_major_catalog": CatalogInput,
     "register_elective_catalog": CatalogInput,
@@ -593,6 +611,18 @@ _TOOL_DESCRIPTIONS: dict[str, str] = {
     "rank_timetable_candidates": (
         "Rank multiple Hard-valid timetable candidates by Soft preferences using only the scoring service. "
         "This read-only tool does not relax Hard constraints, does not choose a candidate, and does not save results."
+    ),
+    "select_timetable_candidate": (
+        "???? ??? ??? ??? ?? ? ??? ????? ?? ???? ?? ????. "
+        "ranking 1??? ????? ?? ???? ? ??. ??? ???? Hard/Soft ??? "
+        "??? ?? ??? ????."
+    ),
+    "get_selected_timetable": "?? ??? ???? ????. ?? ?? ? ??? ?? ????.",
+    "clear_selected_timetable": "???? ????? ?? ??? ???? ?? ?? ??? ??? ???. Hard/Soft ??? ??? ???.",
+    "prepare_timetable_revision": (
+        "?? ??? ???? ???? ?? ????????? ???? ?? ???? ?? ????. "
+        "?? section? ???? ?? section? ???? ?????? ????. "
+        "?? ??? ?? ??? ???? ??? ?? generate_timetable_candidates? ???? ??."
     ),
     "set_department": "Set the user's department when the department text is explicit.",
     "register_major_catalog": "Store an already parsed major catalog id.",
