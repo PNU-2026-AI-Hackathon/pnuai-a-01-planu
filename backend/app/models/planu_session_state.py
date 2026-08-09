@@ -1,4 +1,4 @@
-"""Minimal session state shared by future agent tools and repositories."""
+﻿"""Minimal session state shared by future agent tools and repositories."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ from pydantic import (
 )
 
 from .session_preferences import CourseId, HardConstraints, SoftPreferences
+from .timetable_selection import SelectedTimetable, SelectedTimetableStatus
 
 
 class PlanuSessionState(BaseModel):
@@ -41,6 +42,8 @@ class PlanuSessionState(BaseModel):
     selected_major_course_ids: list[CourseId] = Field(default_factory=list)
     hard_constraints: HardConstraints = Field(default_factory=HardConstraints)
     soft_preferences: SoftPreferences = Field(default_factory=SoftPreferences)
+    selected_timetable: SelectedTimetable | None = None
+    selected_timetable_status: SelectedTimetableStatus | None = None
     created_at: datetime
     updated_at: datetime
     last_accessed_at: datetime
@@ -88,3 +91,4 @@ class PlanuSessionState(BaseModel):
         if self.expires_at <= self.last_accessed_at:
             raise ValueError("expires_at must be later than last_accessed_at")
         return self
+
