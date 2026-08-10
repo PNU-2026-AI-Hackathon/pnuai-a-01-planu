@@ -1,5 +1,14 @@
-"""Agent execution layers for PlaNU."""
+﻿"""Agent execution layers for PlaNU."""
 
+from .supervisor_agent import (
+    AgentDomain,
+    DomainAgent,
+    PlanuSupervisorAgent,
+    classify_supervisor_route,
+    major_responsibility,
+    preference_responsibility,
+    timetable_responsibility,
+)
 from .session_state_agent import (
     AgentCourseCandidate,
     AgentDiscoveryResult,
@@ -23,6 +32,13 @@ from .session_state_agent import (
 )
 
 __all__ = [
+    "AgentDomain",
+    "DomainAgent",
+    "PlanuSupervisorAgent",
+    "classify_supervisor_route",
+    "major_responsibility",
+    "preference_responsibility",
+    "timetable_responsibility",
     "AgentCourseCandidate",
     "AgentDiscoveryResult",
     "AgentGenerationFailureReason",
@@ -43,3 +59,4 @@ __all__ = [
     "SessionStateToolset",
     "UnresolvedSessionRequest",
 ]
+

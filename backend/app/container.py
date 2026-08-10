@@ -15,7 +15,16 @@ from .agent_tools import (
     TimetableScoringTools,
     TimetableSelectionTools,
 )
-from .agents import SessionStateAgent, SessionStateToolset
+from .agents import (
+    AgentDomain,
+    DomainAgent,
+    PlanuSupervisorAgent,
+    SessionStateAgent,
+    SessionStateToolset,
+    major_responsibility,
+    preference_responsibility,
+    timetable_responsibility,
+)
 from .agents.simple_session_model import (
     LlmSessionStateModel,
     SessionStateModel,
@@ -82,8 +91,15 @@ class PlanuContainer:
     timetable_revision_preparation_service: TimetableRevisionPreparationService
     timetable_selection_tools: TimetableSelectionTools
     recent_timetable_candidate_repository: RecentTimetableCandidateRepository
+    major_toolset: SessionStateToolset
+    preference_toolset: SessionStateToolset
+    timetable_toolset: SessionStateToolset
     session_state_toolset: SessionStateToolset
+    major_agent: DomainAgent
+    preference_agent: DomainAgent
+    timetable_agent: DomainAgent
     session_state_agent: SessionStateAgent
+    supervisor_agent: PlanuSupervisorAgent
     major_catalog_upload_service: MajorCatalogUploadService
     major_preview_service: MajorPreviewService
     major_confirm_service: MajorConfirmService
@@ -142,6 +158,15 @@ def build_container(
         revision_preparation_service=revision_service,
         recent_candidate_repository=recent_candidates,
     )
+    major_toolset = _build_major_toolset(session_agent_tools, discovery_tools)
+    preference_toolset = _build_preference_toolset(session_agent_tools)
+    timetable_toolset = _build_timetable_toolset(
+        session_agent_tools,
+        discovery_tools,
+        generation_tools,
+        scoring_tools,
+        selection_tools,
+    )
     toolset = SessionStateToolset.from_agent_and_discovery_tools(
         session_agent_tools,
         discovery_tools,
@@ -149,9 +174,27 @@ def build_container(
         scoring_tools=scoring_tools,
         selection_tools=selection_tools,
     )
-    agent = SessionStateAgent(
-        model=model or (model_factory or _build_session_state_model)(),
-        tools=toolset,
+    model_instance = model or (model_factory or _build_session_state_model)()
+    major_agent = DomainAgent(
+        domain=AgentDomain.MAJOR,
+        agent=SessionStateAgent(model=model_instance, tools=major_toolset),
+        can_handle=major_responsibility,
+    )
+    preference_agent = DomainAgent(
+        domain=AgentDomain.PREFERENCE,
+        agent=SessionStateAgent(model=model_instance, tools=preference_toolset),
+        can_handle=preference_responsibility,
+    )
+    timetable_agent = DomainAgent(
+        domain=AgentDomain.TIMETABLE,
+        agent=SessionStateAgent(model=model_instance, tools=timetable_toolset),
+        can_handle=timetable_responsibility,
+    )
+    agent = SessionStateAgent(model=model_instance, tools=toolset)
+    supervisor_agent = PlanuSupervisorAgent(
+        major_agent=major_agent,
+        preference_agent=preference_agent,
+        timetable_agent=timetable_agent,
     )
 
     general_pool_service = GeneralCoursePoolService(restriction_policy=restriction_policy)
@@ -175,8 +218,15 @@ def build_container(
         timetable_revision_preparation_service=revision_service,
         timetable_selection_tools=selection_tools,
         recent_timetable_candidate_repository=recent_candidates,
+        major_toolset=major_toolset,
+        preference_toolset=preference_toolset,
+        timetable_toolset=timetable_toolset,
         session_state_toolset=toolset,
+        major_agent=major_agent,
+        preference_agent=preference_agent,
+        timetable_agent=timetable_agent,
         session_state_agent=agent,
+        supervisor_agent=supervisor_agent,
         major_catalog_upload_service=MajorCatalogUploadService(
             store=store,
             session_service=session_service,
@@ -205,6 +255,57 @@ def build_container(
     )
 
 
+
+def _build_major_toolset(
+    session_tools: SessionAgentTools,
+    discovery_tools: CourseDiscoveryTools,
+) -> SessionStateToolset:
+    return SessionStateToolset(
+        {
+            "get_session_summary": session_tools.get_session_summary,
+            "update_selected_major_courses": session_tools.update_selected_major_courses,
+            "search_courses_by_name": discovery_tools.search_courses_by_name,
+            "discover_courses": discovery_tools.discover_courses,
+            "get_course_sections": discovery_tools.get_course_sections,
+            "get_section_details": discovery_tools.get_section_details,
+        }
+    )
+
+
+def _build_preference_toolset(session_tools: SessionAgentTools) -> SessionStateToolset:
+    return SessionStateToolset(
+        {
+            "get_session_summary": session_tools.get_session_summary,
+            "update_timetable_preferences": session_tools.update_timetable_preferences,
+            "reset_session_preferences": session_tools.reset_session_preferences,
+        }
+    )
+
+
+def _build_timetable_toolset(
+    session_tools: SessionAgentTools,
+    discovery_tools: CourseDiscoveryTools,
+    generation_tools: TimetableGenerationTools,
+    scoring_tools: TimetableScoringTools,
+    selection_tools: TimetableSelectionTools,
+) -> SessionStateToolset:
+    return SessionStateToolset(
+        {
+            "get_session_summary": session_tools.get_session_summary,
+            "search_courses_by_name": discovery_tools.search_courses_by_name,
+            "discover_courses": discovery_tools.discover_courses,
+            "get_course_sections": discovery_tools.get_course_sections,
+            "get_section_details": discovery_tools.get_section_details,
+            "generate_timetable_candidates": generation_tools.generate_timetable_candidates,
+            "validate_timetable_candidate": generation_tools.validate_timetable_candidate,
+            "score_timetable_candidate": scoring_tools.score_timetable_candidate,
+            "rank_timetable_candidates": scoring_tools.rank_timetable_candidates,
+            "select_timetable_candidate": selection_tools.select_timetable_candidate,
+            "get_selected_timetable": selection_tools.get_selected_timetable,
+            "clear_selected_timetable": selection_tools.clear_selected_timetable,
+            "prepare_timetable_revision": selection_tools.prepare_timetable_revision,
+        }
+    )
 def _build_session_state_model() -> SessionStateModel:
     provider = os.getenv("SESSION_STATE_MODEL_PROVIDER", "simple").strip().lower()
     environment = os.getenv("APP_ENV", "development").strip().lower()
@@ -250,6 +351,10 @@ def _load_default_general_courses() -> tuple[list, list]:
             status_code=500,
         ) from exc
     return general_required_courses, fallback_elective_courses
+
+
+
+
 
 
 
