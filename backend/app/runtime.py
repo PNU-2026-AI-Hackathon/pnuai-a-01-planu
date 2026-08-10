@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from .agent_tools.timetable_selection_tools import SelectTimetableCandidateInput
 from .agent_tools import TimetableSelectionTools
-from .agents import SessionStateAgent, SessionStateAgentResult
+from .agents import RunnableAgent, SessionStateAgentResult
 from .agents.session_state_agent import AgentRankedTimetableCandidate, AgentTimetableCandidate
 from .core.errors import AppError
 from .services.exceptions import SessionNotAvailableError
@@ -238,6 +238,8 @@ def _session_unavailable_error() -> AppError:
         "세션을 찾을 수 없거나 만료되었습니다.",
         status_code=404,
     )
+
+
 
 
 

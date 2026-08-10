@@ -4,6 +4,7 @@ from .supervisor_agent import (
     AgentDomain,
     DomainAgent,
     PlanuSupervisorAgent,
+    RunnableAgent,
     classify_supervisor_route,
     major_responsibility,
     preference_responsibility,
@@ -35,6 +36,7 @@ __all__ = [
     "AgentDomain",
     "DomainAgent",
     "PlanuSupervisorAgent",
+    "RunnableAgent",
     "classify_supervisor_route",
     "major_responsibility",
     "preference_responsibility",
@@ -59,4 +61,6 @@ __all__ = [
     "SessionStateToolset",
     "UnresolvedSessionRequest",
 ]
+
+
 

@@ -28,6 +28,8 @@ class RunnableAgent(Protocol):
         ...
 
 
+ALLOWED_FALLBACKS: dict[AgentDomain, tuple[AgentDomain, ...]] = {}
+
 ResponsibilityCheck = Callable[[str], bool]
 
 
@@ -99,11 +101,7 @@ class PlanuSupervisorAgent:
 
     @staticmethod
     def _fallback_routes(route: AgentDomain, text: str) -> list[AgentDomain]:
-        preferred = [classify_supervisor_route(text)]
-        for domain in (AgentDomain.PREFERENCE, AgentDomain.TIMETABLE, AgentDomain.MAJOR):
-            if domain not in preferred:
-                preferred.append(domain)
-        return [domain for domain in preferred if domain is not route]
+        return list(ALLOWED_FALLBACKS.get(route, ()))
 
     @staticmethod
     def _needs_routing_confirmation(
@@ -237,6 +235,7 @@ def _looks_like_timetable_revision(text: str) -> bool:
 
 def _normalize(text: str) -> str:
     return text.strip().casefold()
+
 
 
 

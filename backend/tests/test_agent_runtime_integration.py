@@ -6,7 +6,9 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi.testclient import TestClient
 
-from backend.app.agents import AgentDomain
+from typing import get_type_hints
+
+from backend.app.agents import AgentDomain, RunnableAgent
 from backend.app.container import build_container
 from backend.app.deps import get_agent_runtime
 from backend.app.main import app
@@ -210,4 +212,12 @@ def test_public_chat_routes_requests_to_expected_domain_agents() -> None:
             )
             assert response.status_code == 200, response.text
             assert app.state.container.supervisor_agent.last_route is expected
+
+
+
+def test_agent_runtime_constructor_depends_on_runnable_agent_protocol() -> None:
+    hints = get_type_hints(AgentRuntime.__init__)
+
+    assert hints["agent"] is RunnableAgent
+
 
