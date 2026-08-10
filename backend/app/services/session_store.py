@@ -86,6 +86,8 @@ class SessionData:
     selected_major_course_ids: list[str] = field(default_factory=list)
     hard_constraints: HardConstraints = field(default_factory=HardConstraints)
     soft_preferences: SoftPreferences = field(default_factory=SoftPreferences)
+    generation_preferences_confirmed_at: datetime | None = None
+    generation_preferences_confirmed_version: int | None = None
     general_required_candidates: list[Course] = field(default_factory=list)
     general_elective_candidates: list[Course] = field(default_factory=list)
     general_pool_diagnostics: list[ExcludedCourseDiagnostic] = field(default_factory=list)
@@ -403,6 +405,9 @@ class SessionStore:
         selected_major_course_ids: Iterable[str] | None = None,
         hard_constraints: HardConstraints | None = None,
         soft_preferences: SoftPreferences | None = None,
+        generation_preferences_confirmed_at: datetime | None = None,
+        generation_preferences_confirmed_version: int | None = None,
+        clear_generation_preferences_confirmation: bool = False,
         last_accessed_at: datetime | None = None,
         expires_at: datetime | None = None,
         latest_ranking_result: TimetableRankingResult | None = None,
@@ -461,6 +466,13 @@ class SessionStore:
                 data.hard_constraints = hard_constraints
             if soft_preferences is not None:
                 data.soft_preferences = soft_preferences
+            if generation_preferences_confirmed_at is not None:
+                data.generation_preferences_confirmed_at = generation_preferences_confirmed_at
+            if clear_generation_preferences_confirmation:
+                data.generation_preferences_confirmed_at = None
+                data.generation_preferences_confirmed_version = None
+            if generation_preferences_confirmed_version is not None:
+                data.generation_preferences_confirmed_version = generation_preferences_confirmed_version
             if last_accessed_at is not None:
                 data.last_accessed_at = last_accessed_at
             if expires_at is not None:
@@ -644,6 +656,8 @@ class SessionStore:
             selected_major_course_ids=list(data.selected_major_course_ids),
             hard_constraints=data.hard_constraints.model_copy(deep=True),
             soft_preferences=data.soft_preferences.model_copy(deep=True),
+            generation_preferences_confirmed_at=data.generation_preferences_confirmed_at,
+            generation_preferences_confirmed_version=data.generation_preferences_confirmed_version,
             general_required_candidates=list(data.general_required_candidates),
             general_elective_candidates=list(data.general_elective_candidates),
             general_pool_diagnostics=list(data.general_pool_diagnostics),

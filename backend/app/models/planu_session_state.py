@@ -1,4 +1,4 @@
-﻿"""Minimal session state shared by future agent tools and repositories."""
+"""Minimal session state shared by future agent tools and repositories."""
 
 from __future__ import annotations
 
@@ -44,6 +44,8 @@ class PlanuSessionState(BaseModel):
     soft_preferences: SoftPreferences = Field(default_factory=SoftPreferences)
     selected_timetable: SelectedTimetable | None = None
     selected_timetable_status: SelectedTimetableStatus | None = None
+    generation_preferences_confirmed_at: datetime | None = None
+    generation_preferences_confirmed_version: int | None = Field(default=None, ge=1)
     created_at: datetime
     updated_at: datetime
     last_accessed_at: datetime
@@ -75,9 +77,12 @@ class PlanuSessionState(BaseModel):
         "updated_at",
         "last_accessed_at",
         "expires_at",
+        "generation_preferences_confirmed_at",
     )
     @classmethod
-    def validate_timezone_aware_datetime(cls, value: datetime) -> datetime:
+    def validate_timezone_aware_datetime(cls, value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
         if value.tzinfo is None or value.tzinfo.utcoffset(value) is None:
             raise ValueError("datetime fields must include timezone information")
         return value

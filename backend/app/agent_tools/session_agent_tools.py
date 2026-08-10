@@ -7,12 +7,14 @@ from collections.abc import Callable, Mapping
 from pydantic import BaseModel, ValidationError
 
 from ..models import PlanuSessionState
+from ..services.condition_summary_service import ConditionSummaryService
 from ..services.session_service import SessionService
-from .errors import service_error_result, validation_error_result
+from .errors import error_result, service_error_result, validation_error_result
 from .schemas import (
     ResetSessionPreferencesInput,
     SessionIdInput,
     SessionStateSummary,
+    SessionToolErrorCode,
     SessionToolResult,
     UpdateSelectedMajorCoursesInput,
     UpdateSessionProfileInput,
@@ -23,8 +25,13 @@ from .schemas import (
 class SessionAgentTools:
     """Small, intent-level session tool surface for future LLM agents."""
 
-    def __init__(self, session_service: SessionService) -> None:
+    def __init__(
+        self,
+        session_service: SessionService,
+        condition_summary_service: ConditionSummaryService | None = None,
+    ) -> None:
         self._session_service = session_service
+        self._condition_summary_service = condition_summary_service or ConditionSummaryService()
 
     def get_session_summary(
         self,
@@ -135,6 +142,33 @@ class SessionAgentTools:
                 "soft_preferences.compact_schedule",
             ],
             message="시간표 조건과 선호를 갱신했습니다.",
+        )
+
+    def confirm_timetable_conditions(
+        self,
+        data: SessionIdInput | Mapping[str, object],
+    ) -> SessionToolResult:
+        """Confirm that the current condition summary may be used for generation."""
+
+        try:
+            request = SessionIdInput.model_validate(data)
+            state = self._session_service.get_session(request.session_id)
+            readiness = self._condition_summary_service.summarize(state).generation_readiness
+            if not readiness.ready:
+                return error_result(
+                    message="시간표 생성에 필요한 정보가 아직 부족합니다.",
+                    code=SessionToolErrorCode.TIMETABLE_GENERATION_NOT_READY,
+                    session_id=request.session_id,
+                )
+            state = self._session_service.confirm_generation_preferences(request.session_id)
+        except ValidationError as exc:
+            return validation_error_result(exc)
+        except Exception as exc:
+            return service_error_result(exc, session_id=locals().get("session_id"))
+        return self._success(
+            state,
+            message="현재 조건을 확인했습니다.",
+            changed_fields=["generation_preferences_confirmed_at"],
         )
 
     def reset_session_preferences(
