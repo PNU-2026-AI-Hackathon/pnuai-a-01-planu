@@ -135,10 +135,10 @@ def classify_supervisor_route(text: str) -> AgentDomain:
         return AgentDomain.PREFERENCE
     if _looks_like_timetable_revision(normalized):
         return AgentDomain.TIMETABLE
-    if _looks_like_timetable_generation(normalized):
-        return AgentDomain.TIMETABLE
     if _looks_like_preference_crud(normalized):
         return AgentDomain.PREFERENCE
+    if _looks_like_timetable_generation(normalized):
+        return AgentDomain.TIMETABLE
     if _looks_like_major_request(normalized):
         return AgentDomain.MAJOR
     return AgentDomain.PREFERENCE
@@ -156,7 +156,11 @@ def preference_responsibility(text: str) -> bool:
 
 def timetable_responsibility(text: str) -> bool:
     normalized = _normalize(text)
-    return _looks_like_timetable_revision(normalized) or _looks_like_timetable_generation(normalized)
+    return (
+        not _looks_like_preference_reset(normalized)
+        and not _looks_like_preference_crud(normalized)
+        and (_looks_like_timetable_revision(normalized) or _looks_like_timetable_generation(normalized))
+    )
 
 
 def not_my_responsibility_result(
@@ -203,7 +207,6 @@ def _looks_like_preference_crud(text: str) -> bool:
             "빼줘",
             "제외",
             "선호",
-            "조건",
             "10시",
             "9시",
             "5시",
@@ -234,3 +237,8 @@ def _looks_like_timetable_revision(text: str) -> bool:
 
 def _normalize(text: str) -> str:
     return text.strip().casefold()
+
+
+
+
+

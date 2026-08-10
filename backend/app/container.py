@@ -98,7 +98,7 @@ class PlanuContainer:
     major_agent: DomainAgent
     preference_agent: DomainAgent
     timetable_agent: DomainAgent
-    session_state_agent: SessionStateAgent
+    legacy_session_state_agent: SessionStateAgent
     supervisor_agent: PlanuSupervisorAgent
     major_catalog_upload_service: MajorCatalogUploadService
     major_preview_service: MajorPreviewService
@@ -177,20 +177,32 @@ def build_container(
     model_instance = model or (model_factory or _build_session_state_model)()
     major_agent = DomainAgent(
         domain=AgentDomain.MAJOR,
-        agent=SessionStateAgent(model=model_instance, tools=major_toolset),
+        agent=SessionStateAgent(
+            model=model_instance,
+            tools=major_toolset,
+            system_prompt=_load_agent_prompt("major_agent_system.txt"),
+        ),
         can_handle=major_responsibility,
     )
     preference_agent = DomainAgent(
         domain=AgentDomain.PREFERENCE,
-        agent=SessionStateAgent(model=model_instance, tools=preference_toolset),
+        agent=SessionStateAgent(
+            model=model_instance,
+            tools=preference_toolset,
+            system_prompt=_load_agent_prompt("preference_agent_system.txt"),
+        ),
         can_handle=preference_responsibility,
     )
     timetable_agent = DomainAgent(
         domain=AgentDomain.TIMETABLE,
-        agent=SessionStateAgent(model=model_instance, tools=timetable_toolset),
+        agent=SessionStateAgent(
+            model=model_instance,
+            tools=timetable_toolset,
+            system_prompt=_load_agent_prompt("timetable_agent_system.txt"),
+        ),
         can_handle=timetable_responsibility,
     )
-    agent = SessionStateAgent(model=model_instance, tools=toolset)
+    legacy_agent = SessionStateAgent(model=model_instance, tools=toolset)
     supervisor_agent = PlanuSupervisorAgent(
         major_agent=major_agent,
         preference_agent=preference_agent,
@@ -225,7 +237,7 @@ def build_container(
         major_agent=major_agent,
         preference_agent=preference_agent,
         timetable_agent=timetable_agent,
-        session_state_agent=agent,
+        legacy_session_state_agent=legacy_agent,
         supervisor_agent=supervisor_agent,
         major_catalog_upload_service=MajorCatalogUploadService(
             store=store,
@@ -255,6 +267,9 @@ def build_container(
     )
 
 
+
+def _load_agent_prompt(filename: str) -> str:
+    return (_BACKEND_DIR / "app" / "agents" / "prompts" / filename).read_text(encoding="utf-8")
 
 def _build_major_toolset(
     session_tools: SessionAgentTools,
@@ -351,6 +366,8 @@ def _load_default_general_courses() -> tuple[list, list]:
             status_code=500,
         ) from exc
     return general_required_courses, fallback_elective_courses
+
+
 
 
 

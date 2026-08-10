@@ -136,7 +136,7 @@ def get_session_state_toolset(request: Request = None) -> SessionStateToolset:
 
 
 def get_session_state_agent(request: Request = None) -> SessionStateAgent:
-    return get_container(request).session_state_agent
+    return get_container(request).legacy_session_state_agent
 
 
 def clear_dependency_caches() -> None:
@@ -186,9 +186,11 @@ def get_agent_runtime(request: Request = None):
     container = get_container(request)
     return AgentRuntime(
         session_service=container.session_service,
-        agent=container.session_state_agent,
+        agent=container.supervisor_agent,
         selection_tools=container.timetable_selection_tools,
     )
+
+
 
 
 

@@ -28,7 +28,7 @@ class AgentRuntime:
         self,
         *,
         session_service: SessionService,
-        agent: SessionStateAgent,
+        agent: RunnableAgent,
         selection_tools: TimetableSelectionTools,
     ) -> None:
         self._session_service = session_service
@@ -238,6 +238,7 @@ def _session_unavailable_error() -> AppError:
         "세션을 찾을 수 없거나 만료되었습니다.",
         status_code=404,
     )
+
 
 
 

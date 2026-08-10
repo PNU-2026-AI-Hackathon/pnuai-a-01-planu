@@ -129,3 +129,25 @@ def test_timetable_agent_uses_ranking_tool_for_soft_scoring() -> None:
 
     assert any(tool.name == "rank_timetable_candidates" for tool in result.executed_tools)
     assert "rank_timetable_candidates" in container.timetable_agent.tool_names
+
+
+def test_complex_preference_plus_generation_request_prefers_preference_agent() -> None:
+    container = build_container(model=FakeModel())
+
+    _run_supervisor_message(container, "금요일은 비우고 이 조건으로 시간표 만들어줘")
+
+    assert container.supervisor_agent.last_attempted_routes == [AgentDomain.PREFERENCE]
+    assert container.supervisor_agent.last_route is AgentDomain.PREFERENCE
+
+
+def test_domain_agents_use_distinct_system_prompts() -> None:
+    container = build_container(model=FakeModel())
+
+    assert "PlaNU Major Agent" in container.major_agent.agent.system_prompt
+    assert "PlaNU Preference Agent" in container.preference_agent.agent.system_prompt
+    assert "PlaNU Timetable Agent" in container.timetable_agent.agent.system_prompt
+    assert len({
+        container.major_agent.agent.system_prompt,
+        container.preference_agent.agent.system_prompt,
+        container.timetable_agent.agent.system_prompt,
+    }) == 3

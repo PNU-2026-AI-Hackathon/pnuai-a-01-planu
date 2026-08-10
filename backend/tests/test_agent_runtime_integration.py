@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi.testclient import TestClient
 
+from backend.app.agents import AgentDomain
 from backend.app.container import build_container
 from backend.app.deps import get_agent_runtime
 from backend.app.main import app
@@ -78,7 +79,9 @@ def test_composition_root_shares_repositories_and_registers_all_agent_tools() ->
         "clear_selected_timetable",
         "prepare_timetable_revision",
     }.issubset(set(tool_names))
-    assert container.session_state_agent.model is model
+    assert container.legacy_session_state_agent.model is model
+    assert container.major_agent.agent.system_prompt != container.preference_agent.agent.system_prompt
+    assert container.preference_agent.agent.system_prompt != container.timetable_agent.agent.system_prompt
 
 
 def test_chat_api_uses_agent_tools_and_returns_public_dto() -> None:
@@ -114,7 +117,7 @@ def test_chat_api_returns_stable_session_unavailable_error_after_ttl() -> None:
     session = container.session_service.create_session()
     runtime = AgentRuntime(
         session_service=container.session_service,
-        agent=container.session_state_agent,
+        agent=container.supervisor_agent,
         selection_tools=container.timetable_selection_tools,
     )
     app.dependency_overrides[get_agent_runtime] = lambda: runtime
@@ -165,4 +168,46 @@ def test_catalog_isolation_between_sessions_through_shared_discovery_tool() -> N
     assert [candidate.course_id for candidate in first_result.candidates] == ["A100"]
     assert [candidate.course_id for candidate in second_result.candidates] == ["B100"]
 
+
+
+
+
+def test_public_chat_uses_supervisor_agent_and_not_legacy_full_agent() -> None:
+    with TestClient(app) as client:
+        created = client.post("/sessions", json={"department": "컴퓨터공학과"})
+        session_id = created.json()["session_id"]
+
+        class ExplodingLegacyAgent:
+            def run(self, _data):
+                raise AssertionError("legacy full toolset agent must not handle public chat")
+
+        app.state.container.legacy_session_state_agent = ExplodingLegacyAgent()
+        response = client.post(
+            f"/sessions/{session_id}/chat",
+            json={"message": "전공 분반을 확인해줘"},
+        )
+
+        assert response.status_code == 200, response.text
+        assert app.state.container.supervisor_agent.last_route is not None
+
+
+def test_public_chat_routes_requests_to_expected_domain_agents() -> None:
+    with TestClient(app) as client:
+        created = client.post("/sessions", json={"department": "컴퓨터공학과"})
+        session_id = created.json()["session_id"]
+        cases = [
+            ("전공 과목을 찾아줘", AgentDomain.MAJOR),
+            ("금요일은 반드시 비워줘", AgentDomain.PREFERENCE),
+            ("현재 조건으로 시간표 만들어줘", AgentDomain.TIMETABLE),
+            ("전체적으로 마음에 안 들어. 조건부터 다시 정할래", AgentDomain.PREFERENCE),
+            ("이 시간표에서 자료구조 대신 다른 과목 하나만 바꿔줘", AgentDomain.TIMETABLE),
+            ("금요일은 비우고 시간표 만들어줘", AgentDomain.PREFERENCE),
+        ]
+        for message, expected in cases:
+            response = client.post(
+                f"/sessions/{session_id}/chat",
+                json={"message": message},
+            )
+            assert response.status_code == 200, response.text
+            assert app.state.container.supervisor_agent.last_route is expected
 
