@@ -86,6 +86,8 @@ class SessionData:
     selected_major_course_ids: list[str] = field(default_factory=list)
     hard_constraints: HardConstraints = field(default_factory=HardConstraints)
     soft_preferences: SoftPreferences = field(default_factory=SoftPreferences)
+    generation_preferences_confirmed_at: datetime | None = None
+    generation_preferences_confirmed_version: int | None = None
     general_required_candidates: list[Course] = field(default_factory=list)
     general_elective_candidates: list[Course] = field(default_factory=list)
     general_pool_diagnostics: list[ExcludedCourseDiagnostic] = field(default_factory=list)
@@ -403,6 +405,9 @@ class SessionStore:
         selected_major_course_ids: Iterable[str] | None = None,
         hard_constraints: HardConstraints | None = None,
         soft_preferences: SoftPreferences | None = None,
+        generation_preferences_confirmed_at: datetime | None = None,
+        generation_preferences_confirmed_version: int | None = None,
+        clear_generation_preferences_confirmation: bool = False,
         last_accessed_at: datetime | None = None,
         expires_at: datetime | None = None,
         latest_ranking_result: TimetableRankingResult | None = None,
@@ -421,19 +426,26 @@ class SessionStore:
             if department is not None:
                 if not department.strip():
                     raise ValueError("department must not be empty")
+                if data.department != department:
+                    self._clear_generation_preferences_confirmation(data)
                 data.department = department
             if major_candidates is not None:
+                self._clear_generation_preferences_confirmation(data)
                 data.major_candidates = list(major_candidates)
             if elective_candidates is not None:
+                self._clear_generation_preferences_confirmation(data)
                 data.elective_candidates = list(elective_candidates)
             if fixed_courses is not None:
+                self._clear_generation_preferences_confirmation(data)
                 data.fixed_courses = list(fixed_courses)
                 data.selected_major_course_ids = [
                     course.course_id for course in data.fixed_courses
                 ]
             if general_required_candidates is not None:
+                self._clear_generation_preferences_confirmation(data)
                 data.general_required_candidates = list(general_required_candidates)
             if general_elective_candidates is not None:
+                self._clear_generation_preferences_confirmation(data)
                 data.general_elective_candidates = list(general_elective_candidates)
             if confirmed_major_credits is not None:
                 data.confirmed_major_credits = confirmed_major_credits
@@ -452,15 +464,33 @@ class SessionStore:
             if ranking_preferences is not None:
                 data.ranking_preferences = ranking_preferences
             if major_catalog_id is not None:
+                if data.major_catalog_id != major_catalog_id:
+                    self._clear_generation_preferences_confirmation(data)
                 data.major_catalog_id = major_catalog_id
             if elective_catalog_id is not None:
+                if data.elective_catalog_id != elective_catalog_id:
+                    self._clear_generation_preferences_confirmation(data)
                 data.elective_catalog_id = elective_catalog_id
             if selected_major_course_ids is not None:
-                data.selected_major_course_ids = list(dict.fromkeys(selected_major_course_ids))
+                normalized_selected_major_course_ids = list(dict.fromkeys(selected_major_course_ids))
+                if data.selected_major_course_ids != normalized_selected_major_course_ids:
+                    self._clear_generation_preferences_confirmation(data)
+                data.selected_major_course_ids = normalized_selected_major_course_ids
             if hard_constraints is not None:
+                if data.hard_constraints != hard_constraints:
+                    self._clear_generation_preferences_confirmation(data)
                 data.hard_constraints = hard_constraints
             if soft_preferences is not None:
+                if data.soft_preferences != soft_preferences:
+                    self._clear_generation_preferences_confirmation(data)
                 data.soft_preferences = soft_preferences
+            if generation_preferences_confirmed_at is not None:
+                data.generation_preferences_confirmed_at = generation_preferences_confirmed_at
+            if clear_generation_preferences_confirmation:
+                data.generation_preferences_confirmed_at = None
+                data.generation_preferences_confirmed_version = None
+            if generation_preferences_confirmed_version is not None:
+                data.generation_preferences_confirmed_version = generation_preferences_confirmed_version
             if last_accessed_at is not None:
                 data.last_accessed_at = last_accessed_at
             if expires_at is not None:
@@ -503,6 +533,7 @@ class SessionStore:
             now = self._clock()
             data.general_required_candidates = list(result.pools.required_courses)
             data.general_elective_candidates = list(result.pools.elective_courses)
+            self._clear_generation_preferences_confirmation(data)
             data.general_pool_diagnostics = list(result.excluded_courses)
             data.general_pool_warnings = list(result.warnings)
             data.general_pool_data_source = data_source
@@ -633,6 +664,11 @@ class SessionStore:
         return data
 
     @staticmethod
+    def _clear_generation_preferences_confirmation(data: SessionData) -> None:
+        data.generation_preferences_confirmed_at = None
+        data.generation_preferences_confirmed_version = None
+
+    @staticmethod
     def _copy(data: SessionData) -> SessionData:
         return replace(
             data,
@@ -644,6 +680,8 @@ class SessionStore:
             selected_major_course_ids=list(data.selected_major_course_ids),
             hard_constraints=data.hard_constraints.model_copy(deep=True),
             soft_preferences=data.soft_preferences.model_copy(deep=True),
+            generation_preferences_confirmed_at=data.generation_preferences_confirmed_at,
+            generation_preferences_confirmed_version=data.generation_preferences_confirmed_version,
             general_required_candidates=list(data.general_required_candidates),
             general_elective_candidates=list(data.general_elective_candidates),
             general_pool_diagnostics=list(data.general_pool_diagnostics),

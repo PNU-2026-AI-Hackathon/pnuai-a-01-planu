@@ -1,4 +1,4 @@
-﻿"""Application-level wrapper around the PlaNU agent."""
+"""Application-level wrapper around the PlaNU agent."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ from .agent_tools import TimetableSelectionTools
 from .agents import RunnableAgent, SessionStateAgentResult
 from .agents.session_state_agent import AgentRankedTimetableCandidate, AgentTimetableCandidate
 from .core.errors import AppError
+from .services.condition_summary_service import ConditionSummaryService
 from .services.exceptions import SessionNotAvailableError
 from .services.session_service import SessionService
 from .schemas.agent_schema import (
@@ -30,10 +31,12 @@ class AgentRuntime:
         session_service: SessionService,
         agent: RunnableAgent,
         selection_tools: TimetableSelectionTools,
+        condition_summary_service: ConditionSummaryService | None = None,
     ) -> None:
         self._session_service = session_service
         self._agent = agent
         self._selection_tools = selection_tools
+        self._condition_summary_service = condition_summary_service or ConditionSummaryService()
 
     def handle_message(
         self,
@@ -46,7 +49,11 @@ class AgentRuntime:
         result = self._run_agent(session_id=session_id, message=message, request_id=request_id)
         if result.error is not None and result.error.code.value == "SESSION_NOT_AVAILABLE":
             raise _session_unavailable_error()
-        return chat_response_from_agent_result(result)
+        state = self._session_service.get_session(session_id)
+        return chat_response_from_agent_result(
+            result,
+            condition_summary=self._condition_summary_service.summarize(state),
+        )
 
     def handle_legacy_message(
         self,
@@ -59,7 +66,11 @@ class AgentRuntime:
         result = self._run_agent(session_id=session_id, message=message, request_id=request_id)
         if result.error is not None and result.error.code.value == "SESSION_NOT_AVAILABLE":
             raise _session_unavailable_error()
-        public = chat_response_from_agent_result(result)
+        state = self._session_service.get_session(session_id)
+        public = chat_response_from_agent_result(
+            result,
+            condition_summary=self._condition_summary_service.summarize(state),
+        )
         return LegacyAgentMessageResponse(
             success=result.success,
             session_id=result.session_id,
@@ -70,6 +81,7 @@ class AgentRuntime:
             needs_confirmation=public.needs_confirmation,
             confirmation=public.confirmation,
             session_summary=public.session_summary,
+            condition_summary=public.condition_summary,
             candidate_courses=public.candidate_courses,
             timetable_candidates=public.timetable_candidates,
             selected_timetable=public.selected_timetable,
@@ -142,7 +154,11 @@ class CandidateSelectionRequest(SelectTimetableCandidateInput):
     pass
 
 
-def chat_response_from_agent_result(result: SessionStateAgentResult) -> PlanuChatResponse:
+def chat_response_from_agent_result(
+    result: SessionStateAgentResult,
+    *,
+    condition_summary=None,
+) -> PlanuChatResponse:
     confirmation = _confirmation(result)
     selected_status = None
     if result.state_summary is not None:
@@ -161,6 +177,7 @@ def chat_response_from_agent_result(result: SessionStateAgentResult) -> PlanuCha
             status=selected_status,
         ),
         session_summary=result.state_summary,
+        condition_summary=condition_summary,
     )
 
 

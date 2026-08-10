@@ -1,4 +1,4 @@
-﻿"""Service boundary for future PlaNU agent session state tools."""
+"""Service boundary for future PlaNU agent session state tools."""
 
 from __future__ import annotations
 
@@ -1145,6 +1145,24 @@ class SessionService:
             )
         return state.selected_timetable.model_copy(deep=True)
 
+    def confirm_generation_preferences(self, session_id: str) -> PlanuSessionState:
+        """Persist confirmation that the current condition revision may generate timetables."""
+
+        state = self.get_session(session_id)
+        if (
+            state.generation_preferences_confirmed_at is not None
+            and state.generation_preferences_confirmed_version == state.version
+        ):
+            return self._refresh_unchanged_state(state)
+        now = self._now()
+        return self._save_changed_state(
+            state,
+            {
+                "generation_preferences_confirmed_at": now,
+                "generation_preferences_confirmed_version": state.version,
+            },
+        )
+
     def clear_selected_timetable(self, session_id: str) -> PlanuSessionState:
         """Clear selected timetable state without touching preferences or catalogs."""
 
@@ -1178,6 +1196,7 @@ class SessionService:
     ) -> PlanuSessionState:
         now = self._now()
         update = self._mark_selected_timetable_stale_if_needed(state, dict(update))
+        update = self._invalidate_generation_confirmation_if_needed(state, update)
         changed = self._build_validated_state(
             state,
             {
@@ -1213,6 +1232,32 @@ class SessionService:
             should_stale = True
         if should_stale:
             update["selected_timetable_status"] = SelectedTimetableStatus.STALE
+        return update
+
+    @staticmethod
+    def _invalidate_generation_confirmation_if_needed(
+        state: PlanuSessionState,
+        update: dict[str, object],
+    ) -> dict[str, object]:
+        if state.generation_preferences_confirmed_at is None:
+            return update
+        if "generation_preferences_confirmed_at" in update:
+            return update
+        confirmation_fields = {
+            "department",
+            "major_catalog_id",
+            "elective_catalog_id",
+            "selected_major_course_ids",
+            "hard_constraints",
+            "soft_preferences",
+        }
+        should_invalidate = any(
+            field_name in update and update[field_name] != getattr(state, field_name)
+            for field_name in confirmation_fields
+        )
+        if should_invalidate:
+            update["generation_preferences_confirmed_at"] = None
+            update["generation_preferences_confirmed_version"] = None
         return update
 
     def _save_state_with_courses(

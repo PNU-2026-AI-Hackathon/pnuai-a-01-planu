@@ -1,4 +1,4 @@
-﻿"""Pydantic schemas shared by PlaNU agent session tools."""
+"""Pydantic schemas shared by PlaNU agent session tools."""
 
 from __future__ import annotations
 
@@ -23,6 +23,8 @@ class SessionToolErrorCode(str, Enum):
     INVALID_VALUE = "INVALID_VALUE"
     CONFLICTING_CONSTRAINT = "CONFLICTING_CONSTRAINT"
     INTERNAL_TOOL_ERROR = "INTERNAL_TOOL_ERROR"
+    TIMETABLE_GENERATION_NOT_READY = "TIMETABLE_GENERATION_NOT_READY"
+    TIMETABLE_CONDITIONS_NOT_CONFIRMED = "TIMETABLE_CONDITIONS_NOT_CONFIRMED"
 
 
 class SessionToolError(BaseModel):
@@ -50,6 +52,8 @@ class SessionStateSummary(BaseModel):
     soft_preferences: SoftPreferences
     selected_timetable: SelectedTimetable | None = None
     selected_timetable_status: str | None = None
+    generation_preferences_confirmed_at: datetime | None = None
+    generation_preferences_confirmed_version: int | None = None
     missing_information: list[str]
     updated_at: datetime
     expires_at: datetime
@@ -81,6 +85,8 @@ class SessionStateSummary(BaseModel):
                 if state.selected_timetable_status is None
                 else state.selected_timetable_status.value
             ),
+            generation_preferences_confirmed_at=state.generation_preferences_confirmed_at,
+            generation_preferences_confirmed_version=state.generation_preferences_confirmed_version,
             missing_information=missing_information,
             updated_at=state.updated_at,
             expires_at=state.expires_at,

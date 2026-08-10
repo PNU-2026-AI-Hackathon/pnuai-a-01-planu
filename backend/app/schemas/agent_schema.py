@@ -7,6 +7,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..agent_tools.schemas import SessionStateSummary
+from .condition_summary_schema import ConditionSummaryDto
 from ..agents.session_state_agent import AgentCourseCandidate, UnresolvedSessionRequest
 from ..models.timetable_selection import SelectedTimetable
 
@@ -93,6 +94,7 @@ class PlanuChatResponse(_Model):
     timetable_candidates: list[TimetableCandidateDto] = Field(default_factory=list)
     selected_timetable: SelectedTimetableDto | None = None
     session_summary: SessionStateSummary | None = None
+    condition_summary: ConditionSummaryDto | None = None
 
 
 class LegacyAgentMessageResponse(_Model):
@@ -105,6 +107,7 @@ class LegacyAgentMessageResponse(_Model):
     needs_confirmation: bool = False
     confirmation: ConfirmationDto | None = None
     session_summary: SessionStateSummary | None = None
+    condition_summary: ConditionSummaryDto | None = None
     candidate_courses: list[AgentCourseCandidate] = Field(default_factory=list)
     timetable_candidates: list[TimetableCandidateDto] = Field(default_factory=list)
     selected_timetable: SelectedTimetableDto | None = None

@@ -34,6 +34,7 @@ from .core.errors import AppError
 from .models.course import Category
 from .repositories import SessionStoreCatalogRepository, SessionStoreRepository
 from .repositories.recent_timetable_candidate_repository import RecentTimetableCandidateRepository
+from .services.condition_summary_service import ConditionSummaryService
 from .services.course_discovery_service import CourseDiscoveryService
 from .services.course_loader import CourseCatalogLoadError, load_courses
 from .services.course_restriction_loader import (
@@ -78,6 +79,7 @@ class PlanuContainer:
     session_repository: SessionStoreRepository
     catalog_repository: SessionStoreCatalogRepository
     session_service: SessionService
+    condition_summary_service: ConditionSummaryService
     session_agent_tools: SessionAgentTools
     course_discovery_service: CourseDiscoveryService
     course_discovery_tools: CourseDiscoveryTools
@@ -121,6 +123,7 @@ def build_container(
     session_repository = SessionStoreRepository(store)
     catalog_repository = SessionStoreCatalogRepository(store)
     session_service = SessionService(session_repository, session_ttl=store.ttl, now_provider=store._clock)
+    condition_summary_service = ConditionSummaryService(catalog_repository)
 
     restriction_policy = _load_restriction_policy()
     validation_service = TimetableValidationService(restriction_policy=restriction_policy)
@@ -137,6 +140,8 @@ def build_container(
         generation_service=candidate_generation_service,
         validation_service=candidate_validation_service,
         recent_candidate_repository=recent_candidates,
+        session_service=session_service,
+        condition_summary_service=condition_summary_service,
     )
 
     scoring_service = TimetableScoringService()
@@ -146,7 +151,7 @@ def build_container(
         ranking_service=soft_ranking_service,
     )
 
-    session_agent_tools = SessionAgentTools(session_service)
+    session_agent_tools = SessionAgentTools(session_service, condition_summary_service)
     discovery_service = CourseDiscoveryService(catalog_repository)
     discovery_tools = CourseDiscoveryTools(discovery_service)
     revision_service = TimetableRevisionPreparationService(
@@ -217,6 +222,7 @@ def build_container(
         session_repository=session_repository,
         catalog_repository=catalog_repository,
         session_service=session_service,
+        condition_summary_service=condition_summary_service,
         session_agent_tools=session_agent_tools,
         course_discovery_service=discovery_service,
         course_discovery_tools=discovery_tools,
@@ -311,6 +317,7 @@ def _build_timetable_toolset(
             "discover_courses": discovery_tools.discover_courses,
             "get_course_sections": discovery_tools.get_course_sections,
             "get_section_details": discovery_tools.get_section_details,
+            "confirm_timetable_conditions": session_tools.confirm_timetable_conditions,
             "generate_timetable_candidates": generation_tools.generate_timetable_candidates,
             "validate_timetable_candidate": generation_tools.validate_timetable_candidate,
             "score_timetable_candidate": scoring_tools.score_timetable_candidate,

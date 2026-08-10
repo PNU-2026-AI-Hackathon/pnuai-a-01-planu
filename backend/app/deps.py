@@ -1,4 +1,4 @@
-﻿"""FastAPI dependency providers backed by the application container."""
+"""FastAPI dependency providers backed by the application container."""
 
 from __future__ import annotations
 
@@ -188,6 +188,7 @@ def get_agent_runtime(request: Request = None):
         session_service=container.session_service,
         agent=container.supervisor_agent,
         selection_tools=container.timetable_selection_tools,
+        condition_summary_service=container.condition_summary_service,
     )
 
 

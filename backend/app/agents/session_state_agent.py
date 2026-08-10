@@ -493,6 +493,7 @@ class SessionStateToolset:
         if timetable_tools is not None:
             tools.update(
                 {
+                    "confirm_timetable_conditions": session_tools.confirm_timetable_conditions,
                     "generate_timetable_candidates": timetable_tools.generate_timetable_candidates,
                     "validate_timetable_candidate": timetable_tools.validate_timetable_candidate,
                 }
@@ -542,6 +543,7 @@ _TOOL_INPUT_MODELS: dict[str, type[BaseModel]] = {
     "discover_courses": CourseDiscoveryRequest,
     "get_course_sections": CourseSectionsInput,
     "get_section_details": SectionDetailsInput,
+    "confirm_timetable_conditions": SessionIdInput,
     "generate_timetable_candidates": TimetableGenerationRequest,
     "validate_timetable_candidate": TimetableValidationRequest,
     "score_timetable_candidate": ScoreTimetableCandidateRequest,
@@ -595,6 +597,7 @@ _TOOL_DESCRIPTIONS: dict[str, str] = {
     "discover_courses": "Read-only structured catalog discovery by optional query and filters.",
     "get_course_sections": "Read-only lookup of sections for one course id.",
     "get_section_details": "Read-only lookup of one concrete section id.",
+    "confirm_timetable_conditions": "Confirm the current saved condition revision before timetable generation. Fails if required generation inputs are missing.",
     "generate_timetable_candidates": (
         "Generate timetable candidates from structured section sources. Use this only after concrete "
         "fixed_section_sources and candidate_section_sources_by_course are prepared. Do not pass the full "
