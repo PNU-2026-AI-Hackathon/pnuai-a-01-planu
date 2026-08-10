@@ -6,16 +6,17 @@ from datetime import datetime, timedelta, timezone
 
 from backend.app.agent_tools import SessionAgentTools, SessionToolErrorCode
 from backend.app.agent_tools.timetable_generation_tools import TimetableGenerationTools
-from backend.app.models import Day
+from backend.app.models import Category, ClassTime, Course, Day, GeneralCoursePoolResult, GeneralCoursePools
 from backend.app.models.timetable_generation import (
     GenerationFailureCode,
     SearchTerminationReason,
     TimetableGenerationRequest,
     TimetableGenerationResult,
 )
-from backend.app.repositories import InMemorySessionRepository
+from backend.app.repositories import InMemorySessionRepository, SessionStoreRepository
 from backend.app.services.condition_summary_service import ConditionSummaryService
 from backend.app.services.session_service import SessionService
+from backend.app.services.session_store import SessionStore
 
 
 class MutableClock:
@@ -75,6 +76,74 @@ def _ready_session(service: SessionService) -> str:
     )
     service.update_selected_major_courses(state.session_id, ["MAJ-001"])
     return state.session_id
+
+
+def _confirm(service: SessionService, session_id: str) -> None:
+    result = SessionAgentTools(service, ConditionSummaryService()).confirm_timetable_conditions(
+        {"session_id": session_id}
+    )
+    assert result.success is True
+    state = service.get_session(session_id)
+    assert state.generation_preferences_confirmed_at is not None
+    assert state.generation_preferences_confirmed_version is not None
+
+
+def _assert_confirmation_cleared(service: SessionService, session_id: str) -> None:
+    state = service.get_session(session_id)
+    assert state.generation_preferences_confirmed_at is None
+    assert state.generation_preferences_confirmed_version is None
+
+
+def _profile_update(**kwargs):
+    return type(
+        "Update",
+        (),
+        {
+            "department": None,
+            "major_catalog_id": None,
+            "elective_catalog_id": None,
+            "clear_fields": (),
+            **kwargs,
+        },
+    )()
+
+
+def _soft_patch(**kwargs):
+    return type(
+        "SoftPatch",
+        (),
+        {
+            "preferred_free_days": None,
+            "preferred_earliest_start_time": None,
+            "preferred_latest_end_time": None,
+            "preferred_course_ids": None,
+            "disliked_course_ids": None,
+            "compact_schedule": None,
+            "clear_fields": (),
+            **kwargs,
+        },
+    )()
+
+
+def _course(course_id: str, name: str = "교양") -> Course:
+    return Course(
+        course_id=course_id,
+        course_name=name,
+        category=Category.GENERAL_ELECTIVE,
+        area=1,
+        credit=3,
+        division="001",
+        professor="김교수",
+        class_times=[
+            ClassTime(
+                day=Day.MON,
+                start="09:00",
+                end="10:00",
+                classroom="101",
+                building_code="A",
+            )
+        ],
+    )
 
 
 def test_condition_summary_separates_hard_and_soft_items() -> None:
@@ -182,3 +251,75 @@ def test_generation_tool_rejects_until_conditions_are_confirmed() -> None:
     assert result.error is not None
     assert result.error.code == GenerationFailureCode.TIMETABLE_CONDITIONS_NOT_CONFIRMED
     assert generation_service.called is False
+
+
+def test_soft_preference_change_invalidates_confirmation() -> None:
+    service = _service()
+    session_id = _ready_session(service)
+    _confirm(service, session_id)
+
+    service.update_preferences(session_id, soft_patch=_soft_patch(compact_schedule=True))
+
+    _assert_confirmation_cleared(service, session_id)
+
+
+def test_selected_major_course_change_invalidates_confirmation() -> None:
+    service = _service()
+    session_id = _ready_session(service)
+    _confirm(service, session_id)
+
+    service.update_selected_major_courses(session_id, ["MAJ-002"])
+
+    _assert_confirmation_cleared(service, session_id)
+
+
+def test_department_change_invalidates_confirmation() -> None:
+    service = _service()
+    session_id = _ready_session(service)
+    _confirm(service, session_id)
+
+    service.update_profile(session_id, _profile_update(department="전자공학과"))
+
+    _assert_confirmation_cleared(service, session_id)
+
+
+def test_major_catalog_change_invalidates_confirmation() -> None:
+    service = _service()
+    session_id = _ready_session(service)
+    _confirm(service, session_id)
+
+    service.update_profile(session_id, _profile_update(major_catalog_id="session-1:new-major"))
+
+    _assert_confirmation_cleared(service, session_id)
+
+
+def test_elective_catalog_change_invalidates_confirmation() -> None:
+    service = _service()
+    session_id = _ready_session(service)
+    _confirm(service, session_id)
+
+    service.update_profile(session_id, _profile_update(elective_catalog_id="session-1:elective"))
+
+    _assert_confirmation_cleared(service, session_id)
+
+
+def test_general_catalog_input_change_invalidates_confirmation_in_session_store() -> None:
+    store = SessionStore()
+    service = SessionService(
+        SessionStoreRepository(store),
+        session_ttl=store.ttl,
+        now_provider=store._clock,
+        session_id_provider=lambda: "session-1",
+    )
+    session_id = _ready_session(service)
+    _confirm(service, session_id)
+    pools = GeneralCoursePools(required_courses=[], elective_courses=[_course("GEN-001")])
+    result = GeneralCoursePoolResult(
+        pools=pools,
+        excluded_courses=[],
+        warnings=[],
+    )
+
+    store.update_general_course_pool(session_id, result)
+
+    _assert_confirmation_cleared(service, session_id)

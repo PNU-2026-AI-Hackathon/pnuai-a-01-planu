@@ -426,19 +426,26 @@ class SessionStore:
             if department is not None:
                 if not department.strip():
                     raise ValueError("department must not be empty")
+                if data.department != department:
+                    self._clear_generation_preferences_confirmation(data)
                 data.department = department
             if major_candidates is not None:
+                self._clear_generation_preferences_confirmation(data)
                 data.major_candidates = list(major_candidates)
             if elective_candidates is not None:
+                self._clear_generation_preferences_confirmation(data)
                 data.elective_candidates = list(elective_candidates)
             if fixed_courses is not None:
+                self._clear_generation_preferences_confirmation(data)
                 data.fixed_courses = list(fixed_courses)
                 data.selected_major_course_ids = [
                     course.course_id for course in data.fixed_courses
                 ]
             if general_required_candidates is not None:
+                self._clear_generation_preferences_confirmation(data)
                 data.general_required_candidates = list(general_required_candidates)
             if general_elective_candidates is not None:
+                self._clear_generation_preferences_confirmation(data)
                 data.general_elective_candidates = list(general_elective_candidates)
             if confirmed_major_credits is not None:
                 data.confirmed_major_credits = confirmed_major_credits
@@ -457,14 +464,25 @@ class SessionStore:
             if ranking_preferences is not None:
                 data.ranking_preferences = ranking_preferences
             if major_catalog_id is not None:
+                if data.major_catalog_id != major_catalog_id:
+                    self._clear_generation_preferences_confirmation(data)
                 data.major_catalog_id = major_catalog_id
             if elective_catalog_id is not None:
+                if data.elective_catalog_id != elective_catalog_id:
+                    self._clear_generation_preferences_confirmation(data)
                 data.elective_catalog_id = elective_catalog_id
             if selected_major_course_ids is not None:
-                data.selected_major_course_ids = list(dict.fromkeys(selected_major_course_ids))
+                normalized_selected_major_course_ids = list(dict.fromkeys(selected_major_course_ids))
+                if data.selected_major_course_ids != normalized_selected_major_course_ids:
+                    self._clear_generation_preferences_confirmation(data)
+                data.selected_major_course_ids = normalized_selected_major_course_ids
             if hard_constraints is not None:
+                if data.hard_constraints != hard_constraints:
+                    self._clear_generation_preferences_confirmation(data)
                 data.hard_constraints = hard_constraints
             if soft_preferences is not None:
+                if data.soft_preferences != soft_preferences:
+                    self._clear_generation_preferences_confirmation(data)
                 data.soft_preferences = soft_preferences
             if generation_preferences_confirmed_at is not None:
                 data.generation_preferences_confirmed_at = generation_preferences_confirmed_at
@@ -515,6 +533,7 @@ class SessionStore:
             now = self._clock()
             data.general_required_candidates = list(result.pools.required_courses)
             data.general_elective_candidates = list(result.pools.elective_courses)
+            self._clear_generation_preferences_confirmation(data)
             data.general_pool_diagnostics = list(result.excluded_courses)
             data.general_pool_warnings = list(result.warnings)
             data.general_pool_data_source = data_source
@@ -643,6 +662,11 @@ class SessionStore:
             data.last_accessed_at = now
             data.expires_at = now + self.ttl
         return data
+
+    @staticmethod
+    def _clear_generation_preferences_confirmation(data: SessionData) -> None:
+        data.generation_preferences_confirmed_at = None
+        data.generation_preferences_confirmed_version = None
 
     @staticmethod
     def _copy(data: SessionData) -> SessionData:
