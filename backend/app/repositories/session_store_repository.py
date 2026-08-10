@@ -1,4 +1,4 @@
-"""SessionRepository adapter over the legacy application SessionStore."""
+﻿"""SessionRepository adapter over the legacy application SessionStore."""
 
 from __future__ import annotations
 
@@ -31,6 +31,7 @@ class SessionStoreRepository:
             )
         except ValueError as exc:
             raise SessionAlreadyExistsError(state.session_id) from exc
+        last_accessed_at = max(data.created_at, state.last_accessed_at)
         data = self._store.update(
             state.session_id,
             department=state.department,
@@ -39,8 +40,8 @@ class SessionStoreRepository:
             selected_major_course_ids=state.selected_major_course_ids,
             hard_constraints=state.hard_constraints,
             soft_preferences=state.soft_preferences,
-            last_accessed_at=state.last_accessed_at,
-            expires_at=state.expires_at,
+            last_accessed_at=last_accessed_at,
+            expires_at=max(state.expires_at, last_accessed_at),
         )
         return _to_state(data)
 
@@ -117,3 +118,4 @@ def _to_state(data: SessionData) -> PlanuSessionState:
         expires_at=data.expires_at or data.updated_at,
         version=data.version,
     )
+

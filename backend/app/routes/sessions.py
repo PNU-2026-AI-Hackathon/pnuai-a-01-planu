@@ -1,14 +1,24 @@
-"""Session lookup routes."""
+﻿"""Session lookup and PlaNU agent routes."""
 
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict, Field
 
-from ..core.errors import AppError
-from ..deps import get_session_state_agent, get_session_store
 from ..agents import SessionStateAgent, SessionStateAgentResult
+from ..core.errors import AppError
+from ..deps import get_agent_runtime, get_session_service, get_session_state_agent, get_session_store
+from ..runtime import AgentRuntime, CandidateSelectionRequest
+from ..schemas.agent_schema import (
+    PlanuChatRequest,
+    PlanuChatResponse,
+    SelectedTimetableResponse,
+    SessionCreateRequest,
+    SessionCreateResponse,
+)
 from ..schemas.session_schema import MajorCandidatesResponse
+from ..services.exceptions import SessionNotAvailableError
+from ..services.session_service import SessionService
 from ..services.session_store import SessionNotFoundError, SessionStore
 
 
@@ -24,6 +34,28 @@ class AgentMessageRequest(BaseModel):
 
 class AgentMessageResponse(SessionStateAgentResult):
     pass
+
+
+@router.post("", response_model=SessionCreateResponse)
+def create_session(
+    request: SessionCreateRequest | None = None,
+    service: SessionService = Depends(get_session_service),
+) -> SessionCreateResponse:
+    try:
+        state = service.create_session()
+        if request is not None and request.department:
+            state = service.set_department(state.session_id, request.department)
+    except Exception as exc:
+        raise AppError(
+            "SESSION_CREATE_FAILED",
+            "세션을 생성하지 못했습니다.",
+            status_code=500,
+        ) from exc
+    return SessionCreateResponse(
+        session_id=state.session_id,
+        created_at=state.created_at.isoformat(),
+        expires_at=state.expires_at.isoformat(),
+    )
 
 
 @router.get("/{session_id}/major-candidates", response_model=MajorCandidatesResponse)
@@ -48,6 +80,19 @@ async def get_major_candidates(
     )
 
 
+@router.post("/{session_id}/chat", response_model=PlanuChatResponse)
+def post_chat_message(
+    session_id: str,
+    request: PlanuChatRequest,
+    runtime: AgentRuntime = Depends(get_agent_runtime),
+) -> PlanuChatResponse:
+    return runtime.handle_message(
+        session_id=session_id,
+        message=request.message,
+        request_id=request.request_id,
+    )
+
+
 @router.post("/{session_id}/agent/messages", response_model=AgentMessageResponse)
 def post_agent_message(
     session_id: str,
@@ -61,13 +106,31 @@ def post_agent_message(
             "request_id": request.request_id,
         }
     )
-    if (
-        result.error is not None
-        and result.error.code.value == "SESSION_NOT_AVAILABLE"
-    ):
+    if result.error is not None and result.error.code.value == "SESSION_NOT_AVAILABLE":
         raise AppError(
-            "SESSION_NOT_FOUND",
+            "SESSION_NOT_AVAILABLE",
             "세션을 찾을 수 없거나 만료되었습니다.",
             status_code=404,
         )
     return AgentMessageResponse.model_validate(result.model_dump(mode="json"))
+
+
+@router.get("/{session_id}/timetable", response_model=SelectedTimetableResponse)
+def get_selected_timetable(
+    session_id: str,
+    runtime: AgentRuntime = Depends(get_agent_runtime),
+) -> SelectedTimetableResponse:
+    return runtime.get_selected_timetable(session_id=session_id)
+
+
+@router.post("/{session_id}/timetables/{candidate_id}/select", response_model=SelectedTimetableResponse)
+def select_timetable_candidate(
+    session_id: str,
+    candidate_id: str,
+    runtime: AgentRuntime = Depends(get_agent_runtime),
+) -> SelectedTimetableResponse:
+    request = CandidateSelectionRequest(session_id=session_id, candidate_id=candidate_id)
+    return runtime.select_candidate(
+        session_id=request.session_id,
+        candidate_id=request.candidate_id,
+    )

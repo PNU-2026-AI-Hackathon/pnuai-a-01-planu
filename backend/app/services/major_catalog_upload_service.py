@@ -1,4 +1,4 @@
-"""Upload, validate, parse, and store user-owned major catalog workbooks."""
+﻿"""Upload, validate, parse, and store user-owned major catalog workbooks."""
 
 from __future__ import annotations
 
@@ -12,7 +12,11 @@ from fastapi import UploadFile
 
 from ..core.errors import AppError
 from ..models.course import Course
+from ..models.course_discovery import CatalogKind
+from ..repositories.catalog_repository import CatalogRepository
 from ..schemas.catalog_schema import MajorCatalogUploadResponse
+from .exceptions import SessionNotAvailableError
+from .session_service import SessionService
 from .session_store import SessionStore, session_store
 from .uploaded_catalog_parser import (
     MAX_UPLOAD_SIZE,
@@ -36,10 +40,14 @@ class MajorCatalogUploadService:
         store: SessionStore = session_store,
         parser: MajorCatalogParserProtocol | None = None,
         max_upload_size: int = MAX_UPLOAD_SIZE,
+        session_service: SessionService | None = None,
+        catalog_repository: CatalogRepository | None = None,
     ) -> None:
         self.store = store
         self.parser = parser or UploadedCatalogParser()
         self.max_upload_size = max_upload_size
+        self.session_service = session_service
+        self.catalog_repository = catalog_repository
 
     async def upload_and_create_session(
         self,
@@ -78,9 +86,9 @@ class MajorCatalogUploadService:
                 )
 
             try:
-                session = self.store.create(
+                session = self._create_session_with_major_catalog(
                     department=department,
-                    major_candidates=courses,
+                    courses=courses,
                 )
             except Exception as exc:
                 raise AppError(
@@ -101,6 +109,36 @@ class MajorCatalogUploadService:
                     temp_path.unlink(missing_ok=True)
                 except OSError:
                     pass
+
+    def _create_session_with_major_catalog(
+        self,
+        *,
+        department: str,
+        courses: list[Course],
+    ):
+        if self.session_service is None or self.catalog_repository is None:
+            return self.store.create(
+                department=department,
+                major_candidates=courses,
+            )
+
+        state = self.session_service.create_session()
+        state = self.session_service.set_department(state.session_id, department)
+        catalog_id = f"{state.session_id}:major"
+        try:
+            self.catalog_repository.register(
+                catalog_id,
+                kind=CatalogKind.MAJOR,
+                courses=courses,
+                department=department,
+            )
+            self.session_service.register_major_catalog(state.session_id, catalog_id)
+        except SessionNotAvailableError:
+            raise
+        except Exception:
+            self.session_service.delete_session(state.session_id)
+            raise
+        return self.store.get(state.session_id, touch=False)
 
     @staticmethod
     def _validate_upload_name(upload_file: UploadFile | None) -> None:
