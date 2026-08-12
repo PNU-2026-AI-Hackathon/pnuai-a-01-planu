@@ -8,7 +8,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from ..models import Day, HardConstraints, PlanuSessionState, SoftPreferences, time_to_minutes
+from ..models import Day, HardConstraints, PlanuSessionState, SelectedTimetable, SoftPreferences, time_to_minutes
 from ..services.session_update_models import (
     HardConstraintsUpdate,
     SessionProfileUpdate,
@@ -23,6 +23,8 @@ class SessionToolErrorCode(str, Enum):
     INVALID_VALUE = "INVALID_VALUE"
     CONFLICTING_CONSTRAINT = "CONFLICTING_CONSTRAINT"
     INTERNAL_TOOL_ERROR = "INTERNAL_TOOL_ERROR"
+    TIMETABLE_GENERATION_NOT_READY = "TIMETABLE_GENERATION_NOT_READY"
+    TIMETABLE_CONDITIONS_NOT_CONFIRMED = "TIMETABLE_CONDITIONS_NOT_CONFIRMED"
 
 
 class SessionToolError(BaseModel):
@@ -48,6 +50,10 @@ class SessionStateSummary(BaseModel):
     selected_major_course_ids: list[str]
     hard_constraints: HardConstraints
     soft_preferences: SoftPreferences
+    selected_timetable: SelectedTimetable | None = None
+    selected_timetable_status: str | None = None
+    generation_preferences_confirmed_at: datetime | None = None
+    generation_preferences_confirmed_version: int | None = None
     missing_information: list[str]
     updated_at: datetime
     expires_at: datetime
@@ -69,6 +75,18 @@ class SessionStateSummary(BaseModel):
             selected_major_course_ids=list(state.selected_major_course_ids),
             hard_constraints=state.hard_constraints,
             soft_preferences=state.soft_preferences,
+            selected_timetable=(
+                None
+                if state.selected_timetable is None
+                else state.selected_timetable.model_copy(deep=True)
+            ),
+            selected_timetable_status=(
+                None
+                if state.selected_timetable_status is None
+                else state.selected_timetable_status.value
+            ),
+            generation_preferences_confirmed_at=state.generation_preferences_confirmed_at,
+            generation_preferences_confirmed_version=state.generation_preferences_confirmed_version,
             missing_information=missing_information,
             updated_at=state.updated_at,
             expires_at=state.expires_at,
@@ -89,6 +107,8 @@ class SessionToolResult(BaseModel):
     hard_constraints: HardConstraints | None = None
     soft_preferences: SoftPreferences | None = None
     selected_major_course_ids: list[str] | None = None
+    selected_timetable: SelectedTimetable | None = None
+    selected_timetable_status: str | None = None
     error: SessionToolError | None = None
 
 
@@ -341,3 +361,4 @@ class ResetSessionPreferencesInput(SessionIdInput):
     target: ResetPreferenceTarget = Field(
         description="hard clears only constraints, soft clears only preferences, all clears both.",
     )
+

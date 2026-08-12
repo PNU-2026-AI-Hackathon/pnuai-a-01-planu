@@ -31,6 +31,7 @@ class SessionStoreRepository:
             )
         except ValueError as exc:
             raise SessionAlreadyExistsError(state.session_id) from exc
+        last_accessed_at = max(data.created_at, state.last_accessed_at)
         data = self._store.update(
             state.session_id,
             department=state.department,
@@ -39,8 +40,11 @@ class SessionStoreRepository:
             selected_major_course_ids=state.selected_major_course_ids,
             hard_constraints=state.hard_constraints,
             soft_preferences=state.soft_preferences,
-            last_accessed_at=state.last_accessed_at,
-            expires_at=state.expires_at,
+            generation_preferences_confirmed_at=state.generation_preferences_confirmed_at,
+            generation_preferences_confirmed_version=state.generation_preferences_confirmed_version,
+            clear_generation_preferences_confirmation=state.generation_preferences_confirmed_at is None,
+            last_accessed_at=last_accessed_at,
+            expires_at=max(state.expires_at, last_accessed_at),
         )
         return _to_state(data)
 
@@ -70,6 +74,9 @@ class SessionStoreRepository:
                 selected_major_course_ids=state.selected_major_course_ids,
                 hard_constraints=state.hard_constraints,
                 soft_preferences=state.soft_preferences,
+                generation_preferences_confirmed_at=state.generation_preferences_confirmed_at,
+                generation_preferences_confirmed_version=state.generation_preferences_confirmed_version,
+                clear_generation_preferences_confirmation=state.generation_preferences_confirmed_at is None,
                 last_accessed_at=state.last_accessed_at,
                 expires_at=state.expires_at,
             )
@@ -111,9 +118,12 @@ def _to_state(data: SessionData) -> PlanuSessionState:
         selected_major_course_ids=list(data.selected_major_course_ids),
         hard_constraints=data.hard_constraints,
         soft_preferences=data.soft_preferences,
+        generation_preferences_confirmed_at=data.generation_preferences_confirmed_at,
+        generation_preferences_confirmed_version=data.generation_preferences_confirmed_version,
         created_at=data.created_at,
         updated_at=data.updated_at,
         last_accessed_at=data.last_accessed_at,
         expires_at=data.expires_at or data.updated_at,
         version=data.version,
     )
+

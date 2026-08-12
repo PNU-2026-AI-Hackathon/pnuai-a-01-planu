@@ -128,7 +128,7 @@ class TimetableScoringRequest(_Model):
     candidates: list[GeneratedTimetableCandidate] = Field(default_factory=list)
     sections: list[ResolvedSection] = Field(default_factory=list)
     soft_preferences: SoftPreferences = Field(default_factory=SoftPreferences)
-    max_ranked_results: int = Field(default=3, ge=1)
+    max_ranked_results: int = Field(default=3, ge=1, le=5)
     scoring_policy: TimetableScoringPolicy = Field(default_factory=TimetableScoringPolicy)
 
     @field_validator("candidates")

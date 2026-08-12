@@ -26,6 +26,8 @@ class GenerationFailureCode(str, Enum):
     TARGET_CREDITS_UNREACHABLE = "TARGET_CREDITS_UNREACHABLE"
     SEARCH_LIMIT_REACHED = "SEARCH_LIMIT_REACHED"
     INVALID_GENERATION_REQUEST = "INVALID_GENERATION_REQUEST"
+    TIMETABLE_GENERATION_NOT_READY = "TIMETABLE_GENERATION_NOT_READY"
+    TIMETABLE_CONDITIONS_NOT_CONFIRMED = "TIMETABLE_CONDITIONS_NOT_CONFIRMED"
 
 
 class TimetableViolationCode(str, Enum):
@@ -91,6 +93,7 @@ class TimetableGenerationRequest(_Model):
     both hard targets when supplied: a returned candidate must satisfy both.
     """
 
+    session_id: str | None = Field(default=None, min_length=1)
     fixed_section_sources: list[SectionSource] = Field(default_factory=list)
     candidate_course_ids: list[str] = Field(default_factory=list)
     candidate_section_sources_by_course: dict[str, list[SectionSource]] = Field(
@@ -273,6 +276,7 @@ class GeneratedTimetableCandidate(_Model):
     section_ids: list[str]
     section_sources: list[SectionSource] = Field(default_factory=list)
     fixed_section_ids: list[str]
+    session_id: str | None = Field(default=None, min_length=1)
     fixed_section_sources: list[SectionSource] = Field(default_factory=list)
     added_section_ids: list[str]
     added_section_sources: list[SectionSource] = Field(default_factory=list)

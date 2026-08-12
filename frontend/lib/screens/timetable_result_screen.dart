@@ -12,168 +12,192 @@ class TimetableResultScreen extends StatefulWidget {
     required this.api,
     required this.onSessionExpired,
   });
+
   final AppFlowState flow;
   final PlanuApi api;
   final VoidCallback onSessionExpired;
+
   @override
   State<TimetableResultScreen> createState() => _TimetableResultScreenState();
 }
 
 class _TimetableResultScreenState extends State<TimetableResultScreen> {
   static const _ink = Color(0xFF111111);
+  static const _body = Color(0xFF374151);
   static const _muted = Color(0xFF6B7280);
   static const _line = Color(0xFFE5E7EB);
   static const _soft = Color(0xFFF5F5F5);
-  int _selected = 0;
-  bool _ranking = false;
+
+  int _selectedIndex = 0;
+  bool _isSelecting = false;
+  String? _selectionError;
 
   List<Map<String, dynamic>> get _candidates =>
       (widget.flow.rankedCandidates?['ranked_candidates'] as List? ?? const [])
           .whereType<Map>()
           .map((value) => value.cast<String, dynamic>())
+          .take(3)
           .toList();
 
-  Future<void> _rerank(String template) async {
-    if (_ranking) return;
-    setState(() => _ranking = true);
-    widget.flow.selectedTemplate = template;
-    try {
-      widget.flow.rankedCandidates = await widget.api.rank(
-        sessionId: widget.flow.sessionId!,
-        template: template,
-      );
-      _selected = 0;
-    } on ApiError catch (error) {
-      if (error.code == 'SESSION_NOT_FOUND') {
-        widget.onSessionExpired();
-      } else if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(error.message)));
-      }
-    }
-    if (mounted) setState(() => _ranking = false);
+  Map<String, dynamic>? get _selectedCandidate {
+    final candidates = _candidates;
+    if (candidates.isEmpty) return null;
+    return candidates[_selectedIndex.clamp(0, candidates.length - 1)];
   }
 
-  void _popTo(String routeName) {
-    Navigator.of(
-      context,
-    ).popUntil((route) => route.settings.name == routeName || route.isFirst);
+  Future<void> _selectCandidate() async {
+    final candidate = _selectedCandidate;
+    final sessionId = widget.flow.sessionId;
+    if (candidate == null || sessionId == null || _isSelecting) return;
+
+    setState(() {
+      _isSelecting = true;
+      _selectionError = null;
+    });
+
+    try {
+      final candidateId = _candidateId(candidate);
+      if (candidateId != null) {
+        await widget.api.selectTimetableCandidate(
+          sessionId: sessionId,
+          candidateId: candidateId,
+        );
+      }
+      if (!mounted) return;
+      widget.flow.rankedCandidates = {
+        ...?widget.flow.rankedCandidates,
+        'selected_candidate': candidate,
+      };
+      Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          settings: const RouteSettings(name: '/timetable-final'),
+          builder: (_) => _FinalTimetableScreen(candidate: candidate),
+        ),
+      );
+    } on ApiError catch (error) {
+      if (!mounted) return;
+      if (error.code == 'SESSION_NOT_FOUND') {
+        widget.onSessionExpired();
+        return;
+      }
+      setState(() => _selectionError = error.message);
+    } finally {
+      if (mounted) setState(() => _isSelecting = false);
+    }
+  }
+
+  void _editConditions() {
+    var foundSecondScreen = false;
+    Navigator.of(context).popUntil(
+      (route) {
+        if (route.settings.name == '/second') {
+          foundSecondScreen = true;
+          return true;
+        }
+        return route.isFirst;
+      },
+    );
+    if (!foundSecondScreen && Navigator.of(context).canPop()) {
+      Navigator.of(context).pop();
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    final candidates = _candidates;
-    final selected = candidates.isEmpty
-        ? null
-        : candidates[_selected.clamp(0, candidates.length - 1)];
+    final selected = _selectedCandidate;
+
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
         title: const Text('PlaNU'),
         backgroundColor: Colors.white,
+        foregroundColor: _ink,
         surfaceTintColor: Colors.white,
+        elevation: 0,
       ),
       body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(24, 28, 24, 48),
-          children: [
-            const FlowStepBadge(label: '추천 결과', current: 9),
-            const SizedBox(height: 24),
-            Text(
-              '나에게 맞는 시간표를 찾았어요',
-              style: Theme.of(context).textTheme.headlineLarge?.copyWith(
-                color: _ink,
-                fontWeight: FontWeight.w700,
-                letterSpacing: -1,
-              ),
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 1040),
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(24, 28, 24, 36),
+              children: [
+                const FlowStepBadge(label: '시간표 후보 선택', current: 9),
+                const SizedBox(height: 24),
+                Text(
+                  '추천 시간표 후보를 비교해보세요',
+                  style: Theme.of(context).textTheme.headlineLarge?.copyWith(
+                    color: _ink,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: -1,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  '서버가 검증하고 정렬한 상위 후보만 보여드립니다. 마음에 드는 시간표를 하나 선택해주세요.',
+                  style: TextStyle(color: _body, fontSize: 16, height: 1.5),
+                ),
+                const SizedBox(height: 24),
+                if (selected == null)
+                  _EmptyResult(onEditConditions: _editConditions)
+                else ...[
+                  _CandidateTabs(
+                    candidates: _candidates,
+                    selected: _selectedIndex,
+                    onSelected: (index) => setState(() {
+                      _selectedIndex = index;
+                      _selectionError = null;
+                    }),
+                  ),
+                  const SizedBox(height: 22),
+                  _CandidateView(candidate: selected),
+                  const SizedBox(height: 24),
+                  if (_selectionError != null) ...[
+                    _ErrorBanner(message: _selectionError!),
+                    const SizedBox(height: 12),
+                  ],
+                  FilledButton(
+                    key: const Key('selectTimetableButton'),
+                    onPressed: _isSelecting ? null : _selectCandidate,
+                    style: FilledButton.styleFrom(
+                      backgroundColor: _ink,
+                      foregroundColor: Colors.white,
+                      minimumSize: const Size.fromHeight(52),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
+                    child: _isSelecting
+                        ? const SizedBox.square(
+                            dimension: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Text('이 시간표 선택하기'),
+                  ),
+                  const SizedBox(height: 10),
+                  OutlinedButton(
+                    onPressed: _isSelecting ? null : _editConditions,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: _ink,
+                      minimumSize: const Size.fromHeight(48),
+                      side: const BorderSide(color: _line),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
+                    child: const Text('조건 수정하기'),
+                  ),
+                ],
+              ],
             ),
-            const SizedBox(height: 12),
-            const Text(
-              '필수 조건을 확인하고 선호 기준을 비교해 추천한 결과입니다.',
-              style: TextStyle(color: _muted, fontSize: 16, height: 1.5),
-            ),
-            const SizedBox(height: 28),
-            _TemplateSelector(
-              value: widget.flow.selectedTemplate,
-              enabled: !_ranking,
-              onChanged: _rerank,
-            ),
-            if (_ranking) const LinearProgressIndicator(),
-            const SizedBox(height: 24),
-            if (selected == null)
-              const _EmptyResult()
-            else ...[
-              _CandidateTabs(
-                candidates: candidates,
-                selected: _selected,
-                onSelected: (index) => setState(() => _selected = index),
-              ),
-              const SizedBox(height: 24),
-              _CandidateView(candidate: selected),
-            ],
-            const SizedBox(height: 24),
-            _ActionButton(
-              icon: Icons.upload_file_outlined,
-              label: '파일 다시 업로드',
-              onPressed: () => _popTo('/elective-upload'),
-            ),
-            const SizedBox(height: 12),
-            _ActionButton(
-              icon: Icons.school_outlined,
-              label: '전공 다시 선택',
-              onPressed: () => _popTo('/major-prompt'),
-            ),
-            const SizedBox(height: 12),
-            FilledButton.icon(
-              onPressed: () => _popTo('/general-preference'),
-              icon: const Icon(Icons.tune),
-              label: const Text('교양 조건 수정'),
-              style: FilledButton.styleFrom(
-                backgroundColor: const Color(0xFF087D85),
-                minimumSize: const Size.fromHeight(52),
-              ),
-            ),
-            const SizedBox(height: 8),
-            TextButton(
-              onPressed: widget.onSessionExpired,
-              child: const Text('처음부터 다시 시작'),
-            ),
-          ],
+          ),
         ),
       ),
     );
   }
-}
-
-class _TemplateSelector extends StatelessWidget {
-  const _TemplateSelector({
-    required this.value,
-    required this.enabled,
-    required this.onChanged,
-  });
-  final String value;
-  final bool enabled;
-  final ValueChanged<String> onChanged;
-  @override
-  Widget build(BuildContext context) => DropdownButtonFormField<String>(
-    initialValue: value,
-    decoration: const InputDecoration(
-      labelText: '추천 템플릿',
-      border: OutlineInputBorder(),
-    ),
-    items: const [
-      DropdownMenuItem(value: 'balanced', child: Text('균형형')),
-      DropdownMenuItem(value: 'free_day_priority', child: Text('공강 우선')),
-      DropdownMenuItem(value: 'no_morning_priority', child: Text('오전 수업 최소화')),
-      DropdownMenuItem(value: 'compact_schedule', child: Text('수업 시간 압축')),
-    ],
-    onChanged: enabled
-        ? (value) {
-            if (value != null) onChanged(value);
-          }
-        : null,
-  );
 }
 
 class _CandidateTabs extends StatelessWidget {
@@ -182,25 +206,29 @@ class _CandidateTabs extends StatelessWidget {
     required this.selected,
     required this.onSelected,
   });
+
   final List<Map<String, dynamic>> candidates;
   final int selected;
   final ValueChanged<int> onSelected;
+
   @override
   Widget build(BuildContext context) => Container(
     padding: const EdgeInsets.all(6),
     decoration: BoxDecoration(
       color: _TimetableResultScreenState._soft,
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: BorderRadius.circular(999),
     ),
     child: Row(
-      children: List.generate(
-        candidates.length,
-        (index) => Expanded(
+      children: List.generate(candidates.length, (index) {
+        final rank = candidates[index]['rank'] ?? index + 1;
+        final label = index == 0 ? '$rank순위 · 추천' : '$rank순위';
+        return Expanded(
           child: InkWell(
             onTap: () => onSelected(index),
             borderRadius: BorderRadius.circular(8),
             child: Container(
-              padding: const EdgeInsets.symmetric(vertical: 13),
+              height: 44,
+              alignment: Alignment.center,
               decoration: BoxDecoration(
                 color: selected == index ? Colors.white : Colors.transparent,
                 borderRadius: BorderRadius.circular(8),
@@ -209,10 +237,10 @@ class _CandidateTabs extends StatelessWidget {
                     : null,
               ),
               child: Text(
-                '후보 ${candidates[index]['rank'] ?? index + 1}',
-                textAlign: TextAlign.center,
+                label,
+                overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                  fontWeight: FontWeight.w600,
+                  fontWeight: FontWeight.w700,
                   color: selected == index
                       ? _TimetableResultScreenState._ink
                       : _TimetableResultScreenState._muted,
@@ -220,15 +248,17 @@ class _CandidateTabs extends StatelessWidget {
               ),
             ),
           ),
-        ),
-      ),
+        );
+      }),
     ),
   );
 }
 
 class _CandidateView extends StatelessWidget {
   const _CandidateView({required this.candidate});
+
   final Map<String, dynamic> candidate;
+
   Map<String, dynamic> get timetable =>
       (candidate['timetable'] as Map?)?.cast<String, dynamic>() ?? const {};
   Map<String, dynamic> get load =>
@@ -237,162 +267,54 @@ class _CandidateView extends StatelessWidget {
   List<Map<String, dynamic>> get schedule =>
       (timetable['schedule_items'] as List? ?? const [])
           .whereType<Map>()
-          .map((e) => e.cast<String, dynamic>())
+          .map((item) => item.cast<String, dynamic>())
           .toList();
   List<Map<String, dynamic>> get courses =>
       (timetable['courses'] as List? ?? const [])
           .whereType<Map>()
-          .map((e) => e.cast<String, dynamic>())
+          .map((item) => item.cast<String, dynamic>())
+          .toList();
+  List<String> get reasons =>
+      (timetable['reasons'] as List? ?? const []).whereType<String>().toList();
+  List<String> get warnings => [
+    ...(timetable['warnings'] as List? ?? const []).whereType<String>(),
+    ...(candidate['warnings'] as List? ?? const []).whereType<String>(),
+  ];
+  List<Map<String, dynamic>> get scoreComponents =>
+      (candidate['score_components'] as List? ?? const [])
+          .whereType<Map>()
+          .map((item) => item.cast<String, dynamic>())
           .toList();
 
   @override
   Widget build(BuildContext context) {
-    final first = schedule.isEmpty
-        ? '-'
-        : _formatMinutes(
-            schedule
-                .map((e) => _minutes('${e['start']}'))
-                .reduce((a, b) => a < b ? a : b),
-          );
-    final last = schedule.isEmpty
-        ? '-'
-        : _formatMinutes(
-            schedule
-                .map((e) => _minutes('${e['end']}'))
-                .reduce((a, b) => a > b ? a : b),
-          );
-    final days = schedule.map((e) => e['day']).toSet().length;
-    final components = (candidate['score_components'] as List? ?? const [])
-        .whereType<Map>()
-        .map((e) => e.cast<String, dynamic>())
-        .toList();
-    final reasons = _derivedReasons(schedule);
-    final warnings = (timetable['warnings'] as List? ?? const [])
-        .whereType<String>()
-        .toList();
-    if (warnings.isEmpty) {
-      warnings.add('실제 수강 가능 여부와 정원은 학생지원시스템에서 확인해 주세요.');
-    }
+    final first = _firstClassTime(schedule);
+    final last = _lastClassTime(schedule);
+    final freeDays = _freeDayLabels(schedule);
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Container(
-          padding: const EdgeInsets.all(24),
-          decoration: BoxDecoration(
-            color: _TimetableResultScreenState._ink,
-            borderRadius: BorderRadius.circular(16),
-          ),
-          child: Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '후보 ${candidate['rank']}',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 24,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    const Text(
-                      '가장 높은 순위의 추천안부터 확인해 보세요.',
-                      style: TextStyle(color: Color(0xFFA1A1AA)),
-                    ),
-                  ],
-                ),
-              ),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  const Text(
-                    '선호 적합도 점수',
-                    style: TextStyle(color: Color(0xFFA1A1AA)),
-                  ),
-                  Text(
-                    '${_score(candidate['raw_score'])}점',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 30,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
+        _SummaryBand(
+          rank: '${candidate['rank'] ?? '-'}',
+          score: _score(candidate['raw_score']),
         ),
-        const SizedBox(height: 20),
-        LayoutBuilder(
-          builder: (context, constraints) {
-            final width = constraints.maxWidth < 600
-                ? (constraints.maxWidth - 12) / 2
-                : (constraints.maxWidth - 36) / 4;
-            return Wrap(
-              spacing: 12,
-              runSpacing: 12,
-              children: [
-                _Metric(
-                  width: width,
-                  icon: Icons.school_outlined,
-                  label: '총 학점',
-                  value:
-                      '${load['final_total_credits'] ?? timetable['total_credit'] ?? 0}학점',
-                ),
-                _Metric(
-                  width: width,
-                  icon: Icons.directions_walk,
-                  label: '등교일',
-                  value: '주 $days일',
-                ),
-                _Metric(
-                  width: width,
-                  icon: Icons.wb_sunny_outlined,
-                  label: '첫 수업',
-                  value: first,
-                ),
-                _Metric(
-                  width: width,
-                  icon: Icons.nights_stay_outlined,
-                  label: '마지막 수업',
-                  value: last,
-                ),
-              ],
-            );
-          },
+        const SizedBox(height: 16),
+        _MetricGrid(
+          totalCredits:
+              '${load['final_total_credits'] ?? timetable['total_credit'] ?? '-'}학점',
+          freeDays: freeDays.isEmpty ? '공강 없음' : '${freeDays.join(', ')} 공강',
+          firstClassTime: first,
+          lastClassTime: last,
         ),
-        const SizedBox(height: 20),
-        if (components.isNotEmpty)
-          _Section(
-            title: '점수 계산 내역',
-            child: Column(
-              children: components.map((item) {
-                final value = (item['value'] as num?)?.toDouble() ?? 0;
-                return ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: Text(
-                    value >= 0 ? '+${_score(value)}' : _score(value),
-                    style: TextStyle(
-                      color: value >= 0 ? const Color(0xFF10B981) : Colors.red,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  title: Text('${item['reason'] ?? item['label'] ?? ''}'),
-                );
-              }).toList(),
-            ),
-          ),
         const SizedBox(height: 20),
         _Section(
-          title: '시간표',
-          subtitle: '과목 유형은 색상과 라벨로 구분했어요.',
+          title: '주간 시간표',
           child: _TimetableGrid(items: schedule),
         ),
         const SizedBox(height: 20),
         _Section(
-          title: '과목 목록',
+          title: '수업 정보',
           child: Column(
             children: courses
                 .map((course) => _CourseRow(course: course, schedule: schedule))
@@ -403,14 +325,112 @@ class _CandidateView extends StatelessWidget {
           const SizedBox(height: 20),
           _Section(
             title: '추천 이유',
-            child: _Bullets(items: reasons, icon: Icons.auto_awesome_outlined),
+            child: _Bullets(items: reasons, icon: Icons.check_circle_outline),
           ),
         ],
         const SizedBox(height: 20),
-        _WarningSection(items: warnings),
+        _ConditionStatusBanner(warnings: warnings),
+        if (scoreComponents.isNotEmpty) ...[
+          const SizedBox(height: 20),
+          _Section(
+            title: '조건 충족 결과',
+            child: Column(
+              children: scoreComponents
+                  .map((item) => _ScoreComponentRow(item: item))
+                  .toList(),
+            ),
+          ),
+        ],
       ],
     );
   }
+}
+
+class _SummaryBand extends StatelessWidget {
+  const _SummaryBand({required this.rank, required this.score});
+
+  final String rank;
+  final String score;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.all(22),
+    decoration: BoxDecoration(
+      color: _TimetableResultScreenState._ink,
+      borderRadius: BorderRadius.circular(12),
+    ),
+    child: Row(
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '$rank순위 후보',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 24,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 6),
+              const Text(
+                '현재 선택한 후보의 상세 정보입니다.',
+                style: TextStyle(color: Color(0xFFA1A1AA)),
+              ),
+            ],
+          ),
+        ),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            const Text('비교 점수', style: TextStyle(color: Color(0xFFA1A1AA))),
+            Text(
+              score,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 30,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
+      ],
+    ),
+  );
+}
+
+class _MetricGrid extends StatelessWidget {
+  const _MetricGrid({
+    required this.totalCredits,
+    required this.freeDays,
+    required this.firstClassTime,
+    required this.lastClassTime,
+  });
+
+  final String totalCredits;
+  final String freeDays;
+  final String firstClassTime;
+  final String lastClassTime;
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      final width = constraints.maxWidth < 620
+          ? (constraints.maxWidth - 12) / 2
+          : (constraints.maxWidth - 36) / 4;
+      return Wrap(
+        spacing: 12,
+        runSpacing: 12,
+        children: [
+          _Metric(width: width, icon: Icons.school_outlined, label: '총 학점', value: totalCredits),
+          _Metric(width: width, icon: Icons.event_available_outlined, label: '공강', value: freeDays),
+          _Metric(width: width, icon: Icons.wb_sunny_outlined, label: '첫 수업', value: firstClassTime),
+          _Metric(width: width, icon: Icons.nights_stay_outlined, label: '마지막 수업', value: lastClassTime),
+        ],
+      );
+    },
+  );
 }
 
 class _Metric extends StatelessWidget {
@@ -420,35 +440,37 @@ class _Metric extends StatelessWidget {
     required this.label,
     required this.value,
   });
+
   final double width;
   final IconData icon;
   final String label;
   final String value;
+
   @override
   Widget build(BuildContext context) => SizedBox(
     width: width,
     child: Container(
-      padding: const EdgeInsets.all(16),
+      constraints: const BoxConstraints(minHeight: 76),
+      padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: _TimetableResultScreenState._soft,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(8),
       ),
       child: Row(
         children: [
-          Icon(icon),
-          const SizedBox(width: 12),
+          Icon(icon, size: 22),
+          const SizedBox(width: 10),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Text(
-                  label,
-                  style: const TextStyle(
-                    color: _TimetableResultScreenState._muted,
-                  ),
-                ),
+                Text(label, style: const TextStyle(color: _TimetableResultScreenState._muted)),
+                const SizedBox(height: 2),
                 Text(
                   value,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(fontWeight: FontWeight.w700),
                 ),
               ],
@@ -461,33 +483,27 @@ class _Metric extends StatelessWidget {
 }
 
 class _Section extends StatelessWidget {
-  const _Section({required this.title, required this.child, this.subtitle});
+  const _Section({required this.title, required this.child});
+
   final String title;
-  final String? subtitle;
   final Widget child;
+
   @override
   Widget build(BuildContext context) => Container(
     padding: const EdgeInsets.all(20),
     decoration: BoxDecoration(
       border: Border.all(color: _TimetableResultScreenState._line),
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: BorderRadius.circular(8),
     ),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
           title,
-          style: Theme.of(
-            context,
-          ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
-        ),
-        if (subtitle != null) ...[
-          const SizedBox(height: 6),
-          Text(
-            subtitle!,
-            style: const TextStyle(color: _TimetableResultScreenState._muted),
+          style: Theme.of(context).textTheme.titleLarge?.copyWith(
+            fontWeight: FontWeight.w700,
           ),
-        ],
+        ),
         const SizedBox(height: 16),
         child,
       ],
@@ -497,163 +513,167 @@ class _Section extends StatelessWidget {
 
 class _TimetableGrid extends StatelessWidget {
   const _TimetableGrid({required this.items});
+
   final List<Map<String, dynamic>> items;
-  static const days = ['MON', 'TUE', 'WED', 'THU', 'FRI'];
+
+  static const _days = ['MON', 'TUE', 'WED', 'THU', 'FRI'];
+  static const _dayLabels = ['월', '화', '수', '목', '금'];
   static const _timeColumnWidth = 52.0;
   static const _dayColumnWidth = 140.0;
-  static const _itemHorizontalPadding = 4.0;
-  static const _hourHeight = 48.0;
+  static const _hourHeight = 52.0;
   static const _startHour = 9;
-  static const _endHour = 24;
+  static const _endHour = 22;
   static const _gridHeight = (_endHour - _startHour) * _hourHeight;
+
   @override
-  Widget build(BuildContext context) => SingleChildScrollView(
-    scrollDirection: Axis.horizontal,
-    child: SizedBox(
-      width: 760,
-      child: Column(
-        children: [
-          Row(
-            children: [
-              const SizedBox(width: _timeColumnWidth),
-              for (final day in ['월', '화', '수', '목', '금'])
-                SizedBox(
-                  width: _dayColumnWidth,
-                  child: Center(
-                    child: Text(
-                      day,
-                      style: const TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                  ),
-                ),
-            ],
-          ),
-          const Divider(),
-          SizedBox(
-            height: _gridHeight,
-            child: Stack(
+  Widget build(BuildContext context) {
+    if (items.isEmpty) {
+      return const Text('표시할 시간표 정보가 없습니다.');
+    }
+
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: SizedBox(
+        width: _timeColumnWidth + _dayColumnWidth * _days.length,
+        child: Column(
+          children: [
+            Row(
               children: [
-                for (var hour = _startHour; hour < _endHour; hour++) ...[
-                  Positioned(
-                    top: (hour - _startHour) * _hourHeight,
-                    left: 0,
-                    child: Text(
-                      '${hour.toString().padLeft(2, '0')}:00',
-                      style: const TextStyle(
-                        color: _TimetableResultScreenState._muted,
-                        fontSize: 12,
+                const SizedBox(width: _timeColumnWidth),
+                for (final day in _dayLabels)
+                  SizedBox(
+                    width: _dayColumnWidth,
+                    height: 32,
+                    child: Center(
+                      child: Text(
+                        day,
+                        style: const TextStyle(fontWeight: FontWeight.w700),
                       ),
                     ),
                   ),
-                  Positioned(
-                    top: (hour - _startHour) * _hourHeight,
-                    left: _timeColumnWidth,
-                    right: 0,
-                    child: const Divider(height: 1),
-                  ),
-                ],
-                for (final item in items)
-                  if (days.contains('${item['day']}'))
-                    Positioned(
-                      left:
-                          _timeColumnWidth +
-                          days.indexOf('${item['day']}') * _dayColumnWidth +
-                          _itemHorizontalPadding,
-                      top:
-                          ((_minutes('${item['start']}') - _startHour * 60) /
-                                  60 *
-                                  _hourHeight)
-                              .clamp(0, _gridHeight - 32)
-                              .toDouble(),
-                      width: _dayColumnWidth - _itemHorizontalPadding * 2,
-                      height:
-                          ((_minutes('${item['end']}') -
-                                      _minutes('${item['start']}')) /
-                                  60 *
-                                  _hourHeight)
-                              .clamp(32, 300)
-                              .toDouble(),
-                      child: Container(
-                        padding: const EdgeInsets.all(7),
-                        decoration: BoxDecoration(
-                          color: _categoryColor('${item['category']}'),
-                          borderRadius: BorderRadius.circular(7),
-                        ),
-                        child: Text(
-                          '[${_categoryLabel('${item['category']}')}]\n${item['course_name']}\n${item['classroom']}',
-                          overflow: TextOverflow.fade,
-                          style: const TextStyle(fontSize: 11),
-                        ),
-                      ),
-                    ),
               ],
             ),
-          ),
-        ],
+            const Divider(height: 1),
+            SizedBox(
+              height: _gridHeight,
+              child: Stack(
+                children: [
+                  for (var hour = _startHour; hour <= _endHour; hour++) ...[
+                    Positioned(
+                      top: (hour - _startHour) * _hourHeight,
+                      left: 0,
+                      width: _timeColumnWidth,
+                      child: Text(
+                        '${hour.toString().padLeft(2, '0')}:00',
+                        style: const TextStyle(
+                          color: _TimetableResultScreenState._muted,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      top: (hour - _startHour) * _hourHeight,
+                      left: _timeColumnWidth,
+                      right: 0,
+                      child: const Divider(height: 1),
+                    ),
+                  ],
+                  for (final item in items)
+                    if (_days.contains('${item['day']}'))
+                      Positioned(
+                        left: _timeColumnWidth +
+                            _days.indexOf('${item['day']}') * _dayColumnWidth +
+                            4,
+                        top: ((_minutes('${item['start']}') - _startHour * 60) /
+                                60 *
+                                _hourHeight)
+                            .clamp(0, _gridHeight - 32)
+                            .toDouble(),
+                        width: _dayColumnWidth - 8,
+                        height: ((_minutes('${item['end']}') -
+                                    _minutes('${item['start']}')) /
+                                60 *
+                                _hourHeight)
+                            .clamp(34, 260)
+                            .toDouble(),
+                        child: _ScheduleBlock(item: item),
+                      ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
-    ),
-  );
+    );
+  }
 }
 
-class _CategoryChip extends StatelessWidget {
-  const _CategoryChip({required this.category});
-  final String category;
+class _ScheduleBlock extends StatelessWidget {
+  const _ScheduleBlock({required this.item});
+
+  final Map<String, dynamic> item;
+
   @override
   Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+    padding: const EdgeInsets.all(7),
     decoration: BoxDecoration(
-      color: _categoryColor(category),
-      borderRadius: BorderRadius.circular(999),
+      color: _categoryColor('${item['category']}'),
+      borderRadius: BorderRadius.circular(7),
+      border: Border.all(color: Colors.white, width: 1.5),
     ),
-    child: Text(_categoryLabel(category)),
+    child: Text(
+      '${item['course_name'] ?? ''}\n${item['division'] ?? ''} · ${item['classroom'] ?? ''}',
+      maxLines: 3,
+      overflow: TextOverflow.fade,
+      style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
+    ),
   );
 }
 
 class _CourseRow extends StatelessWidget {
   const _CourseRow({required this.course, required this.schedule});
+
   final Map<String, dynamic> course;
   final List<Map<String, dynamic>> schedule;
 
   @override
   Widget build(BuildContext context) {
-    final name = '${course['course_name'] ?? ''}';
-    final division = '${course['division'] ?? ''}';
+    final name = '${course['course_name'] ?? course['name'] ?? ''}';
+    final division = '${course['division'] ?? course['section'] ?? ''}';
     final meetings = schedule.where(
       (item) =>
           '${item['course_name']}' == name && '${item['division']}' == division,
     );
     final timeText = meetings
-        .map((item) => '${_dayLabel('${item['day']}')} ${item['start']}')
+        .map((item) => '${_dayLabel('${item['day']}')} ${item['start']}-${item['end']}')
         .join(' · ');
+
     return Container(
-      padding: const EdgeInsets.symmetric(vertical: 16),
+      padding: const EdgeInsets.symmetric(vertical: 14),
       decoration: const BoxDecoration(
-        border: Border(
-          bottom: BorderSide(color: _TimetableResultScreenState._line),
-        ),
+        border: Border(bottom: BorderSide(color: _TimetableResultScreenState._line)),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _CategoryChip(category: '${course['category'] ?? ''}'),
-          const SizedBox(width: 14),
+          const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  '$name $division',
-                  style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w700,
-                  ),
+                  '$name $division'.trim(),
+                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
                 ),
-                const SizedBox(height: 6),
+                const SizedBox(height: 5),
                 Text(
-                  '${course['professor'] ?? ''}${timeText.isEmpty ? '' : ' · $timeText'} · ${course['credit'] ?? 0}학점',
-                  style: const TextStyle(
-                    color: _TimetableResultScreenState._muted,
-                  ),
+                  [
+                    '${course['professor'] ?? ''}',
+                    if (timeText.isNotEmpty) timeText,
+                    '${course['credit'] ?? course['credits'] ?? 0}학점',
+                  ].where((value) => value.trim().isNotEmpty).join(' · '),
+                  style: const TextStyle(color: _TimetableResultScreenState._muted),
                 ),
               ],
             ),
@@ -664,62 +684,62 @@ class _CourseRow extends StatelessWidget {
   }
 }
 
-class _WarningSection extends StatelessWidget {
-  const _WarningSection({required this.items});
-  final List<String> items;
+class _ScoreComponentRow extends StatelessWidget {
+  const _ScoreComponentRow({required this.item});
+
+  final Map<String, dynamic> item;
+
   @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.all(22),
-    decoration: BoxDecoration(
-      color: const Color(0xFFFFFBEB),
-      border: Border.all(color: const Color(0xFFF6C84C)),
-      borderRadius: BorderRadius.circular(14),
-    ),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text(
-          '주의사항',
-          style: TextStyle(
-            color: Color(0xFF9A3F00),
-            fontSize: 20,
-            fontWeight: FontWeight.w700,
+  Widget build(BuildContext context) {
+    final value = (item['value'] as num?)?.toDouble() ?? 0;
+    final text = '${item['reason'] ?? item['label'] ?? ''}';
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 58,
+            child: Text(
+              value >= 0 ? '+${_score(value)}' : _score(value),
+              style: TextStyle(
+                color: value >= 0 ? const Color(0xFF10B981) : const Color(0xFFEF4444),
+                fontWeight: FontWeight.w700,
+              ),
+            ),
           ),
-        ),
-        const SizedBox(height: 14),
-        _Bullets(items: items, icon: Icons.info_outline),
-      ],
-    ),
-  );
+          Expanded(child: Text(text)),
+        ],
+      ),
+    );
+  }
 }
 
-class _ActionButton extends StatelessWidget {
-  const _ActionButton({
-    required this.icon,
-    required this.label,
-    required this.onPressed,
-  });
-  final IconData icon;
-  final String label;
-  final VoidCallback onPressed;
+class _CategoryChip extends StatelessWidget {
+  const _CategoryChip({required this.category});
+
+  final String category;
+
   @override
-  Widget build(BuildContext context) => OutlinedButton.icon(
-    onPressed: onPressed,
-    icon: Icon(icon),
-    label: Text(label),
-    style: OutlinedButton.styleFrom(
-      foregroundColor: const Color(0xFF087D85),
-      minimumSize: const Size.fromHeight(52),
-      side: const BorderSide(color: Color(0xFF6B7280)),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+    decoration: BoxDecoration(
+      color: _categoryColor(category),
+      borderRadius: BorderRadius.circular(999),
+    ),
+    child: Text(
+      _categoryLabel(category),
+      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
     ),
   );
 }
 
 class _Bullets extends StatelessWidget {
   const _Bullets({required this.items, required this.icon});
+
   final List<String> items;
   final IconData icon;
+
   @override
   Widget build(BuildContext context) => Column(
     children: items
@@ -740,23 +760,178 @@ class _Bullets extends StatelessWidget {
   );
 }
 
-class _EmptyResult extends StatelessWidget {
-  const _EmptyResult();
+class _ConditionStatusBanner extends StatelessWidget {
+  const _ConditionStatusBanner({required this.warnings});
+
+  final List<String> warnings;
+
   @override
-  Widget build(BuildContext context) => const Padding(
-    padding: EdgeInsets.symmetric(vertical: 48),
+  Widget build(BuildContext context) {
+    final hasWarnings = warnings.isNotEmpty;
+    final background =
+        hasWarnings ? const Color(0xFFFFFBEB) : const Color(0xFFECFDF5);
+    final border =
+        hasWarnings ? const Color(0xFFF59E0B) : const Color(0xFF10B981);
+    final foreground =
+        hasWarnings ? const Color(0xFF92400E) : const Color(0xFF047857);
+    final icon =
+        hasWarnings ? Icons.info_outline : Icons.check_circle_outline;
+    final messages = hasWarnings
+        ? warnings.map(_formatConditionWarning).toList()
+        : const ['모든 조건을 만족합니다'];
+
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: background,
+        border: Border.all(color: border),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: messages
+            .map(
+              (message) => Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(icon, color: foreground, size: 18),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        message,
+                        style: TextStyle(
+                          color: foreground,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            )
+            .toList(),
+      ),
+    );
+  }
+}
+
+class _ErrorBanner extends StatelessWidget {
+  const _ErrorBanner({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.all(14),
+    decoration: BoxDecoration(
+      color: const Color(0xFFFEF2F2),
+      border: Border.all(color: const Color(0xFFEF4444)),
+      borderRadius: BorderRadius.circular(8),
+    ),
+    child: Text(message, style: const TextStyle(color: Color(0xFF991B1B))),
+  );
+}
+
+class _EmptyResult extends StatelessWidget {
+  const _EmptyResult({required this.onEditConditions});
+
+  final VoidCallback onEditConditions;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.all(24),
+    decoration: BoxDecoration(
+      color: _TimetableResultScreenState._soft,
+      borderRadius: BorderRadius.circular(8),
+    ),
     child: Column(
       children: [
-        Icon(
-          Icons.event_busy_outlined,
-          size: 48,
-          color: _TimetableResultScreenState._muted,
+        const Icon(Icons.event_busy_outlined, size: 42, color: _TimetableResultScreenState._muted),
+        const SizedBox(height: 14),
+        const Text('조건에 맞는 추천 후보가 없습니다.'),
+        const SizedBox(height: 16),
+        OutlinedButton(
+          onPressed: onEditConditions,
+          child: const Text('조건 수정하기'),
         ),
-        SizedBox(height: 16),
-        Text('조건에 맞는 추천 후보가 없습니다.'),
       ],
     ),
   );
+}
+
+class _FinalTimetableScreen extends StatelessWidget {
+  const _FinalTimetableScreen({required this.candidate});
+
+  final Map<String, dynamic> candidate;
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    backgroundColor: Colors.white,
+    appBar: AppBar(
+      title: const Text('PlaNU'),
+      backgroundColor: Colors.white,
+      foregroundColor: _TimetableResultScreenState._ink,
+      surfaceTintColor: Colors.white,
+      elevation: 0,
+    ),
+    body: SafeArea(
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 760),
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Icon(Icons.event_available_outlined, size: 48),
+                const SizedBox(height: 20),
+                Text(
+                  '${candidate['rank'] ?? ''}순위 시간표를 선택했습니다',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                const Text(
+                  '선택한 후보가 저장되었습니다.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: _TimetableResultScreenState._muted),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+String? _candidateId(Map<String, dynamic> candidate) {
+  final direct = candidate['candidate_id'] ?? candidate['id'];
+  if (direct is String && direct.trim().isNotEmpty) return direct.trim();
+  final timetable = (candidate['timetable'] as Map?)?.cast<String, dynamic>();
+  final nested = timetable?['candidate_id'] ?? timetable?['id'];
+  if (nested is String && nested.trim().isNotEmpty) return nested.trim();
+  return null;
+}
+
+String _formatConditionWarning(String value) {
+  final normalized = value.trim();
+  if (normalized.isEmpty) return '조건을 만족하지 못했습니다.';
+  if (normalized.contains('금요일') || normalized.contains('FRI')) {
+    return '금요일 수업이 포함되어 있어 금요일 공강 조건을 만족하지 못했습니다.';
+  }
+  if (normalized.contains('10') || normalized.contains('09:') || normalized.contains('9:')) {
+    return '10시 이전 수업이 포함되어 있어 10시 이전 수업 제외 조건을 만족하지 못했습니다.';
+  }
+  if (normalized.endsWith('조건을 만족하지 못했습니다.')) {
+    return normalized;
+  }
+  return '$normalized 조건을 만족하지 못했습니다.';
 }
 
 int _minutes(String value) {
@@ -769,40 +944,35 @@ int _minutes(String value) {
   return hour * 60 + minute;
 }
 
-List<String> _derivedReasons(List<Map<String, dynamic>> schedule) {
-  if (schedule.isEmpty) return const ['표시할 수업 시간 정보가 없습니다.'];
-  final byDay = <String, List<Map<String, dynamic>>>{};
-  for (final item in schedule) {
-    byDay.putIfAbsent('${item['day']}', () => []).add(item);
-  }
-  var consecutiveCount = 0;
-  var hasConflict = false;
-  for (final items in byDay.values) {
-    items.sort(
-      (a, b) => _minutes('${a['start']}').compareTo(_minutes('${b['start']}')),
-    );
-    for (var index = 0; index < items.length - 1; index++) {
-      final end = _minutes('${items[index]['end']}');
-      final nextStart = _minutes('${items[index + 1]['start']}');
-      if (end == nextStart) consecutiveCount++;
-      if (end > nextStart) hasConflict = true;
-    }
-  }
-  final first = schedule
-      .map((item) => _minutes('${item['start']}'))
-      .reduce((a, b) => a < b ? a : b);
-  final reasons = <String>[
-    hasConflict ? '서로 시간이 겹치는 수업이 포함되어 있습니다.' : '과목 간 시간 충돌이 없습니다.',
-    byDay.containsKey('FRI') ? '금요일 수업이 포함되어 있습니다.' : '금요일 공강 조건을 만족합니다.',
-    consecutiveCount == 0 ? '연강이 없습니다.' : '연강이 $consecutiveCount회 포함되어 있습니다.',
-    '등교일이 주 ${byDay.length}일입니다.',
-    '첫 수업이 ${_formatMinutes(first)}에 시작합니다.',
-  ];
-  return reasons;
-}
-
 String _formatMinutes(int minutes) =>
     '${(minutes ~/ 60).toString().padLeft(2, '0')}:${(minutes % 60).toString().padLeft(2, '0')}';
+
+String _firstClassTime(List<Map<String, dynamic>> schedule) {
+  if (schedule.isEmpty) return '-';
+  return _formatMinutes(
+    schedule
+        .map((item) => _minutes('${item['start']}'))
+        .reduce((a, b) => a < b ? a : b),
+  );
+}
+
+String _lastClassTime(List<Map<String, dynamic>> schedule) {
+  if (schedule.isEmpty) return '-';
+  return _formatMinutes(
+    schedule
+        .map((item) => _minutes('${item['end']}'))
+        .reduce((a, b) => a > b ? a : b),
+  );
+}
+
+List<String> _freeDayLabels(List<Map<String, dynamic>> schedule) {
+  final occupied = schedule.map((item) => '${item['day']}').toSet();
+  return ['MON', 'TUE', 'WED', 'THU', 'FRI']
+      .where((day) => !occupied.contains(day))
+      .map(_dayLabel)
+      .toList();
+}
+
 String _dayLabel(String value) => switch (value) {
   'MON' => '월',
   'TUE' => '화',
@@ -825,10 +995,12 @@ String _categoryLabel(String value) => switch (value) {
   'major' => '전공',
   'general_required' => '교양필수',
   'general_elective' => '교양선택',
-  _ => value,
+  _ => value.isEmpty ? '수업' : value,
 };
+
 Color _categoryColor(String value) => switch (value) {
   'major' => const Color(0xFFDDE5FF),
   'general_required' => const Color(0xFFCCF5E3),
-  _ => const Color(0xFFFFE5C7),
+  'general_elective' => const Color(0xFFFFE5C7),
+  _ => const Color(0xFFF5F5F5),
 };

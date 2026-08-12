@@ -8,8 +8,11 @@ from uuid import uuid4
 
 from pydantic import ValidationError
 
+from ..models.timetable_generation import GeneratedTimetableCandidate
 from ..models import (
     Day,
+    SelectedTimetable,
+    SelectedTimetableStatus,
     HardConstraints,
     PlanuSessionState,
     SoftPreferences,
@@ -1066,6 +1069,114 @@ class SessionService:
             },
         )
 
+    def select_timetable_candidate(
+        self,
+        session_id: str,
+        candidate: GeneratedTimetableCandidate,
+    ) -> PlanuSessionState:
+        """Persist an explicitly selected generated timetable candidate."""
+
+        if not candidate.candidate_id.strip():
+            raise InvalidSessionStateValueError("candidate_id", candidate.candidate_id)
+        if not candidate.section_ids:
+            raise InvalidSessionStateValueError(
+                "section_ids",
+                candidate.section_ids,
+                "selected timetable must contain at least one section",
+            )
+        if not candidate.validation.valid:
+            raise InvalidSessionStateValueError(
+                "candidate",
+                candidate.candidate_id,
+                "candidate must pass hard validation before selection",
+            )
+        if candidate.section_sources:
+            expected_candidate_id = GeneratedTimetableCandidate.build_source_id(
+                candidate.section_sources
+            )
+        else:
+            expected_candidate_id = GeneratedTimetableCandidate.build_id(candidate.section_ids)
+        if expected_candidate_id != candidate.candidate_id:
+            raise InvalidSessionStateValueError(
+                "candidate_id",
+                candidate.candidate_id,
+                "candidate_id does not match the supplied section combination",
+            )
+
+        state = self.get_session(session_id)
+        current = state.selected_timetable
+        if (
+            current is not None
+            and current.candidate_id == candidate.candidate_id
+            and current.section_ids == candidate.section_ids
+        ):
+            return self._refresh_unchanged_state(state)
+
+        now = self._now()
+        selected = SelectedTimetable(
+            candidate_id=candidate.candidate_id,
+            section_ids=list(candidate.section_ids),
+            fixed_section_ids=list(candidate.fixed_section_ids),
+            added_section_ids=list(candidate.added_section_ids),
+            course_ids=list(candidate.course_ids),
+            section_sources=list(candidate.section_sources),
+            fixed_section_sources=list(candidate.fixed_section_sources),
+            added_section_sources=list(candidate.added_section_sources),
+            total_credits=candidate.total_credits,
+            selected_at=now,
+        )
+        return self._save_changed_state(
+            state,
+            {
+                "selected_timetable": selected,
+                "selected_timetable_status": SelectedTimetableStatus.CURRENT,
+            },
+        )
+
+    def get_selected_timetable(self, session_id: str) -> SelectedTimetable:
+        """Return the current selected timetable or raise a clear service error."""
+
+        state = self.get_session(session_id)
+        if state.selected_timetable is None:
+            raise InvalidSessionStateValueError(
+                "selected_timetable",
+                None,
+                "no timetable candidate has been selected",
+            )
+        return state.selected_timetable.model_copy(deep=True)
+
+    def confirm_generation_preferences(self, session_id: str) -> PlanuSessionState:
+        """Persist confirmation that the current condition revision may generate timetables."""
+
+        state = self.get_session(session_id)
+        if (
+            state.generation_preferences_confirmed_at is not None
+            and state.generation_preferences_confirmed_version == state.version
+        ):
+            return self._refresh_unchanged_state(state)
+        now = self._now()
+        return self._save_changed_state(
+            state,
+            {
+                "generation_preferences_confirmed_at": now,
+                "generation_preferences_confirmed_version": state.version,
+            },
+        )
+
+    def clear_selected_timetable(self, session_id: str) -> PlanuSessionState:
+        """Clear selected timetable state without touching preferences or catalogs."""
+
+        state = self.get_session(session_id)
+        if state.selected_timetable is None and state.selected_timetable_status is None:
+            return self._refresh_unchanged_state(state)
+        return self._save_changed_state(
+            state,
+            {
+                "selected_timetable": None,
+                "selected_timetable_status": None,
+            },
+        )
+
     def _save_state_field(
         self,
         session_id: str,
@@ -1084,6 +1195,8 @@ class SessionService:
         update: dict[str, object],
     ) -> PlanuSessionState:
         now = self._now()
+        update = self._mark_selected_timetable_stale_if_needed(state, dict(update))
+        update = self._invalidate_generation_confirmation_if_needed(state, update)
         changed = self._build_validated_state(
             state,
             {
@@ -1097,6 +1210,55 @@ class SessionService:
             return self._repository.save(changed, now=now)
         except SessionNotFoundError as exc:
             raise SessionNotAvailableError(state.session_id) from exc
+
+    @staticmethod
+    def _mark_selected_timetable_stale_if_needed(
+        state: PlanuSessionState,
+        update: dict[str, object],
+    ) -> dict[str, object]:
+        if state.selected_timetable is None or "selected_timetable" in update:
+            return update
+        stale_fields = {
+            "department",
+            "major_catalog_id",
+            "elective_catalog_id",
+            "selected_major_course_ids",
+        }
+        should_stale = any(
+            field_name in update and update[field_name] != getattr(state, field_name)
+            for field_name in stale_fields
+        )
+        if "hard_constraints" in update and update["hard_constraints"] != state.hard_constraints:
+            should_stale = True
+        if should_stale:
+            update["selected_timetable_status"] = SelectedTimetableStatus.STALE
+        return update
+
+    @staticmethod
+    def _invalidate_generation_confirmation_if_needed(
+        state: PlanuSessionState,
+        update: dict[str, object],
+    ) -> dict[str, object]:
+        if state.generation_preferences_confirmed_at is None:
+            return update
+        if "generation_preferences_confirmed_at" in update:
+            return update
+        confirmation_fields = {
+            "department",
+            "major_catalog_id",
+            "elective_catalog_id",
+            "selected_major_course_ids",
+            "hard_constraints",
+            "soft_preferences",
+        }
+        should_invalidate = any(
+            field_name in update and update[field_name] != getattr(state, field_name)
+            for field_name in confirmation_fields
+        )
+        if should_invalidate:
+            update["generation_preferences_confirmed_at"] = None
+            update["generation_preferences_confirmed_version"] = None
+        return update
 
     def _save_state_with_courses(
         self,
@@ -1388,3 +1550,6 @@ class SessionService:
     @staticmethod
     def _normalize_time(field_name: str, time_value: str) -> str:
         return SessionInputNormalizer.time(field_name, time_value)
+
+
+

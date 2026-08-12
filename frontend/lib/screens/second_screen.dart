@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 
+import '../models/app_flow_state.dart';
 import '../models/condition_summary_models.dart';
 import '../models/major_models.dart';
 import '../repositories/major_repository.dart';
 import '../services/major_api.dart';
 import '../services/planu_api.dart';
 import '../widgets/flow_step_badge.dart';
+import 'timetable_loading_screen.dart';
 
 class SecondScreen extends StatefulWidget {
   const SecondScreen({
@@ -15,6 +17,7 @@ class SecondScreen extends StatefulWidget {
     required this.sessionId,
     required this.parsedCourseCount,
     required this.catalogWarnings,
+    required this.flow,
     this.majorRepository,
     this.onSessionExpired,
   });
@@ -24,6 +27,7 @@ class SecondScreen extends StatefulWidget {
   final String sessionId;
   final int parsedCourseCount;
   final List<String> catalogWarnings;
+  final AppFlowState flow;
   final MajorRepository? majorRepository;
   final VoidCallback? onSessionExpired;
 
@@ -186,8 +190,21 @@ class _SecondScreenState extends State<SecondScreen> {
 
   void _openLoadingScreen() {
     if (!_canGenerate) return;
+    widget.flow
+      ..department = widget.selectedDepartment
+      ..sessionId = widget.sessionId
+      ..majorConfirmation = _confirmation
+      ..preferencePrompt = _latestConditionText ?? ''
+      ..selectedTemplate = 'balanced';
     Navigator.of(context).push(
-      MaterialPageRoute<void>(builder: (_) => const _SecondLoadingScreen()),
+      MaterialPageRoute<void>(
+        settings: const RouteSettings(name: '/timetable-loading'),
+        builder: (_) => TimetableLoadingScreen(
+          flow: widget.flow,
+          api: widget.api,
+          onSessionExpired: widget.onSessionExpired ?? () {},
+        ),
+      ),
     );
   }
 
@@ -866,6 +883,7 @@ class _SectionCard extends StatelessWidget {
   }
 }
 
+// ignore: unused_element
 class _SecondLoadingScreen extends StatelessWidget {
   const _SecondLoadingScreen();
 

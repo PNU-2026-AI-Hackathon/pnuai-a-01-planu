@@ -14,6 +14,7 @@ from pydantic import (
 )
 
 from .session_preferences import CourseId, HardConstraints, SoftPreferences
+from .timetable_selection import SelectedTimetable, SelectedTimetableStatus
 
 
 class PlanuSessionState(BaseModel):
@@ -41,6 +42,10 @@ class PlanuSessionState(BaseModel):
     selected_major_course_ids: list[CourseId] = Field(default_factory=list)
     hard_constraints: HardConstraints = Field(default_factory=HardConstraints)
     soft_preferences: SoftPreferences = Field(default_factory=SoftPreferences)
+    selected_timetable: SelectedTimetable | None = None
+    selected_timetable_status: SelectedTimetableStatus | None = None
+    generation_preferences_confirmed_at: datetime | None = None
+    generation_preferences_confirmed_version: int | None = Field(default=None, ge=1)
     created_at: datetime
     updated_at: datetime
     last_accessed_at: datetime
@@ -72,9 +77,12 @@ class PlanuSessionState(BaseModel):
         "updated_at",
         "last_accessed_at",
         "expires_at",
+        "generation_preferences_confirmed_at",
     )
     @classmethod
-    def validate_timezone_aware_datetime(cls, value: datetime) -> datetime:
+    def validate_timezone_aware_datetime(cls, value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
         if value.tzinfo is None or value.tzinfo.utcoffset(value) is None:
             raise ValueError("datetime fields must include timezone information")
         return value
@@ -88,3 +96,4 @@ class PlanuSessionState(BaseModel):
         if self.expires_at <= self.last_accessed_at:
             raise ValueError("expires_at must be later than last_accessed_at")
         return self
+

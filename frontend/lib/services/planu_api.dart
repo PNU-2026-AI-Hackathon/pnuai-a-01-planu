@@ -88,6 +88,14 @@ class PlanuApi {
     'top_n': 3,
   });
 
+  Future<Map<String, dynamic>> selectTimetableCandidate({
+    required String sessionId,
+    required String candidateId,
+  }) => _post(
+    '/sessions/${Uri.encodeComponent(sessionId)}/timetables/${Uri.encodeComponent(candidateId)}/select',
+    const {},
+  );
+
   Future<PlanuChatResponse> sendChatMessage({
     required String sessionId,
     required String message,

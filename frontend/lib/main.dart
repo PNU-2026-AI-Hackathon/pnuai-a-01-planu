@@ -49,6 +49,7 @@ class _PlaNUAppState extends State<PlaNUApp> {
           catalogWarnings: List<String>.from(
             data['catalogWarnings'] as List<dynamic>? ?? const [],
           ),
+          flow: _flow,
           onSessionExpired: _reset,
         ),
       ),
