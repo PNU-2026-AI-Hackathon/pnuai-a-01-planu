@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 
+import '../models/condition_summary_models.dart';
 import '../models/major_models.dart';
 
 class PlanuApi {
@@ -86,6 +87,21 @@ class PlanuApi {
     'template': template,
     'top_n': 3,
   });
+
+  Future<PlanuChatResponse> sendChatMessage({
+    required String sessionId,
+    required String message,
+    String? requestId,
+  }) async {
+    final body = <String, dynamic>{'message': message};
+    if (requestId != null) {
+      body['request_id'] = requestId;
+    }
+    final response = await _post('/sessions/${Uri.encodeComponent(sessionId)}/chat', {
+      ...body,
+    });
+    return PlanuChatResponse.fromJson(response);
+  }
 
   Future<Map<String, dynamic>> _post(
     String path,
