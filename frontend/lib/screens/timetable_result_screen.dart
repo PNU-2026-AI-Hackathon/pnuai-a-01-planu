@@ -4,6 +4,7 @@ import '../models/app_flow_state.dart';
 import '../models/major_models.dart';
 import '../services/planu_api.dart';
 import '../widgets/flow_step_badge.dart';
+import 'last_screen.dart';
 
 class TimetableResultScreen extends StatefulWidget {
   const TimetableResultScreen({
@@ -71,7 +72,12 @@ class _TimetableResultScreenState extends State<TimetableResultScreen> {
       Navigator.of(context).push(
         MaterialPageRoute<void>(
           settings: const RouteSettings(name: '/timetable-final'),
-          builder: (_) => _FinalTimetableScreen(candidate: candidate),
+          builder: (_) => LastScreen(
+            flow: widget.flow,
+            candidate: candidate,
+            onViewCandidates: () => Navigator.of(context).pop(),
+            onStartOver: widget.onSessionExpired,
+          ),
         ),
       );
     } on ApiError catch (error) {
@@ -861,6 +867,7 @@ class _EmptyResult extends StatelessWidget {
   );
 }
 
+// ignore: unused_element
 class _FinalTimetableScreen extends StatelessWidget {
   const _FinalTimetableScreen({required this.candidate});
 
