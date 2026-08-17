@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Iterable
 from itertools import combinations
+from math import ceil, floor
 from time import perf_counter
 
 from ..models.course import Category, Course
@@ -99,6 +100,8 @@ class TimetableGenerator:
         elective_general_candidates: Iterable[Course] = (),
         course_load_target: CourseLoadTarget | None = None,
         hard_conditions: PreferenceRules | None = None,
+        min_credit: float | None = None,
+        max_credit: float | None = None,
         max_candidates: int | None = None,
     ) -> TimetableGenerationResult:
         """Generate valid candidates and objective load metadata.
@@ -124,7 +127,8 @@ class TimetableGenerator:
         stats: Counter[str] = Counter()
         started_at = perf_counter()
 
-        fixed_result = self.validator.validate(fixed)
+        credit_ceiling = self._credit_ceiling(target, max_credit)
+        fixed_result = self.validator.validate(fixed, max_credit=credit_ceiling)
         if not fixed_result.valid:
             return TimetableGenerationResult(
                 diagnostics=[
@@ -169,7 +173,6 @@ class TimetableGenerator:
 
         hard_filter = TimetableRanker()
         required_sizes = range(len(required_candidates), -1, -1)
-        elective_sizes = self._elective_sizes(target, elective_candidates)
         candidates: list[TimetableGenerationCandidate] = []
         seen_timetables: set[tuple[str, ...]] = set()
         truncated = False
@@ -189,12 +192,19 @@ class TimetableGenerator:
                 validation = self.validator.validate(
                     selected_required,
                     fixed_courses=fixed,
-                    max_credit=target.target_total_credits,
+                    max_credit=credit_ceiling,
                 )
                 if not validation.valid:
                     self._count_validation_issues(stats, validation)
                     continue
 
+                elective_sizes = self._elective_sizes(
+                    target,
+                    elective_candidates,
+                    base_credits=fixed_credits + required_credit,
+                    min_credit=min_credit,
+                    max_credit=credit_ceiling,
+                )
                 for elective_count in elective_sizes:
                     for elective_group in combinations(elective_candidates, elective_count):
                         selected = [*selected_required, *elective_group]
@@ -214,7 +224,8 @@ class TimetableGenerator:
                         validation = self.validator.validate(
                             selected,
                             fixed_courses=fixed,
-                            max_credit=target.target_total_credits,
+                            min_credit=min_credit,
+                            max_credit=credit_ceiling,
                         )
                         if not validation.valid:
                             self._count_validation_issues(stats, validation)
@@ -297,12 +308,43 @@ class TimetableGenerator:
     def _elective_sizes(
         target: CourseLoadTarget,
         elective_candidates: list[Course],
+        *,
+        base_credits: float = 0,
+        min_credit: float | None = None,
+        max_credit: float | None = None,
     ) -> range:
-        if target.additional_elective_count is None:
-            max_count = 0 if target.target_total_credits is None else len(elective_candidates)
-        else:
-            max_count = min(target.additional_elective_count, len(elective_candidates))
+        if not elective_candidates:
+            return range(0, -1, -1)
+
+        credits = [course.credit for course in elective_candidates]
+        requested_count = target.additional_elective_count or 0
+        max_count = requested_count
+
+        if min_credit is not None and base_credits < min_credit:
+            credit_gap = min_credit - base_credits
+            max_count = max(max_count, ceil(credit_gap / min(credits)))
+        elif target.target_total_credits is not None:
+            remaining = max(target.target_total_credits - base_credits, 0)
+            max_count = max(max_count, floor(remaining / min(credits)))
+
+        if max_credit is not None:
+            remaining = max(max_credit - base_credits, 0)
+            max_count = min(max_count, floor(remaining / min(credits)))
+
+        max_count = min(max_count, len(elective_candidates))
         return range(max_count, -1, -1)
+
+    @staticmethod
+    def _credit_ceiling(
+        target: CourseLoadTarget,
+        max_credit: float | None,
+    ) -> float | None:
+        limits = [
+            value
+            for value in (target.target_total_credits, max_credit)
+            if value is not None
+        ]
+        return min(limits) if limits else None
 
     @staticmethod
     def _exceeds_target(total_credits: float, target: CourseLoadTarget) -> bool:

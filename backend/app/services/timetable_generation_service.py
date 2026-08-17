@@ -112,6 +112,8 @@ class TimetableGenerationService:
             elective_general_candidates=data.general_elective_candidates,
             course_load_target=target,
             hard_conditions=effective_hard_conditions,
+            min_credit=data.hard_constraints.min_credit,
+            max_credit=data.hard_constraints.max_credit,
             max_candidates=max_candidates,
         )
         result = result.model_copy(

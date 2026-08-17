@@ -16,6 +16,8 @@ HardPreferenceField = Literal[
     "latest_end_time",
     "required_course_ids",
     "excluded_course_ids",
+    "min_credit",
+    "max_credit",
 ]
 SoftPreferenceField = Literal[
     "preferred_free_days",
@@ -50,6 +52,8 @@ class HardConstraintsUpdate:
     latest_end_time: str | None = None
     required_course_ids: list[str] | None = None
     excluded_course_ids: list[str] | None = None
+    min_credit: float | None = None
+    max_credit: float | None = None
     clear_fields: tuple[HardPreferenceField, ...] = field(default_factory=tuple)
 
 

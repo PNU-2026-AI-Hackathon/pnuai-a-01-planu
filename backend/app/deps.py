@@ -192,6 +192,10 @@ def get_agent_runtime(request: Request = None):
     )
 
 
+def get_condition_summary_service(request: Request = None):
+    return get_container(request).condition_summary_service
+
+
 
 
 

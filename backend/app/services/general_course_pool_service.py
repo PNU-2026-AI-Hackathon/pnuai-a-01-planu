@@ -287,13 +287,7 @@ class GeneralCoursePreparationService:
         session_id = session_id.strip()
         if not session_id:
             raise AppError("SESSION_ID_REQUIRED", "session_id는 비어 있을 수 없습니다.", status_code=400)
-        if elective_area is None:
-            raise AppError(
-                "ELECTIVE_AREA_REQUIRED",
-                "교양선택 후보 준비 시 교양 영역을 선택해주세요.",
-                status_code=400,
-            )
-        if not 1 <= elective_area <= 9:
+        if elective_area is not None and not 1 <= elective_area <= 9:
             raise AppError(
                 "INVALID_ELECTIVE_AREA",
                 "교양 영역은 1~9 사이의 정수여야 합니다.",
@@ -342,10 +336,11 @@ class GeneralCoursePreparationService:
                 elective_catalog,
                 elective_area=elective_area,
             )
-            uploaded_elective_courses = _filter_electives_by_area(
-                uploaded_elective_courses,
-                elective_area=elective_area,
-            )
+            if elective_area is not None:
+                uploaded_elective_courses = _filter_electives_by_area(
+                    uploaded_elective_courses,
+                    elective_area=elective_area,
+                )
             if not uploaded_elective_courses:
                 raise AppError(
                     "EMPTY_ELECTIVE_CATALOG",
@@ -365,7 +360,7 @@ class GeneralCoursePreparationService:
                 "서버 기본 교양선택 데이터가 준비되어 있지 않습니다.",
                 status_code=500,
             )
-        if not has_upload:
+        if not has_upload and elective_area is not None:
             fallback_elective_courses = _filter_electives_by_area(
                 fallback_elective_courses,
                 elective_area=elective_area,

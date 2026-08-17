@@ -184,7 +184,7 @@ class _StepPill extends StatelessWidget {
       borderRadius: BorderRadius.circular(999),
     ),
     child: const Text(
-      '교양 파일 준비 · 6 / 9',
+      '교양 파일 준비',
       style: TextStyle(fontWeight: FontWeight.w500),
     ),
   );

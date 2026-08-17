@@ -4,13 +4,11 @@ class FlowStepBadge extends StatelessWidget {
   const FlowStepBadge({
     super.key,
     required this.label,
-    required this.current,
-    this.total = 9,
+    required int current,
+    int total = 9,
   });
 
   final String label;
-  final int current;
-  final int total;
 
   @override
   Widget build(BuildContext context) => Align(
@@ -22,7 +20,7 @@ class FlowStepBadge extends StatelessWidget {
         borderRadius: BorderRadius.circular(999),
       ),
       child: Text(
-        '$label · $current / $total',
+        label,
         style: Theme.of(context).textTheme.labelMedium?.copyWith(
           color: const Color(0xFF111111),
           fontWeight: FontWeight.w600,

@@ -81,6 +81,8 @@ class ConditionSummaryService:
                 hard.latest_end_time,
                 suffix=" 이전",
             ),
+            self._credit_item("min_credit", "최소 학점", hard.min_credit),
+            self._credit_item("max_credit", "최대 학점", hard.max_credit),
         ]
 
     def _soft_preferences(
@@ -281,6 +283,23 @@ class ConditionSummaryService:
             label=label,
             status=ConditionItemStatus.SET,
             display_value=f"{value}{suffix}",
+            raw_value=value,
+        )
+
+    @staticmethod
+    def _credit_item(key: str, label: str, value: float | None) -> ConditionSummaryItemDto:
+        if value is None:
+            return ConditionSummaryItemDto(
+                key=key,
+                label=label,
+                status=ConditionItemStatus.UNSET,
+                display_value=None,
+            )
+        return ConditionSummaryItemDto(
+            key=key,
+            label=label,
+            status=ConditionItemStatus.SET,
+            display_value=f"{value:g}학점",
             raw_value=value,
         )
 

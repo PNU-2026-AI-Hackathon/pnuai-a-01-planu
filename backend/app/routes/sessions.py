@@ -7,7 +7,13 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ..agents import SessionStateAgent, SessionStateAgentResult
 from ..core.errors import AppError
-from ..deps import get_agent_runtime, get_session_service, get_session_state_agent, get_session_store
+from ..deps import (
+    get_agent_runtime,
+    get_condition_summary_service,
+    get_session_service,
+    get_session_state_agent,
+    get_session_store,
+)
 from ..runtime import AgentRuntime, CandidateSelectionRequest
 from ..schemas.agent_schema import (
     PlanuChatRequest,
@@ -19,6 +25,8 @@ from ..schemas.agent_schema import (
 from ..schemas.session_schema import MajorCandidatesResponse
 from ..services.exceptions import SessionNotAvailableError
 from ..services.session_service import SessionService
+from ..services.condition_summary_service import ConditionSummaryService
+from ..schemas.condition_summary_schema import ConditionSummaryDto
 from ..services.session_store import SessionNotFoundError, SessionStore
 
 
@@ -91,6 +99,23 @@ def post_chat_message(
         message=request.message,
         request_id=request.request_id,
     )
+
+
+@router.post("/{session_id}/conditions/confirm", response_model=ConditionSummaryDto)
+def confirm_timetable_conditions(
+    session_id: str,
+    service: SessionService = Depends(get_session_service),
+    summary_service: ConditionSummaryService = Depends(get_condition_summary_service),
+) -> ConditionSummaryDto:
+    try:
+        state = service.confirm_generation_preferences(session_id)
+    except SessionNotAvailableError as exc:
+        raise AppError(
+            "SESSION_NOT_AVAILABLE",
+            "세션을 찾을 수 없거나 만료되었습니다.",
+            status_code=404,
+        ) from exc
+    return summary_service.summarize(state)
 
 
 @router.post("/{session_id}/agent/messages", response_model=AgentMessageResponse)

@@ -50,6 +50,8 @@ class TimetableValidationService:
         required_free_days: Iterable[object] = (),
         earliest_start_time: str | None = None,
         latest_end_time: str | None = None,
+        min_credit: float | None = None,
+        max_credit: float | None = None,
         department: str | None = None,
     ) -> TimetableValidationResult:
         values = sorted(
@@ -121,15 +123,20 @@ class TimetableValidationService:
                     conflicting_section_ids=[first.source_key],
                 ))
 
-        validator_result = self._validator.validate(courses_by_source_key.values())
+        validator_result = self._validator.validate(courses_by_source_key.values(), min_credit=min_credit, max_credit=max_credit)
         for issue in validator_result.issues:
-            if issue.code != "TRAVEL_NOT_POSSIBLE":
-                continue
-            violations.append(TimetableViolation(
-                code=TimetableViolationCode.CAMPUS_MOVEMENT_VIOLATION,
-                message=issue.message,
-                conflicting_section_ids=list(issue.course_ids),
-            ))
+            code = {
+                "TRAVEL_NOT_POSSIBLE": TimetableViolationCode.CAMPUS_MOVEMENT_VIOLATION,
+                "CREDIT_BELOW_MINIMUM": TimetableViolationCode.CREDIT_BELOW_MINIMUM,
+                "CREDIT_ABOVE_MAXIMUM": TimetableViolationCode.CREDIT_ABOVE_MAXIMUM,
+            }.get(issue.code)
+            if code is not None:
+                violations.append(TimetableViolation(
+                    code=code,
+                    message=issue.message,
+                    conflicting_section_ids=list(issue.course_ids),
+                    constraint={"CREDIT_BELOW_MINIMUM": "min_credit", "CREDIT_ABOVE_MAXIMUM": "max_credit"}.get(issue.code),
+                ))
 
         return TimetableValidationResult(
             valid=not violations,

@@ -45,8 +45,6 @@ class _TimetableLoadingScreenState extends State<TimetableLoadingScreen> {
       widget.flow.generatedCandidates = await widget.api.generate(
         sessionId: id,
         prompt: widget.flow.preferencePrompt,
-        targetCredits: widget.flow.targetTotalCredits,
-        electiveCount: widget.flow.additionalElectiveCount,
       );
       if (!mounted) return;
       setState(() => _step = '추천 순위 계산 중');

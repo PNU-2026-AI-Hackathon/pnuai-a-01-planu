@@ -317,7 +317,7 @@ class _StepPill extends StatelessWidget {
       child: const Padding(
         padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         child: Text(
-          '전공 파일 · 3 / 9',
+          '전공 파일',
           style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
         ),
       ),

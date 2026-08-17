@@ -209,7 +209,7 @@ class _StepBadge extends StatelessWidget {
         borderRadius: BorderRadius.circular(999),
       ),
       child: const Text(
-        '전공 요청 · 4 / 9',
+        '전공 요청',
         style: TextStyle(fontWeight: FontWeight.w600),
       ),
     ),

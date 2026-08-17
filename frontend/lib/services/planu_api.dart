@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -12,6 +13,7 @@ class PlanuApi {
 
   final String baseUrl;
   final http.Client _client;
+  static const _requestTimeout = Duration(seconds: 60);
 
   Future<String> uploadMajor({
     required String department,
@@ -70,14 +72,21 @@ class PlanuApi {
   Future<Map<String, dynamic>> generate({
     required String sessionId,
     required String prompt,
-    required double targetCredits,
-    required int electiveCount,
-  }) => _post('/recommend/generate', {
-    'session_id': sessionId,
-    'preference_prompt': prompt,
-    'target_total_credits': targetCredits,
-    'additional_elective_count': electiveCount,
-  });
+    double? targetCredits,
+    int? electiveCount,
+  }) {
+    final body = <String, dynamic>{
+      'session_id': sessionId,
+      'preference_prompt': prompt,
+    };
+    if (targetCredits != null) {
+      body['target_total_credits'] = targetCredits;
+    }
+    if (electiveCount != null) {
+      body['additional_elective_count'] = electiveCount;
+    }
+    return _post('/recommend/generate', body);
+  }
 
   Future<Map<String, dynamic>> rank({
     required String sessionId,
@@ -111,6 +120,16 @@ class PlanuApi {
     return PlanuChatResponse.fromJson(response);
   }
 
+  Future<ConditionSummary> confirmTimetableConditions({
+    required String sessionId,
+  }) async {
+    final response = await _post(
+      '/sessions/${Uri.encodeComponent(sessionId)}/conditions/confirm',
+      const {},
+    );
+    return ConditionSummary.fromJson(response);
+  }
+
   Future<Map<String, dynamic>> _post(
     String path,
     Map<String, dynamic> body,
@@ -120,8 +139,13 @@ class PlanuApi {
         Uri.parse('$baseUrl$path'),
         headers: const {'content-type': 'application/json'},
         body: jsonEncode(body),
-      );
+      ).timeout(_requestTimeout);
       return _decode(response);
+    } on TimeoutException {
+      throw const ApiError(
+        'REQUEST_TIMEOUT',
+        '시간표 생성 요청 시간이 초과되었습니다. 조건을 확인한 뒤 다시 시도해 주세요.',
+      );
     } on ApiError {
       rethrow;
     } on Object {

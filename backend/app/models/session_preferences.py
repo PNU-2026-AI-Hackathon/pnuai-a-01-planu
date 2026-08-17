@@ -46,6 +46,8 @@ class HardConstraints(BaseModel):
     required_free_days: list[Day] = Field(default_factory=list)
     earliest_start_time: str | None = None
     latest_end_time: str | None = None
+    min_credit: float | None = Field(default=None, ge=0)
+    max_credit: float | None = Field(default=None, ge=0)
     required_course_ids: list[CourseId] = Field(default_factory=list)
     excluded_course_ids: list[CourseId] = Field(default_factory=list)
 
@@ -67,6 +69,8 @@ class HardConstraints(BaseModel):
 
     @model_validator(mode="after")
     def validate_constraints(self) -> "HardConstraints":
+        if self.min_credit is not None and self.max_credit is not None and self.min_credit > self.max_credit:
+            raise ValueError("min_credit must not exceed max_credit")
         if (
             self.earliest_start_time is not None
             and self.latest_end_time is not None

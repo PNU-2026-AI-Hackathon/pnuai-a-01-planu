@@ -60,5 +60,7 @@ class TimetableCandidateValidationService:
             required_free_days=request.required_free_days,
             earliest_start_time=request.earliest_start_time,
             latest_end_time=request.latest_end_time,
+            min_credit=request.min_credit,
+            max_credit=request.max_credit,
             department=request.department,
         )

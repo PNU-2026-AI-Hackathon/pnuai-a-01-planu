@@ -133,6 +133,8 @@ class TimetablePreparationService:
                 required_free_days=list(summary.hard_constraints.required_free_days),
                 earliest_start_time=summary.hard_constraints.earliest_start_time,
                 latest_end_time=summary.hard_constraints.latest_end_time,
+                min_credit=summary.hard_constraints.min_credit,
+                max_credit=summary.hard_constraints.max_credit,
                 department=summary.department,
                 target_additional_course_count=options.target_additional_course_count,
                 target_additional_credits=options.target_additional_credits,

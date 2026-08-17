@@ -113,6 +113,8 @@ class TimetableRevisionPreparationService:
                 required_free_days=list(hard.required_free_days),
                 earliest_start_time=hard.earliest_start_time,
                 latest_end_time=hard.latest_end_time,
+                min_credit=hard.min_credit,
+                max_credit=hard.max_credit,
                 department=state.department,
                 target_additional_course_count=request.target_additional_course_count,
                 max_results=request.max_results,

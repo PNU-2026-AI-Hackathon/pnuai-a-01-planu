@@ -12,7 +12,7 @@ from backend.app.agents import AgentDomain, RunnableAgent
 from backend.app.container import build_container
 from backend.app.deps import get_agent_runtime
 from backend.app.main import app
-from backend.app.runtime import AgentRuntime
+from backend.app.runtime import AgentRuntime, _credit_bounds_from_message
 from backend.app.models import Category, ClassTime, Course, Day
 from backend.app.models.course_discovery import CatalogKind
 from backend.app.services.session_store import SessionStore
@@ -49,6 +49,16 @@ def _course(course_id: str, name: str, *, day: Day = Day.MON) -> Course:
             )
         ],
     )
+
+
+def test_explicit_credit_bounds_are_extracted_from_compound_korean_condition() -> None:
+    assert _credit_bounds_from_message(
+        "금요일은 꼭 공강이고 최소 학점은 12 최대학점은 15를 들어야 해요"
+    ) == (12.0, 15.0)
+    assert _credit_bounds_from_message("15학점 이상 18학점 이하") == (15.0, 18.0)
+    assert _credit_bounds_from_message("총 18학점으로 시간표를 만들어줘") == (18.0, 18.0)
+    assert _credit_bounds_from_message("18학점에 맞춰 구성해줘") == (18.0, 18.0)
+    assert _credit_bounds_from_message("3학점 과목을 추천해줘") == (None, None)
 
 
 def test_composition_root_shares_repositories_and_registers_all_agent_tools() -> None:

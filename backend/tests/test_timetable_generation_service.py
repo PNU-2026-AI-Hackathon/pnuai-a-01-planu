@@ -13,6 +13,7 @@ from backend.app.models import (
     Day,
     GeneralCoursePoolResult,
     GeneralCoursePools,
+    HardConstraints,
     PreferenceRules,
     SoftPreferences,
 )
@@ -356,6 +357,40 @@ def test_generation_service_uses_standard_session_not_found_error() -> None:
 
     assert exc_info.value.code == "SESSION_NOT_FOUND"
     assert exc_info.value.status_code == 404
+
+
+def test_generation_service_applies_session_credit_range_without_ui_load_target() -> None:
+    store = SessionStore()
+    session = store.create("컴퓨터공학과")
+    store.update(
+        session.session_id,
+        fixed_courses=[_major(credit=9)],
+        confirmed_major_credits=9,
+        session_stage=SessionStage.GENERAL_READY,
+        hard_constraints=HardConstraints(min_credit=18, max_credit=18),
+    )
+    store.update_general_course_pool(
+        session.session_id,
+        GeneralCoursePoolResult(
+            pools=GeneralCoursePools(
+                elective_courses=[
+                    _elective("ELE-001", day=Day.TUE, start="10:00"),
+                    _elective("ELE-002", day=Day.WED, start="11:00"),
+                    _elective("ELE-003", day=Day.THU, start="12:00"),
+                ],
+            )
+        ),
+    )
+
+    result = TimetableGenerationService(store=store).generate_for_session(
+        session_id=session.session_id,
+    )
+
+    assert result.candidates
+    assert {
+        candidate.load_satisfaction.final_total_credits
+        for candidate in result.candidates
+    } == {18}
 
 
 def test_generation_service_returns_session_soft_conditions_and_saves_ranking_preferences() -> None:

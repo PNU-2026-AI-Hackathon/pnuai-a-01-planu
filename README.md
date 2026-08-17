@@ -493,8 +493,8 @@ $ npm run dev
 
 5. `POST /general/prepare`
    - Content-Type: `multipart/form-data`
-   - 필수 필드: `session_id`, `elective_area`
-   - 선택 필드: `elective_catalog` (`.xlsx`). 파일이 없으면 서버 fallback 교양선택 데이터를 사용한다.
+   - 필수 필드: `session_id`
+   - 선택 필드: `elective_area`, `elective_catalog` (`.xlsx`). `elective_area`가 없으면 전체 교양 영역을 사용하고, 파일이 없으면 서버 fallback 교양선택 데이터를 사용한다.
    - 성공 시 세션 단계는 `general_ready`이다.
 
 6. `POST /recommend/generate`

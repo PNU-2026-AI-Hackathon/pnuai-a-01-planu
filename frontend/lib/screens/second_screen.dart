@@ -37,6 +37,7 @@ class SecondScreen extends StatefulWidget {
 
 class _SecondScreenState extends State<SecondScreen> {
   final _messageController = TextEditingController();
+  final _conditionFocusNode = FocusNode();
   final Map<String, String> _selectedCourseIdsByName = {};
 
   ConditionSummary? _latestConditionSummary;
@@ -48,10 +49,12 @@ class _SecondScreenState extends State<SecondScreen> {
   String? _courseLoadError;
   String? _selectionError;
   String? _actionHint;
+  String? _conditionError;
   bool _isLoadingCourses = true;
   bool _isSendingCondition = false;
   bool _isPreviewing = false;
   bool _isConfirming = false;
+  bool _isContinuing = false;
 
   late final MajorRepository _majorRepository = widget.majorRepository ??
       MajorRepository(HttpMajorApi(baseUrl: widget.api.baseUrl));
@@ -65,6 +68,7 @@ class _SecondScreenState extends State<SecondScreen> {
   @override
   void dispose() {
     _messageController.dispose();
+    _conditionFocusNode.dispose();
     super.dispose();
   }
 
@@ -91,13 +95,18 @@ class _SecondScreenState extends State<SecondScreen> {
 
   Future<void> _sendCondition() async {
     final message = _messageController.text.trim();
-    if (message.isEmpty || _isSendingCondition) return;
+    if (_isSendingCondition) return;
+    if (message.isEmpty) {
+      setState(() => _conditionError = '시간표 조건을 입력해 주세요.');
+      _conditionFocusNode.requestFocus();
+      return;
+    }
 
     setState(() {
-      _latestConditionText = message;
       _messageController.clear();
       _isSendingCondition = true;
       _actionHint = null;
+      _conditionError = null;
     });
 
     try {
@@ -107,6 +116,7 @@ class _SecondScreenState extends State<SecondScreen> {
       );
       if (!mounted) return;
       setState(() {
+        _latestConditionText = message;
         if (response.conditionSummary != null) {
           _latestConditionSummary = response.conditionSummary;
         }
@@ -189,13 +199,11 @@ class _SecondScreenState extends State<SecondScreen> {
   }
 
   void _openLoadingScreen() {
-    if (!_canGenerate) return;
     widget.flow
       ..department = widget.selectedDepartment
       ..sessionId = widget.sessionId
       ..majorConfirmation = _confirmation
-      ..preferencePrompt = _latestConditionText ?? ''
-      ..selectedTemplate = 'balanced';
+      ..preferencePrompt = _latestConditionText ?? '';
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         settings: const RouteSettings(name: '/timetable-loading'),
@@ -208,15 +216,62 @@ class _SecondScreenState extends State<SecondScreen> {
     );
   }
 
+  Future<void> _continueToTimetable() async {
+    if (!_canContinue || _isContinuing) return;
+    setState(() {
+      _isContinuing = true;
+      _selectionError = null;
+      _actionHint = null;
+    });
+    try {
+      if (_confirmation == null) {
+        await _previewSelection();
+        if (!mounted || _selectionPreview?.isConfirmable != true) return;
+        await _confirmSelection();
+        if (!mounted || _confirmation == null) return;
+      }
+      final summary = await widget.api.confirmTimetableConditions(
+        sessionId: widget.sessionId,
+      );
+      if (!mounted) return;
+      setState(() => _latestConditionSummary = summary);
+      _openLoadingScreen();
+    } on ApiError catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _conditionError = error.message;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error.message)),
+      );
+    } finally {
+      if (mounted) setState(() => _isContinuing = false);
+    }
+  }
+
   bool get _canGenerate =>
       _latestConditionSummary?.generationReadiness.ready == true &&
       _confirmation != null;
+
+  bool get _canContinue =>
+      _selectedCourseIdsByName.isNotEmpty &&
+      _latestConditionSummary != null &&
+      !_isSendingCondition &&
+      !_isPreviewing &&
+      !_isConfirming &&
+      !_isContinuing;
 
   String get _generateStatusMessage {
     if (_canGenerate) {
       return '시간표를 만들 준비가 완료되었습니다.';
     }
-    return '시간표 생성 전, 전공 과목과 시간표 조건 확정이 필요합니다.';
+    if (_selectedCourseIdsByName.isEmpty) {
+      return '시간표 생성 전, 전공 과목을 선택해 주세요.';
+    }
+    if (_latestConditionSummary == null) {
+      return '시간표 조건을 입력하고 적용 결과를 확인해 주세요.';
+    }
+    return '시간표 생성하기 버튼을 누르면 전공 분반과 현재 시간표 조건을 확정합니다.';
   }
 
   Map<String, List<MajorCourse>> get _groupedCourses {
@@ -284,7 +339,20 @@ class _SecondScreenState extends State<SecondScreen> {
                   title: '3. 현재 시간표 조건',
                   child: _latestConditionSummary == null
                       ? const Text('조건을 입력하면 이곳에 최신 조건 요약이 표시됩니다.')
-                      : ConditionSummaryCard(summary: _latestConditionSummary!),
+                      : Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            ConditionSummaryCard(
+                              summary: _latestConditionSummary!,
+                            ),
+                            const SizedBox(height: 14),
+                            OutlinedButton(
+                              key: const Key('addMoreConditionButton'),
+                              onPressed: _focusConditionInput,
+                              child: const Text('조건 더 추가하기'),
+                            ),
+                          ],
+                        ),
                 ),
                 const SizedBox(height: 24),
                 _SectionCard(
@@ -302,7 +370,7 @@ class _SecondScreenState extends State<SecondScreen> {
                       const SizedBox(height: 16),
                       FilledButton(
                         key: const Key('generateButton'),
-                        onPressed: _canGenerate ? _openLoadingScreen : null,
+                        onPressed: _canContinue ? _continueToTimetable : null,
                         style: FilledButton.styleFrom(
                           backgroundColor: const Color(0xFF111111),
                           minimumSize: const Size.fromHeight(52),
@@ -310,18 +378,19 @@ class _SecondScreenState extends State<SecondScreen> {
                             borderRadius: BorderRadius.circular(8),
                           ),
                         ),
-                        child: const Text('이대로 시간표 만들기'),
+                        child: _isContinuing
+                            ? const SizedBox.square(
+                                dimension: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white,
+                                ),
+                              )
+                            : const Text('시간표 생성하기'),
                       ),
                     ],
                   ),
                 ),
-                if (_actionHint != null) ...[
-                  const SizedBox(height: 20),
-                  Text(
-                    _actionHint!,
-                    style: const TextStyle(color: Color(0xFF111111)),
-                  ),
-                ],
               ],
             ),
           ),
@@ -336,6 +405,16 @@ class _SecondScreenState extends State<SecondScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        const Text(
+          '원하는 교양 시간표 조건을 편하게 입력해 주세요.',
+          style: TextStyle(color: Color(0xFF374151), height: 1.5),
+        ),
+        const SizedBox(height: 8),
+        const Text(
+          '예) 금요일은 공강으로 하고 오전 수업은 피하고 싶어요.',
+          style: TextStyle(color: Color(0xFF6B7280)),
+        ),
+        const SizedBox(height: 16),
         if (hasCondition) ...[
           Container(
             padding: const EdgeInsets.all(14),
@@ -351,6 +430,12 @@ class _SecondScreenState extends State<SecondScreen> {
         TextField(
           key: const Key('secondScreenConditionField'),
           controller: _messageController,
+          focusNode: _conditionFocusNode,
+          onChanged: (_) {
+            if (_conditionError != null) {
+              setState(() => _conditionError = null);
+            }
+          },
           minLines: 2,
           maxLines: 5,
           enabled: !_isSendingCondition,
@@ -358,6 +443,7 @@ class _SecondScreenState extends State<SecondScreen> {
             hintText: '예) 금요일 공강, 오전 10시 이전 수업은 없었으면 좋겠어요.',
             filled: true,
             fillColor: const Color(0xFFF8F9FA),
+            errorText: _conditionError,
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(8),
             ),
@@ -382,10 +468,38 @@ class _SecondScreenState extends State<SecondScreen> {
                     color: Colors.white,
                   ),
                 )
-              : Text(hasCondition ? '조건 더 추가하기' : '조건 추가하기'),
+              : const Text('조건 추가'),
         ),
+        if (_isSendingCondition) ...[
+          const SizedBox(height: 12),
+          const Text(
+            'PlaNU가 조건을 확인하고 있어요...',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Color(0xFF6B7280)),
+          ),
+        ],
+        if (_actionHint != null && !_isSendingCondition) ...[
+          const SizedBox(height: 12),
+          Text(
+            _actionHint!,
+            style: const TextStyle(color: Color(0xFF374151)),
+          ),
+        ],
       ],
     );
+  }
+
+  void _focusConditionInput() {
+    _conditionFocusNode.requestFocus();
+    final inputContext = _conditionFocusNode.context;
+    if (inputContext != null) {
+      Scrollable.ensureVisible(
+        inputContext,
+        duration: const Duration(milliseconds: 250),
+        curve: Curves.easeOut,
+        alignment: 0.25,
+      );
+    }
   }
 
   Widget _buildMajorSelectionSection(ThemeData theme) {
@@ -689,10 +803,7 @@ class _CourseGroupCard extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 10),
-            RadioGroup<String?>(
-              groupValue: selectedCourseId,
-              onChanged: onChanged,
-              child: Column(
+            Column(
                 children: courses.map((course) {
                   final title =
                       '${course.division}분반 · ${course.professor.isEmpty ? '담당 교수 미정' : course.professor}';
@@ -703,27 +814,50 @@ class _CourseGroupCard extends StatelessWidget {
 
                   return Column(
                     children: [
-                      RadioListTile<String>(
-                        value: course.id,
-                        title: Text(
-                          title,
-                          style: const TextStyle(fontWeight: FontWeight.w600),
+                      InkWell(
+                        key: Key('majorCourse-${course.id}'),
+                        onTap: () => onChanged(
+                          course.id == selectedCourseId ? null : course.id,
                         ),
-                        subtitle: Text(
-                          '${course.name.isNotEmpty ? course.name : course.id}${timeText.isNotEmpty ? ' · $timeText' : ''}',
-                          style: const TextStyle(color: Color(0xFF6B7280)),
+                        borderRadius: BorderRadius.circular(8),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              _SelectionCircle(
+                                selected: course.id == selectedCourseId,
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      title,
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      '${course.name.isNotEmpty ? course.name : course.id}${timeText.isNotEmpty ? ' · $timeText' : ''}',
+                                      style: const TextStyle(
+                                        color: Color(0xFF6B7280),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
-                        activeColor: const Color(0xFF111111),
-                        // ignore: deprecated_member_use
-                        onChanged: onChanged,
-                        contentPadding: EdgeInsets.zero,
                       ),
                       if (course != courses.last)
                         const Divider(color: Color(0xFFE5E7EB), height: 1),
                     ],
                   );
                 }).toList(),
-              ),
             ),
           ],
         ),
@@ -743,6 +877,34 @@ class _CourseGroupCard extends StatelessWidget {
       _ => day,
     };
   }
+}
+
+class _SelectionCircle extends StatelessWidget {
+  const _SelectionCircle({required this.selected});
+
+  final bool selected;
+
+  @override
+  Widget build(BuildContext context) => AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        width: 22,
+        height: 22,
+        padding: const EdgeInsets.all(4),
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          border: Border.all(
+            color: selected ? const Color(0xFF111111) : const Color(0xFF9CA3AF),
+            width: 2,
+          ),
+        ),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: selected ? const Color(0xFF111111) : Colors.transparent,
+          ),
+        ),
+      );
 }
 
 class _SelectionPreviewCard extends StatelessWidget {

@@ -105,6 +105,21 @@ def test_preference_models_deduplicate_and_reject_invalid_values() -> None:
             preferred_earliest_start_time="18:00",
             preferred_latest_end_time="10:00",
         )
+    with pytest.raises(ValidationError):
+        HardConstraints(min_credit=-1)
+    with pytest.raises(ValidationError):
+        HardConstraints(max_credit=-1)
+    with pytest.raises(ValidationError, match="min_credit must not exceed max_credit"):
+        HardConstraints(min_credit=18, max_credit=15)
+
+
+def test_credit_constraints_are_optional_and_persisted_in_session_state() -> None:
+    assert HardConstraints().min_credit is None
+    assert HardConstraints().max_credit is None
+    hard = HardConstraints(min_credit=15, max_credit=18)
+    restored = HardConstraints.model_validate(hard.model_dump())
+    assert restored.min_credit == 15
+    assert restored.max_credit == 18
 
 
 def test_hard_free_days_are_mutated_idempotently_and_remove_soft_duplicates() -> None:

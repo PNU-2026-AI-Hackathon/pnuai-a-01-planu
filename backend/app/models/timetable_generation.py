@@ -21,6 +21,8 @@ class GenerationFailureCode(str, Enum):
     LATEST_END_VIOLATION = "LATEST_END_VIOLATION"
     DEPARTMENT_INELIGIBLE = "DEPARTMENT_INELIGIBLE"
     CAMPUS_MOVEMENT_VIOLATION = "CAMPUS_MOVEMENT_VIOLATION"
+    CREDIT_BELOW_MINIMUM = "CREDIT_BELOW_MINIMUM"
+    CREDIT_ABOVE_MAXIMUM = "CREDIT_ABOVE_MAXIMUM"
     INSUFFICIENT_CANDIDATE_COURSES = "INSUFFICIENT_CANDIDATE_COURSES"
     TARGET_COURSE_COUNT_UNREACHABLE = "TARGET_COURSE_COUNT_UNREACHABLE"
     TARGET_CREDITS_UNREACHABLE = "TARGET_CREDITS_UNREACHABLE"
@@ -41,6 +43,8 @@ class TimetableViolationCode(str, Enum):
     LATEST_END_VIOLATION = "LATEST_END_VIOLATION"
     DEPARTMENT_INELIGIBLE = "DEPARTMENT_INELIGIBLE"
     CAMPUS_MOVEMENT_VIOLATION = "CAMPUS_MOVEMENT_VIOLATION"
+    CREDIT_BELOW_MINIMUM = "CREDIT_BELOW_MINIMUM"
+    CREDIT_ABOVE_MAXIMUM = "CREDIT_ABOVE_MAXIMUM"
 
 
 class SearchTerminationReason(str, Enum):
@@ -104,6 +108,8 @@ class TimetableGenerationRequest(_Model):
     required_free_days: list[Day] = Field(default_factory=list)
     earliest_start_time: str | None = None
     latest_end_time: str | None = None
+    min_credit: float | None = Field(default=None, ge=0)
+    max_credit: float | None = Field(default=None, ge=0)
     department: str | None = None
     target_additional_course_count: int | None = Field(default=1, ge=0)
     target_additional_credits: float | None = Field(default=None, ge=0)
@@ -142,6 +148,8 @@ class TimetableGenerationRequest(_Model):
 
     @model_validator(mode="after")
     def validate_request_shape(self) -> "TimetableGenerationRequest":
+        if self.min_credit is not None and self.max_credit is not None and self.min_credit > self.max_credit:
+            raise ValueError("min_credit must not exceed max_credit")
         if (
             self.earliest_start_time is not None
             and self.latest_end_time is not None
@@ -205,6 +213,8 @@ class TimetableValidationRequest(_Model):
     required_free_days: list[Day] = Field(default_factory=list)
     earliest_start_time: str | None = None
     latest_end_time: str | None = None
+    min_credit: float | None = Field(default=None, ge=0)
+    max_credit: float | None = Field(default=None, ge=0)
     department: str | None = None
 
     @field_validator("required_course_ids", "excluded_course_ids")
@@ -235,6 +245,8 @@ class TimetableValidationRequest(_Model):
 
     @model_validator(mode="after")
     def validate_time_window(self) -> "TimetableValidationRequest":
+        if self.min_credit is not None and self.max_credit is not None and self.min_credit > self.max_credit:
+            raise ValueError("min_credit must not exceed max_credit")
         if (
             self.earliest_start_time is not None
             and self.latest_end_time is not None

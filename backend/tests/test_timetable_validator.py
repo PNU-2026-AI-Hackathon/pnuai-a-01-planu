@@ -82,3 +82,23 @@ def test_default_campus_rule_allows_buildings_when_first_digits_are_close() -> N
 
 def test_campus_rule_engine_ignores_first_digit_rule_without_numeric_codes() -> None:
     assert CampusRuleEngine().can_travel("A", "D", 0) is True
+
+
+def test_total_credit_below_minimum_creates_validation_issue() -> None:
+    course = _course("A-001", "수업", start="09:00", end="10:00", classroom="401-101", building_code="401")
+    result = TimetableValidator().validate([course], min_credit=6)
+    assert result.valid is False
+    assert [issue.code for issue in result.issues] == ["CREDIT_BELOW_MINIMUM"]
+
+
+def test_total_credit_above_maximum_creates_validation_issue() -> None:
+    course = _course("A-001", "수업", start="09:00", end="10:00", classroom="401-101", building_code="401")
+    result = TimetableValidator().validate([course], max_credit=2)
+    assert result.valid is False
+    assert [issue.code for issue in result.issues] == ["CREDIT_ABOVE_MAXIMUM"]
+
+
+def test_total_credit_inside_range_has_no_credit_issue() -> None:
+    course = _course("A-001", "수업", start="09:00", end="10:00", classroom="401-101", building_code="401")
+    result = TimetableValidator().validate([course], min_credit=3, max_credit=3)
+    assert result.valid is True

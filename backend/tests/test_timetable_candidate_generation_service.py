@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import pytest
+from pydantic import ValidationError
+
 from backend.app.agent_tools.timetable_generation_tools import TimetableGenerationTools
 from backend.app import deps
 from backend.app.models.course import Category, ClassTime, Course, Day
@@ -758,3 +761,40 @@ def test_invalid_validation_request_is_not_reported_as_missing_course() -> None:
         violation.code != TimetableViolationCode.MISSING_REQUIRED_COURSE
         for violation in validation.violations
     )
+
+
+def test_credit_range_reaches_agent_callable_final_validation() -> None:
+    repo = _credit_repo()
+    tools = TimetableGenerationTools(
+        generation_service=_service(repo),
+        validation_service=TimetableCandidateValidationService(catalog_repository=repo),
+    )
+
+    below = tools.validate_timetable_candidate(
+        TimetableValidationRequest(
+            section_sources=[_source("credits", "C101-001")],
+            min_credit=2,
+        )
+    )
+    above = tools.validate_timetable_candidate(
+        TimetableValidationRequest(
+            section_sources=[_source("credits", "C103-001")],
+            max_credit=2,
+        )
+    )
+
+    assert [item.code for item in below.violations] == [
+        TimetableViolationCode.CREDIT_BELOW_MINIMUM
+    ]
+    assert [item.code for item in above.violations] == [
+        TimetableViolationCode.CREDIT_ABOVE_MAXIMUM
+    ]
+
+
+def test_validation_request_rejects_inverted_credit_range() -> None:
+    with pytest.raises(ValidationError, match="min_credit must not exceed max_credit"):
+        TimetableValidationRequest(
+            section_sources=[_source("credits", "C101-001")],
+            min_credit=4,
+            max_credit=3,
+        )
