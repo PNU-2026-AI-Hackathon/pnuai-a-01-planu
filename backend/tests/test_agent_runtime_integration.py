@@ -15,7 +15,9 @@ from backend.app.main import app
 from backend.app.runtime import AgentRuntime, _credit_bounds_from_message
 from backend.app.models import Category, ClassTime, Course, Day
 from backend.app.models.course_discovery import CatalogKind
+from backend.app.services.general_preference_parser import GeneralPreferenceParser
 from backend.app.services.session_store import SessionStore
+from backend.app.core.errors import AppError
 
 
 class FakeModel:
@@ -201,6 +203,73 @@ def test_public_chat_uses_supervisor_agent_and_not_legacy_full_agent() -> None:
 
         assert response.status_code == 200, response.text
         assert app.state.container.supervisor_agent.last_route is not None
+
+
+def test_public_chat_accumulates_real_korean_timetable_conditions() -> None:
+    container = build_container()
+    runtime = AgentRuntime(
+        session_service=container.session_service,
+        agent=container.supervisor_agent,
+        selection_tools=container.timetable_selection_tools,
+        condition_summary_service=container.condition_summary_service,
+    )
+    app.dependency_overrides[get_agent_runtime] = lambda: runtime
+    client = TestClient(app)
+
+    try:
+        state = container.session_service.create_session()
+        state = container.session_service.set_department(state.session_id, "컴퓨터공학과")
+        session_id = state.session_id
+        messages = [
+            "수요일은 공강으로 해줘",
+            "10시 이전 수업은 피하고 싶어",
+            "오후 5시 30분 전에는 끝내줘",
+            "18학점 이상 듣고 싶어",
+            "연강은 피하고 싶어",
+        ]
+        responses = [
+            client.post(f"/sessions/{session_id}/chat", json={"message": message})
+            for message in messages
+        ]
+    finally:
+        app.dependency_overrides.clear()
+
+    for response in responses:
+        assert response.status_code == 200, response.text
+        assert response.json()["changed"] is True
+        assert "변경할 조건을 찾지 못했습니다" not in response.json()["message"]
+
+    saved = container.session_service.get_session(session_id)
+    assert saved.hard_constraints.required_free_days == [Day.WED]
+    assert saved.soft_preferences.preferred_earliest_start_time == "10:00"
+    assert saved.hard_constraints.latest_end_time == "17:30"
+    assert saved.hard_constraints.min_credit == 18
+    assert saved.soft_preferences.compact_schedule is False
+
+    latest_summary = responses[-1].json()["condition_summary"]
+    hard_items = {item["key"]: item for item in latest_summary["hard_constraints"]}
+    soft_items = {item["key"]: item for item in latest_summary["soft_preferences"]}
+    assert hard_items["required_free_days"]["status"] == "SET"
+    assert hard_items["latest_end_time"]["raw_value"] == "17:30"
+    assert hard_items["min_credit"]["raw_value"] == 18
+    assert soft_items["preferred_earliest_start_time"]["raw_value"] == "10:00"
+    assert soft_items["compact_schedule"]["raw_value"] is False
+
+
+def test_general_preference_parser_reports_missing_llm_configuration(monkeypatch) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    parser = GeneralPreferenceParser()
+
+    try:
+        parser.parse("금요일은 가능하면 쉬고 싶어")
+    except AppError as exc:
+        error = exc
+    else:
+        raise AssertionError("GeneralPreferenceParser must report missing LLM config")
+
+    assert error.code == "PREFERENCE_PARSE_FAILED"
+    assert error.message == "교양 선호 파서 LLM 설정이 없습니다."
+    assert "OPENAI_API_KEY" in (error.hint or "")
 
 
 def test_public_chat_routes_requests_to_expected_domain_agents() -> None:

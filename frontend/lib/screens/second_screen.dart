@@ -42,6 +42,8 @@ class _SecondScreenState extends State<SecondScreen> {
 
   ConditionSummary? _latestConditionSummary;
   String? _latestConditionText;
+  final List<String> _conditionHistory = [];
+  bool _showAllConditionHistory = false;
   List<MajorCourse> _majorCourses = const [];
   MajorPreviewResponse? _selectionPreview;
   MajorConfirmResponse? _confirmation;
@@ -117,6 +119,7 @@ class _SecondScreenState extends State<SecondScreen> {
       if (!mounted) return;
       setState(() {
         _latestConditionText = message;
+        _conditionHistory.insert(0, message);
         if (response.conditionSummary != null) {
           _latestConditionSummary = response.conditionSummary;
         }
@@ -203,7 +206,7 @@ class _SecondScreenState extends State<SecondScreen> {
       ..department = widget.selectedDepartment
       ..sessionId = widget.sessionId
       ..majorConfirmation = _confirmation
-      ..preferencePrompt = _latestConditionText ?? '';
+      ..preferencePrompt = '';
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         settings: const RouteSettings(name: '/timetable-loading'),
@@ -424,6 +427,19 @@ class _SecondScreenState extends State<SecondScreen> {
               border: Border.all(color: const Color(0xFFE5E7EB)),
             ),
             child: Text('현재 입력한 조건: $_latestConditionText'),
+          ),
+          const SizedBox(height: 16),
+        ],
+        if (_conditionHistory.isNotEmpty) ...[
+          _ConditionHistoryPanel(
+            entries: _showAllConditionHistory
+                ? _conditionHistory
+                : _conditionHistory.take(3).toList(),
+            hasMore: _conditionHistory.length > 3,
+            showingAll: _showAllConditionHistory,
+            onToggle: () => setState(
+              () => _showAllConditionHistory = !_showAllConditionHistory,
+            ),
           ),
           const SizedBox(height: 16),
         ],
@@ -660,6 +676,56 @@ class _SecondScreenState extends State<SecondScreen> {
         )
         .toList();
   }
+}
+
+class _ConditionHistoryPanel extends StatelessWidget {
+  const _ConditionHistoryPanel({
+    required this.entries,
+    required this.hasMore,
+    required this.showingAll,
+    required this.onToggle,
+  });
+
+  final List<String> entries;
+  final bool hasMore;
+  final bool showingAll;
+  final VoidCallback onToggle;
+
+  @override
+  Widget build(BuildContext context) => Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          border: Border.all(color: const Color(0xFFE5E7EB)),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              '최근 입력',
+              style: TextStyle(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 8),
+            for (final entry in entries)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Text(
+                  entry,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: Color(0xFF374151)),
+                ),
+              ),
+            if (hasMore)
+              TextButton(
+                onPressed: onToggle,
+                child: Text(showingAll ? '최근 입력만 보기' : '이전 입력 보기'),
+              ),
+          ],
+        ),
+      );
 }
 
 class ConditionSummaryCard extends StatelessWidget {

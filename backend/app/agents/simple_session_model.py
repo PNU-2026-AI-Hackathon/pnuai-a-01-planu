@@ -3,12 +3,25 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
 
 CourseIntent = Literal["required", "excluded", "preferred", "disliked"]
+
+DAY_ALIASES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("MON", ("월요일", "월욜")),
+    ("TUE", ("화요일", "화욜")),
+    ("WED", ("수요일", "수욜")),
+    ("THU", ("목요일", "목욜")),
+    ("FRI", ("금요일", "금욜")),
+    ("SAT", ("토요일", "토욜")),
+    ("SUN", ("일요일", "일욜")),
+)
+HARD_FREE_DAY_MARKERS = ("공강", "비워", "비우", "수업 없", "수업은 없", "없게", "빼줘")
+SOFT_MARKERS = ("가능하면", "선호", "좋겠", "피하고 싶", "싫", "되도록")
 
 
 class SessionStateModel(Protocol):
@@ -115,6 +128,11 @@ def _extract_non_course_preferences(
     soft = _current_soft(current)
     unresolved: list[dict[str, Any]] = []
 
+    _apply_day_preferences(text, hard, soft)
+    _apply_time_preferences(text, hard, soft)
+    _apply_credit_preferences(text, hard)
+    _apply_compact_schedule_preference(text, soft)
+
     if "금요일" in text and any(marker in text for marker in ("반드시", "꼭", "무조건")):
         hard["required_free_days"] = _append_unique(hard.get("required_free_days", []), "FRI")
     elif "금요일" in text and any(marker in text for marker in ("가능하면", "선호", "좋겠")):
@@ -143,7 +161,99 @@ def _extract_non_course_preferences(
             "needed_information": "피하고 싶은 시작 시간을 HH:MM으로 알려주세요.",
             "requires_user_confirmation": True,
         })
+    _apply_compact_schedule_preference(text, soft)
     return _drop_empty(hard), _drop_empty(soft), unresolved
+
+
+def _apply_day_preferences(text: str, hard: dict[str, Any], soft: dict[str, Any]) -> None:
+    for day, aliases in DAY_ALIASES:
+        if not any(alias in text for alias in aliases):
+            continue
+        if not any(marker in text for marker in HARD_FREE_DAY_MARKERS):
+            continue
+        if any(marker in text for marker in SOFT_MARKERS):
+            soft["preferred_free_days"] = _append_unique(soft.get("preferred_free_days", []), day)
+        else:
+            hard["required_free_days"] = _append_unique(hard.get("required_free_days", []), day)
+
+
+def _apply_time_preferences(text: str, hard: dict[str, Any], soft: dict[str, Any]) -> None:
+    start_time = _extract_start_after_time(text)
+    if start_time is not None:
+        if any(marker in text for marker in SOFT_MARKERS):
+            soft["preferred_earliest_start_time"] = start_time
+        else:
+            hard["earliest_start_time"] = start_time
+
+    end_time = _extract_end_before_time(text)
+    if end_time is not None:
+        if any(marker in text for marker in SOFT_MARKERS) and "끝" not in text:
+            soft["preferred_latest_end_time"] = end_time
+        else:
+            hard["latest_end_time"] = end_time
+
+
+def _apply_credit_preferences(text: str, hard: dict[str, Any]) -> None:
+    if "학점" not in text:
+        return
+    for match in re.finditer(r"(?<!\d)(\d{1,2})(?:\s*[-~]\s*(\d{1,2}))?\s*학점", text):
+        lower = float(match.group(1))
+        upper = float(match.group(2)) if match.group(2) is not None else None
+        head = text[max(0, match.start() - 12):match.start()]
+        tail = text[match.end():match.end() + 12]
+        if upper is not None:
+            hard["min_credit"] = lower
+            hard["max_credit"] = upper
+        elif any(marker in tail for marker in ("이상", "넘게", "넘도록")):
+            hard["min_credit"] = lower
+        elif any(marker in tail for marker in ("이하", "미만", "안쪽", "까지")):
+            hard["max_credit"] = lower
+        elif any(marker in head for marker in ("최소", "적어도")):
+            hard["min_credit"] = lower
+        elif any(marker in head for marker in ("최대", "많아도")):
+            hard["max_credit"] = lower
+
+
+def _apply_compact_schedule_preference(text: str, soft: dict[str, Any]) -> None:
+    has_consecutive = "연강" in text or "연속" in text
+    wants_compact = any(marker in text for marker in ("몰아듣기", "몰아서", "공강 없이 붙여"))
+    avoids_consecutive = has_consecutive and any(
+        marker in text for marker in ("피하고", "싫", "없게", "줄여", "적게")
+    )
+    if avoids_consecutive:
+        soft["compact_schedule"] = False
+    elif wants_compact or (has_consecutive and any(marker in text for marker in ("좋", "선호", "괜찮"))):
+        soft["compact_schedule"] = True
+
+
+def _extract_start_after_time(text: str) -> str | None:
+    if not any(marker in text for marker in ("이전 수업", "전 수업", "전에 시작", "이후 시작")):
+        return None
+    return _first_time(text)
+
+
+def _extract_end_before_time(text: str) -> str | None:
+    if not any(marker in text for marker in ("전에는 끝", "전에 끝", "까지 끝", "이전 종료", "전에 마치")):
+        return None
+    value = _first_time(text)
+    if value is None:
+        return None
+    hour, minute = value.split(":", 1)
+    if 1 <= int(hour) <= 7:
+        return f"{int(hour) + 12:02d}:{minute}"
+    return value
+
+
+def _first_time(text: str) -> str | None:
+    colon = re.search(r"(?<!\d)([01]?\d|2[0-3]):([0-5]\d)", text)
+    if colon is not None:
+        return f"{int(colon.group(1)):02d}:{int(colon.group(2)):02d}"
+    korean = re.search(r"(?<!\d)([01]?\d|2[0-3])\s*시(?:\s*([0-5]?\d)\s*분)?", text)
+    if korean is None:
+        return None
+    hour = int(korean.group(1))
+    minute = int(korean.group(2) or "0")
+    return f"{hour:02d}:{minute:02d}"
 
 
 def _extract_course_mentions(text: str) -> list[CourseMention]:
@@ -322,6 +432,8 @@ def _current_hard(current: dict[str, Any]) -> dict[str, Any]:
         "required_free_days": list(hard.get("required_free_days") or []),
         "earliest_start_time": hard.get("earliest_start_time"),
         "latest_end_time": hard.get("latest_end_time"),
+        "min_credit": hard.get("min_credit"),
+        "max_credit": hard.get("max_credit"),
         "required_course_ids": list(hard.get("required_course_ids") or []),
         "excluded_course_ids": list(hard.get("excluded_course_ids") or []),
     }

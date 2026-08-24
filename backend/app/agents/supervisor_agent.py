@@ -212,6 +212,10 @@ def _looks_like_preference_crud(text: str) -> bool:
             "아침",
             "공강",
             "학점",
+            "연강",
+            "연속",
+            "몰아듣기",
+            "몰아서",
         )
     )
 

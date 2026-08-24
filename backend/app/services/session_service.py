@@ -1381,10 +1381,12 @@ class SessionService:
                 patch.excluded_course_ids,
                 field_name="excluded_course_ids",
             )
-        if patch.min_credit is not None:
-            update["min_credit"] = patch.min_credit
-        if patch.max_credit is not None:
-            update["max_credit"] = patch.max_credit
+        min_credit = getattr(patch, "min_credit", None)
+        max_credit = getattr(patch, "max_credit", None)
+        if min_credit is not None:
+            update["min_credit"] = min_credit
+        if max_credit is not None:
+            update["max_credit"] = max_credit
         if "required_course_ids" in update and "excluded_course_ids" not in update:
             required = set(update["required_course_ids"])
             update["excluded_course_ids"] = [
