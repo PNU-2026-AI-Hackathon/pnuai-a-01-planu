@@ -253,7 +253,7 @@ def test_compact_schedule_counts_only_between_classes_on_same_day() -> None:
     assert scored.trade_offs[0].values["gaps_by_day"] == {"MON": [180]}
 
 
-def test_compact_false_and_empty_soft_preferences_do_not_add_implicit_scores() -> None:
+def test_compact_false_adds_score_component_but_empty_preferences_do_not() -> None:
     sections = [
         _section("A-001", "A", day=Day.MON, start="09:00", end="10:00"),
         _section("B-001", "B", day=Day.MON, start="13:00", end="14:00"),
@@ -271,9 +271,10 @@ def test_compact_false_and_empty_soft_preferences_do_not_add_implicit_scores() -
         soft_preferences=SoftPreferences(),
     )
 
-    assert compact_false.total_score == 0
+    assert compact_false.total_score > 0
     assert empty.total_score == 0
-    assert compact_false.score_components == []
+    assert [component.code for component in compact_false.score_components] == [ScoreComponentCode.COMPACT_SCHEDULE]
+    assert compact_false.satisfied_preferences
     assert empty.score_components == []
     assert empty.trade_offs[-1].code is PreferenceEvidenceCode.NO_SOFT_PREFERENCES
 

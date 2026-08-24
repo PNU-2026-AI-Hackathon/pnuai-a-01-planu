@@ -66,6 +66,7 @@ class InMemorySessionRepository:
             self._validate_not_already_expired(state, now)
 
             stored = self._copy(state)
+            stored = stored.model_copy(update={"version": existing.version + 1})
             self._sessions[state.session_id] = stored
             return self._copy(stored)
 

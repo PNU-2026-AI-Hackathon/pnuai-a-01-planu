@@ -41,15 +41,7 @@ KOREAN_HARD_FREE_DAY_MARKERS = (
     "빼줘",
 )
 KOREAN_SOFT_MARKERS = ("가능하면", "선호", "좋겠", "피하고", "싶어", "도록")
-CREDIT_STRICT_STEP = 0.5
-
-
-def _exclusive_credit_upper(value: float) -> float:
-    return max(0.0, value - CREDIT_STRICT_STEP)
-
-
-def _exclusive_credit_lower(value: float) -> float:
-    return value + CREDIT_STRICT_STEP
+DEFAULT_MORNING_END_TIME = "10:00"
 
 
 class SessionStateModel(Protocol):
@@ -183,7 +175,7 @@ def _extract_non_course_preferences(
         hard["latest_end_time"] = "17:00"
     if "6시까지" in text or "18시까지" in text:
         hard["latest_end_time"] = "18:00"
-    if "아침 수업" in text:
+    if "아침 수업" in text and "earliest_start_time" not in hard and "preferred_earliest_start_time" not in soft:
         unresolved.append({
             "source_text": "아침 수업",
             "reason": "구체적인 시간이 없어 조건으로 확정할 수 없습니다.",
@@ -271,7 +263,8 @@ def _apply_credit_preferences(text: str, hard: dict[str, Any]) -> None:
     if over_limit is not None:
         value = float(over_limit.group(1))
         operator = over_limit.group(2)
-        hard["max_credit"] = _exclusive_credit_upper(value) if operator == "이상" else value
+        hard["max_credit"] = value
+        hard["max_credit_inclusive"] = operator != "이상"
         handled_credit_bound = True
     under_limit = re.search(
         r"(?<!\d)(\d{1,2})\s*학점\s*(미만|이하).{0,12}(?:못|안|싫|어려)",
@@ -280,7 +273,8 @@ def _apply_credit_preferences(text: str, hard: dict[str, Any]) -> None:
     if under_limit is not None:
         value = float(under_limit.group(1))
         operator = under_limit.group(2)
-        hard["min_credit"] = _exclusive_credit_lower(value) if operator == "이하" else value
+        hard["min_credit"] = value
+        hard["min_credit_inclusive"] = operator != "이하"
         handled_credit_bound = True
     for field, pattern in ((
         "min_credit", r"(?:\ucd5c\uc18c|(?<!\d)\d{1,2}\s*\ud559\uc810\s*\uc774\uc0c1).*?(?<!\d)(\d{1,2})\s*\ud559\uc810",
@@ -295,6 +289,14 @@ def _apply_credit_preferences(text: str, hard: dict[str, Any]) -> None:
         return
     if "학점" not in text:
         return
+    exact = re.search(r"(?<!\d)(\d{1,2})\s*학점(?:을|를)?\s*(?:듣고\s*싶|으로\s*(?:맞춰|만들))", text)
+    if exact is not None:
+        value = float(exact.group(1))
+        hard["min_credit"] = value
+        hard["min_credit_inclusive"] = True
+        hard["max_credit"] = value
+        hard["max_credit_inclusive"] = True
+        return
     for match in re.finditer(r"(?<!\d)(\d{1,2})(?:\s*[-~]\s*(\d{1,2}))?\s*학점", text):
         lower = float(match.group(1))
         upper = float(match.group(2)) if match.group(2) is not None else None
@@ -304,11 +306,13 @@ def _apply_credit_preferences(text: str, hard: dict[str, Any]) -> None:
             hard["min_credit"] = lower
             hard["max_credit"] = upper
         elif "초과" in tail:
-            hard["min_credit"] = _exclusive_credit_lower(lower)
+            hard["min_credit"] = lower
+            hard["min_credit_inclusive"] = False
         elif any(marker in tail for marker in ("이상", "넘게", "넘도록")):
             hard["min_credit"] = lower
         elif "미만" in tail:
-            hard["max_credit"] = _exclusive_credit_upper(lower)
+            hard["max_credit"] = lower
+            hard["max_credit_inclusive"] = False
         elif any(marker in tail for marker in ("이하", "안쪽", "까지")):
             hard["max_credit"] = lower
         elif any(marker in head for marker in ("최소", "적어도")):
@@ -339,7 +343,7 @@ def _apply_compact_schedule_preference(text: str, soft: dict[str, Any]) -> None:
 
 def _extract_start_after_time(text: str) -> str | None:
     if any(marker in text for marker in ("이전 수업", "전 수업", "아침 수업", "오전 수업")):
-        return _first_time(text) or ("10:00" if "아침" in text or "오전" in text else None)
+        return _first_time(text) or (DEFAULT_MORNING_END_TIME if "아침" in text or "오전" in text else None)
     if not any(marker in text for marker in ("이전 수업", "전 수업", "전에 시작", "이후 시작")):
         return None
     return _first_time(text)
@@ -607,7 +611,9 @@ def _current_hard(current: dict[str, Any]) -> dict[str, Any]:
         "earliest_start_time": hard.get("earliest_start_time"),
         "latest_end_time": hard.get("latest_end_time"),
         "min_credit": hard.get("min_credit"),
+        "min_credit_inclusive": hard.get("min_credit_inclusive"),
         "max_credit": hard.get("max_credit"),
+        "max_credit_inclusive": hard.get("max_credit_inclusive"),
         "required_course_ids": list(hard.get("required_course_ids") or []),
         "excluded_course_ids": list(hard.get("excluded_course_ids") or []),
     }

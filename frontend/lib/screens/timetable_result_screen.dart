@@ -1110,7 +1110,6 @@ bool _isUserConditionComponent(Map<String, dynamic> item) {
     'valid_candidate',
     'attendance_days',
     'consecutive_classes',
-    'compact_schedule',
     'daily_first_start',
   }.contains(key);
 }

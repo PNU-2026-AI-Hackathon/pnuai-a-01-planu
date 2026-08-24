@@ -34,14 +34,18 @@ class TimetableGenerator:
         campus_rule_engine: CampusRuleEngine | None = None,
         max_candidates: int = 200,
         min_credit: float | None = None,
+        min_credit_inclusive: bool = True,
         max_credit: float | None = None,
+        max_credit_inclusive: bool = True,
     ) -> None:
         if max_candidates <= 0:
             raise ValueError("max_candidates must be positive")
         self.validator = validator or TimetableValidator(
             campus_rule_engine,
             min_credit=min_credit,
+            min_credit_inclusive=min_credit_inclusive,
             max_credit=max_credit,
+            max_credit_inclusive=max_credit_inclusive,
         )
         self.max_candidates = max_candidates
 
@@ -55,7 +59,9 @@ class TimetableGenerator:
         elective_general_count: int = 0,
         max_candidates: int | None = None,
         min_credit: float | None = None,
+        min_credit_inclusive: bool = True,
         max_credit: float | None = None,
+        max_credit_inclusive: bool = True,
     ) -> list[TimetableCandidate]:
         if required_general_count < 0 or elective_general_count < 0:
             raise ValueError("general course counts must not be negative")
@@ -83,7 +89,9 @@ class TimetableGenerator:
                     selected,
                     fixed_courses=fixed,
                     min_credit=min_credit,
+                    min_credit_inclusive=min_credit_inclusive,
                     max_credit=max_credit,
+                    max_credit_inclusive=max_credit_inclusive,
                 )
                 if not result.valid:
                     continue
@@ -101,7 +109,9 @@ class TimetableGenerator:
         course_load_target: CourseLoadTarget | None = None,
         hard_conditions: PreferenceRules | None = None,
         min_credit: float | None = None,
+        min_credit_inclusive: bool = True,
         max_credit: float | None = None,
+        max_credit_inclusive: bool = True,
         max_candidates: int | None = None,
     ) -> TimetableGenerationResult:
         """Generate valid candidates and objective load metadata.
@@ -128,7 +138,11 @@ class TimetableGenerator:
         stats: Counter[str] = Counter()
         started_at = perf_counter()
 
-        fixed_result = self.validator.validate(fixed, max_credit=max_credit)
+        fixed_result = self.validator.validate(
+            fixed,
+            max_credit=max_credit,
+            max_credit_inclusive=max_credit_inclusive,
+        )
         if not fixed_result.valid:
             return TimetableGenerationResult(
                 diagnostics=[
@@ -199,6 +213,7 @@ class TimetableGenerator:
                     selected_required,
                     fixed_courses=fixed,
                     max_credit=credit_ceiling,
+                    max_credit_inclusive=max_credit_inclusive,
                 )
                 if not validation.valid:
                     self._count_validation_issues(stats, validation)
@@ -210,6 +225,7 @@ class TimetableGenerator:
                     base_credits=fixed_credits + required_credit,
                     min_credit=min_credit,
                     max_credit=credit_ceiling,
+                    max_credit_inclusive=max_credit_inclusive,
                 )
                 for elective_count in elective_sizes:
                     for elective_group in combinations(elective_candidates, elective_count):
@@ -231,7 +247,9 @@ class TimetableGenerator:
                             selected,
                             fixed_courses=fixed,
                             min_credit=min_credit,
+                            min_credit_inclusive=min_credit_inclusive,
                             max_credit=credit_ceiling,
+                            max_credit_inclusive=max_credit_inclusive,
                         )
                         if not validation.valid:
                             self._count_validation_issues(stats, validation)
@@ -350,7 +368,9 @@ class TimetableGenerator:
         *,
         base_credits: float = 0,
         min_credit: float | None = None,
+        min_credit_inclusive: bool = True,
         max_credit: float | None = None,
+        max_credit_inclusive: bool = True,
     ) -> range:
         if not elective_candidates:
             return range(0, -1, -1)

@@ -171,6 +171,8 @@ class PreferenceRules(BaseModel):
     latest_end_time: str | None = None
     excluded_time_ranges: list[ExcludedTimeRange] = Field(default_factory=list)
     excluded_professors: list[str] = Field(default_factory=list)
+    required_course_ids: list[str] = Field(default_factory=list)
+    excluded_course_ids: list[str] = Field(default_factory=list)
     required_course_names: list[str] = Field(
         default_factory=list,
         description=(
@@ -196,9 +198,12 @@ class PreferenceRules(BaseModel):
 
     # Soft ranking preferences
     preferred_first_class_time: str | None = None
+    preferred_latest_end_time: str | None = None
     preferred_free_time_ranges: list[TimeRange] = Field(default_factory=list)
     preferred_free_days: list[Day] = Field(default_factory=list)
     preferred_elective_areas: list[int] = Field(default_factory=list)
+    preferred_course_ids: list[str] = Field(default_factory=list)
+    disliked_course_ids: list[str] = Field(default_factory=list)
     preferred_course_names: list[str] = Field(
         default_factory=list,
         description=(
@@ -228,7 +233,7 @@ class PreferenceRules(BaseModel):
     compact_schedule: bool = False
 
     @field_validator(
-        "earliest_start_time", "latest_end_time", "preferred_first_class_time"
+        "earliest_start_time", "latest_end_time", "preferred_first_class_time", "preferred_latest_end_time"
     )
     @classmethod
     def validate_time(cls, value: str | None) -> str | None:
@@ -239,8 +244,8 @@ class PreferenceRules(BaseModel):
     @field_validator("preferred_elective_areas")
     @classmethod
     def validate_areas(cls, values: list[int]) -> list[int]:
-        if any(not 1 <= value <= 7 for value in values):
-            raise ValueError("elective areas must be between 1 and 7")
+        if any(not 1 <= value <= 9 for value in values):
+            raise ValueError("elective areas must be between 1 and 9")
         return list(dict.fromkeys(values))
 
     @field_validator(
@@ -248,8 +253,12 @@ class PreferenceRules(BaseModel):
         "required_free_days",
         "preferred_free_days",
         "excluded_professors",
+        "required_course_ids",
+        "excluded_course_ids",
         "required_course_names",
         "excluded_course_names",
+        "preferred_course_ids",
+        "disliked_course_ids",
         "preferred_course_names",
         "avoided_course_names",
     )
@@ -343,6 +352,8 @@ class HardPreferenceConditions(BaseModel):
     latest_end_time: str | None = None
     excluded_time_ranges: list[ExcludedTimeRange] = Field(default_factory=list)
     excluded_professors: list[str] = Field(default_factory=list)
+    required_course_ids: list[str] = Field(default_factory=list)
+    excluded_course_ids: list[str] = Field(default_factory=list)
     required_course_names: list[str] = Field(
         default_factory=list,
         description=(
@@ -370,6 +381,8 @@ class HardPreferenceConditions(BaseModel):
         "excluded_days",
         "required_free_days",
         "excluded_professors",
+        "required_course_ids",
+        "excluded_course_ids",
         "required_course_names",
         "excluded_course_names",
     )
@@ -410,6 +423,7 @@ class SoftPreferenceConditions(BaseModel):
     )
 
     preferred_first_class_time: str | None = None
+    preferred_latest_end_time: str | None = None
     preferred_free_time_ranges: list[TimeRange] = Field(default_factory=list)
     preferred_free_days: list[Day] = Field(
         default_factory=list,
@@ -419,6 +433,8 @@ class SoftPreferenceConditions(BaseModel):
         ),
     )
     preferred_elective_areas: list[int] = Field(default_factory=list)
+    preferred_course_ids: list[str] = Field(default_factory=list)
+    disliked_course_ids: list[str] = Field(default_factory=list)
     preferred_course_names: list[str] = Field(
         default_factory=list,
         description=(
@@ -449,12 +465,14 @@ class SoftPreferenceConditions(BaseModel):
     @field_validator("preferred_elective_areas")
     @classmethod
     def validate_areas(cls, values: list[int]) -> list[int]:
-        if any(not 1 <= value <= 7 for value in values):
-            raise ValueError("elective areas must be between 1 and 7")
+        if any(not 1 <= value <= 9 for value in values):
+            raise ValueError("elective areas must be between 1 and 9")
         return list(dict.fromkeys(values))
 
     @field_validator(
         "preferred_free_days",
+        "preferred_course_ids",
+        "disliked_course_ids",
         "preferred_course_names",
         "avoided_course_names",
     )

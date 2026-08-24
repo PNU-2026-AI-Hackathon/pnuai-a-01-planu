@@ -357,9 +357,13 @@ class _SecondScreenState extends State<SecondScreen> {
       _latestConditionSummary?.generationReadiness.ready == true &&
       _confirmation != null;
 
+  bool get _hasUploadedElectiveCatalog =>
+      widget.flow.electiveCatalogBytes != null || widget.flow.electiveCatalogName != null;
+
   bool get _canContinue =>
       _selectedCourseIdsByName.isNotEmpty &&
       _latestConditionSummary != null &&
+      (!_hasUploadedElectiveCatalog || widget.flow.electiveArea != null) &&
       !_isSendingCondition &&
       !_isPreviewing &&
       !_isConfirming &&
@@ -374,6 +378,9 @@ class _SecondScreenState extends State<SecondScreen> {
     }
     if (_latestConditionSummary == null) {
       return '시간표 조건을 입력하고 적용 결과를 확인해 주세요.';
+    }
+    if (_hasUploadedElectiveCatalog && widget.flow.electiveArea == null) {
+      return '교양 수강편람 파일을 직접 업로드할 때는 교양 영역을 선택해 주세요.';
     }
     return '시간표 생성하기 버튼을 누르면 전공 분반과 현재 시간표 조건을 확정합니다.';
   }
@@ -755,8 +762,8 @@ class _SecondScreenState extends State<SecondScreen> {
     if (!file.name.toLowerCase().endsWith('.xlsx')) {
       return '.xlsx 형식의 교양 수강편람 파일을 선택해 주세요.';
     }
-    if (file.sizeInBytes > 10 * 1024 * 1024) {
-      return '파일 크기는 10MB 이하여야 합니다.';
+    if (file.sizeInBytes > 5 * 1024 * 1024) {
+      return '파일 크기는 5MB 이하여야 합니다.';
     }
     if (file.bytes == null) return '선택한 파일을 읽을 수 없습니다.';
     return null;

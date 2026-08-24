@@ -8,7 +8,7 @@ class FileUploadScreen3 extends StatefulWidget {
     required this.onPickElectiveCatalog,
     required this.onContinue,
     this.initialFile,
-    this.maxFileSizeInBytes = 10 * 1024 * 1024,
+    this.maxFileSizeInBytes = 5 * 1024 * 1024,
   });
 
   final CatalogFilePicker onPickElectiveCatalog;

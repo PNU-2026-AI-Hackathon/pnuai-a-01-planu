@@ -293,7 +293,8 @@ def test_public_chat_credit_conditions_are_saved_only_by_agent_tool() -> None:
         )
         assert over_or_equal_limit.status_code == 200, over_or_equal_limit.text
         saved = container.session_service.get_session(session_id)
-        assert saved.hard_constraints.max_credit == 21.5
+        assert saved.hard_constraints.max_credit == 22
+        assert saved.hard_constraints.max_credit_inclusive is False
 
         more_than_lower_bound = client.post(
             f"/sessions/{session_id}/chat",
@@ -301,7 +302,8 @@ def test_public_chat_credit_conditions_are_saved_only_by_agent_tool() -> None:
         )
         assert more_than_lower_bound.status_code == 200, more_than_lower_bound.text
         saved = container.session_service.get_session(session_id)
-        assert saved.hard_constraints.min_credit == 15.5
+        assert saved.hard_constraints.min_credit == 15
+        assert saved.hard_constraints.min_credit_inclusive is False
 
         clear = client.post(
             f"/sessions/{session_id}/chat",
@@ -310,7 +312,8 @@ def test_public_chat_credit_conditions_are_saved_only_by_agent_tool() -> None:
         assert clear.status_code == 200, clear.text
         saved = container.session_service.get_session(session_id)
         assert saved.hard_constraints.min_credit is None
-        assert saved.hard_constraints.max_credit == 21.5
+        assert saved.hard_constraints.max_credit == 22
+        assert saved.hard_constraints.max_credit_inclusive is False
 
         invalid = client.post(
             f"/sessions/{session_id}/chat",
@@ -444,20 +447,22 @@ def test_simple_session_model_routes_course_names_to_catalog_search() -> None:
     }
 
 
-def test_general_preference_parser_reports_missing_llm_configuration(monkeypatch) -> None:
+def test_general_preference_parser_accepts_injected_llm_without_env(monkeypatch) -> None:
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    parser = GeneralPreferenceParser()
 
-    try:
-        parser.parse("금요일은 가능하면 쉬고 싶어")
-    except AppError as exc:
-        error = exc
-    else:
-        raise AssertionError("GeneralPreferenceParser must report missing LLM config")
+    def fake_llm(_payload: dict[str, object]) -> dict[str, object]:
+        return {
+            "hard_conditions": {},
+            "soft_conditions": {"preferred_free_days": ["FRI"]},
+            "unsupported_conditions": [],
+            "warnings": [],
+        }
 
-    assert error.code == "PREFERENCE_PARSE_FAILED"
-    assert error.message == "교양 선호 파서 LLM 설정이 없습니다."
-    assert "OPENAI_API_KEY" in (error.hint or "")
+    parser = GeneralPreferenceParser(llm=fake_llm)
+    result = parser.parse("금요일은 가능하면 쉬고 싶어")
+
+    assert result.soft_conditions.preferred_free_days == [Day.FRI]
+    assert result.unsupported_conditions == []
 
 
 def test_public_chat_routes_requests_to_expected_domain_agents() -> None:

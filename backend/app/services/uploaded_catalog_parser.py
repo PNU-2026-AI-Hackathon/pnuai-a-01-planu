@@ -45,12 +45,12 @@ def parse_major_catalog(path: str | Path) -> list[Course]:
 
 def parse_elective_catalog(path: str | Path, *, area: int | None = None) -> list[Course]:
     source = validate_uploaded_catalog(path)
-    # An uploaded combined elective file may not carry a 1-7 area field. The
+    # An uploaded combined elective file may not carry a 1-9 area field. The
     # current Course contract requires it, so callers can provide the known
     if area is None:
-        raise UploadedCatalogError("교양 영역을 선택해주세요.")
-    if area < 1 or area > 7:
-        raise UploadedCatalogError("교양 영역은 1~7 사이의 정수여야 합니다.")
+        raise UploadedCatalogError("교양 수강편람 파일을 직접 업로드할 때는 교양 영역을 선택해 주세요.")
+    if area < 1 or area > 9:
+        raise UploadedCatalogError("교양 영역은 1~9 사이의 정수여야 합니다.")
     selected_area = area
     
     try:

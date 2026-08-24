@@ -47,7 +47,9 @@ class HardConstraints(BaseModel):
     earliest_start_time: str | None = None
     latest_end_time: str | None = None
     min_credit: float | None = Field(default=None, ge=0)
+    min_credit_inclusive: bool = True
     max_credit: float | None = Field(default=None, ge=0)
+    max_credit_inclusive: bool = True
     required_course_ids: list[CourseId] = Field(default_factory=list)
     excluded_course_ids: list[CourseId] = Field(default_factory=list)
     excluded_elective_areas: list[int] = Field(default_factory=list)
@@ -72,14 +74,25 @@ class HardConstraints(BaseModel):
     @field_validator("excluded_elective_areas")
     @classmethod
     def validate_excluded_elective_areas(cls, values: list[int]) -> list[int]:
-        if any(not 1 <= value <= 7 for value in values):
-            raise ValueError("elective areas must be between 1 and 7")
+        if any(not 1 <= value <= 9 for value in values):
+            raise ValueError("elective areas must be between 1 and 9")
         return _deduplicate(values)
 
     @model_validator(mode="after")
     def validate_constraints(self) -> "HardConstraints":
         if self.min_credit is not None and self.max_credit is not None and self.min_credit > self.max_credit:
             raise ValueError("min_credit must not exceed max_credit")
+        if self.min_credit is None and not self.min_credit_inclusive:
+            object.__setattr__(self, "min_credit_inclusive", True)
+        if self.max_credit is None and not self.max_credit_inclusive:
+            object.__setattr__(self, "max_credit_inclusive", True)
+        if (
+            self.min_credit is not None
+            and self.max_credit is not None
+            and self.min_credit == self.max_credit
+            and (not self.min_credit_inclusive or not self.max_credit_inclusive)
+        ):
+            raise ValueError("equal min_credit and max_credit must both be inclusive")
         if (
             self.earliest_start_time is not None
             and self.latest_end_time is not None

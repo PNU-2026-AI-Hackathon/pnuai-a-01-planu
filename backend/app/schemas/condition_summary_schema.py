@@ -31,6 +31,7 @@ class ConditionSummaryItemDto(_Model):
     display_value: str | None = None
     course_refs: list[ConditionCourseRefDto] = Field(default_factory=list)
     raw_value: object | None = None
+    metadata: dict[str, object] = Field(default_factory=dict)
 
 
 class MissingGenerationRequirementDto(_Model):

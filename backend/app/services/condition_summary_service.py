@@ -81,8 +81,20 @@ class ConditionSummaryService:
                 hard.latest_end_time,
                 suffix=" 이전",
             ),
-            self._credit_item("min_credit", "최소 학점", hard.min_credit),
-            self._credit_item("max_credit", "최대 학점", hard.max_credit),
+            self._credit_item(
+                "min_credit",
+                "최소 학점",
+                hard.min_credit,
+                inclusive=hard.min_credit_inclusive,
+                lower_bound=True,
+            ),
+            self._credit_item(
+                "max_credit",
+                "최대 학점",
+                hard.max_credit,
+                inclusive=hard.max_credit_inclusive,
+                lower_bound=False,
+            ),
             self._areas_item(
                 "excluded_elective_areas",
                 "제외 교양 영역",
@@ -292,7 +304,14 @@ class ConditionSummaryService:
         )
 
     @staticmethod
-    def _credit_item(key: str, label: str, value: float | None) -> ConditionSummaryItemDto:
+    def _credit_item(
+        key: str,
+        label: str,
+        value: float | None,
+        *,
+        inclusive: bool = True,
+        lower_bound: bool = True,
+    ) -> ConditionSummaryItemDto:
         if value is None:
             return ConditionSummaryItemDto(
                 key=key,
@@ -304,8 +323,9 @@ class ConditionSummaryService:
             key=key,
             label=label,
             status=ConditionItemStatus.SET,
-            display_value=f"{value:g}학점",
+            display_value=f"{value:g}학점 {'이상' if lower_bound and inclusive else '초과' if lower_bound else '이하' if inclusive else '미만'}",
             raw_value=value,
+            metadata={"inclusive": inclusive},
         )
 
     @staticmethod

@@ -99,6 +99,7 @@ class TimetableGenerationRequest(_Model):
     """
 
     session_id: str | None = Field(default=None, min_length=1)
+    session_version: int | None = Field(default=None, ge=1)
     fixed_section_sources: list[SectionSource] = Field(default_factory=list)
     candidate_course_ids: list[str] = Field(default_factory=list)
     candidate_section_sources_by_course: dict[str, list[SectionSource]] = Field(
@@ -111,7 +112,9 @@ class TimetableGenerationRequest(_Model):
     earliest_start_time: str | None = None
     latest_end_time: str | None = None
     min_credit: float | None = Field(default=None, ge=0)
+    min_credit_inclusive: bool = True
     max_credit: float | None = Field(default=None, ge=0)
+    max_credit_inclusive: bool = True
     department: str | None = None
     target_additional_course_count: int | None = Field(default=1, ge=0)
     target_additional_credits: float | None = Field(default=None, ge=0)
@@ -132,8 +135,8 @@ class TimetableGenerationRequest(_Model):
     @field_validator("excluded_elective_areas")
     @classmethod
     def validate_excluded_elective_areas(cls, values: list[int]) -> list[int]:
-        if any(not 1 <= value <= 7 for value in values):
-            raise ValueError("elective areas must be between 1 and 7")
+        if any(not 1 <= value <= 9 for value in values):
+            raise ValueError("elective areas must be between 1 and 9")
         return list(dict.fromkeys(values))
 
     @field_validator("fixed_section_sources")
@@ -224,7 +227,9 @@ class TimetableValidationRequest(_Model):
     earliest_start_time: str | None = None
     latest_end_time: str | None = None
     min_credit: float | None = Field(default=None, ge=0)
+    min_credit_inclusive: bool = True
     max_credit: float | None = Field(default=None, ge=0)
+    max_credit_inclusive: bool = True
     department: str | None = None
 
     @field_validator("required_course_ids", "excluded_course_ids")
@@ -237,8 +242,8 @@ class TimetableValidationRequest(_Model):
     @field_validator("excluded_elective_areas")
     @classmethod
     def validate_validation_excluded_elective_areas(cls, values: list[int]) -> list[int]:
-        if any(not 1 <= value <= 7 for value in values):
-            raise ValueError("elective areas must be between 1 and 7")
+        if any(not 1 <= value <= 9 for value in values):
+            raise ValueError("elective areas must be between 1 and 9")
         return list(dict.fromkeys(values))
 
     @field_validator("section_sources")
@@ -306,6 +311,7 @@ class GeneratedTimetableCandidate(_Model):
     section_sources: list[SectionSource] = Field(default_factory=list)
     fixed_section_ids: list[str]
     session_id: str | None = Field(default=None, min_length=1)
+    session_version: int | None = Field(default=None, ge=1)
     fixed_section_sources: list[SectionSource] = Field(default_factory=list)
     added_section_ids: list[str]
     added_section_sources: list[SectionSource] = Field(default_factory=list)

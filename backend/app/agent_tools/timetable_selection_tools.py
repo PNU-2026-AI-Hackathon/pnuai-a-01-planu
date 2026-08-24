@@ -55,6 +55,14 @@ class TimetableSelectionTools:
                 request.session_id,
                 request.candidate_id,
             )
+            if candidate.session_version is not None and candidate.session_version != before.version:
+                return error_result(
+                    message="이전 조건으로 생성된 시간표 후보는 선택할 수 없습니다. 다시 생성해 주세요.",
+                    code=SessionToolErrorCode.INVALID_VALUE,
+                    session_id=request.session_id,
+                    field="candidate_id",
+                    value=request.candidate_id,
+                )
             after = self._session_service.select_timetable_candidate(
                 request.session_id,
                 candidate,

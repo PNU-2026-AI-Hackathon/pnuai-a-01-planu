@@ -18,7 +18,9 @@ HardPreferenceField = Literal[
     "excluded_course_ids",
     "excluded_elective_areas",
     "min_credit",
+    "min_credit_inclusive",
     "max_credit",
+    "max_credit_inclusive",
 ]
 SoftPreferenceField = Literal[
     "preferred_free_days",
@@ -55,7 +57,9 @@ class HardConstraintsUpdate:
     excluded_course_ids: list[str] | None = None
     excluded_elective_areas: list[int] | None = None
     min_credit: float | None = None
+    min_credit_inclusive: bool | None = None
     max_credit: float | None = None
+    max_credit_inclusive: bool | None = None
     clear_fields: tuple[HardPreferenceField, ...] = field(default_factory=tuple)
 
 

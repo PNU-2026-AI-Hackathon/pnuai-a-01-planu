@@ -52,7 +52,9 @@ class TimetableValidationService:
         earliest_start_time: str | None = None,
         latest_end_time: str | None = None,
         min_credit: float | None = None,
+        min_credit_inclusive: bool = True,
         max_credit: float | None = None,
+        max_credit_inclusive: bool = True,
         department: str | None = None,
     ) -> TimetableValidationResult:
         values = sorted(
@@ -136,7 +138,13 @@ class TimetableValidationService:
                     conflicting_section_ids=[first.source_key],
                 ))
 
-        validator_result = self._validator.validate(courses_by_source_key.values(), min_credit=min_credit, max_credit=max_credit)
+        validator_result = self._validator.validate(
+            courses_by_source_key.values(),
+            min_credit=min_credit,
+            min_credit_inclusive=min_credit_inclusive,
+            max_credit=max_credit,
+            max_credit_inclusive=max_credit_inclusive,
+        )
         for issue in validator_result.issues:
             code = {
                 "TRAVEL_NOT_POSSIBLE": TimetableViolationCode.CAMPUS_MOVEMENT_VIOLATION,

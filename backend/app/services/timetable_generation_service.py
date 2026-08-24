@@ -123,7 +123,9 @@ class TimetableGenerationService:
             course_load_target=target,
             hard_conditions=effective_hard_conditions,
             min_credit=data.hard_constraints.min_credit,
+            min_credit_inclusive=data.hard_constraints.min_credit_inclusive,
             max_credit=data.hard_constraints.max_credit,
+            max_credit_inclusive=data.hard_constraints.max_credit_inclusive,
             max_candidates=max_candidates,
         )
         result = result.model_copy(
@@ -136,6 +138,7 @@ class TimetableGenerationService:
         )
         recent_candidates = _recent_candidates_from_legacy_result(
             session_id=session_id,
+            session_version=data.version,
             result=result,
             fixed_major_course_ids=[course.course_id for course in data.fixed_courses],
         )
@@ -188,6 +191,7 @@ class TimetableGenerationService:
 def _recent_candidates_from_legacy_result(
     *,
     session_id: str,
+    session_version: int | None,
     result: TimetableGenerationResult,
     fixed_major_course_ids: list[str],
 ) -> list[GeneratedTimetableCandidate]:
@@ -220,6 +224,7 @@ def _recent_candidates_from_legacy_result(
                 ),
                 generation_order=index,
                 session_id=session_id,
+                session_version=session_version,
             )
         )
     return candidates

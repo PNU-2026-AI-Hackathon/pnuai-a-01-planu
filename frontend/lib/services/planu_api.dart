@@ -189,12 +189,12 @@ class PlanuApi {
     } on TimeoutException {
       throw const ApiError(
         'REQUEST_TIMEOUT',
-        '?쒓컙??議곌굔 ??젣 ?붿껌 ?쒓컙??珥덇낵?섏뿀?듬땲?? ?ㅼ떆 ?쒕룄??二쇱꽭??',
+        '조건 삭제 요청 시간이 초과되었습니다. 다시 시도해 주세요.',
       );
     } on ApiError {
       rethrow;
     } on Object {
-      throw const ApiError('NETWORK_ERROR', '?쒕쾭???곌껐?????놁뒿?덈떎. ?좎떆 ???ㅼ떆 ?쒕룄??二쇱꽭??');
+      throw const ApiError('NETWORK_ERROR', '서버 연결 실패. 잠시 후 다시 시도해 주세요.');
     }
   }
 

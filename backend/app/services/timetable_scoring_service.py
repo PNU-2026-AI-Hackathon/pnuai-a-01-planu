@@ -148,7 +148,7 @@ class TimetableScoringService:
                 ),
                 "total_gap_minutes": (
                     gap["total_gap_minutes"]
-                    if soft_preferences.compact_schedule is True
+                    if soft_preferences.compact_schedule is not None
                     else 0
                 ),
                 "latest_end_minutes": (
@@ -167,20 +167,20 @@ class TimetableScoringService:
     ) -> list[CourseSection]:
         sections: list[CourseSection] = []
         missing: list[str] = []
-        keys = candidate.section_sources or [
-            SectionSource(catalog_id="", section_id=section_id)
-            for section_id in candidate.section_ids
-        ]
-        for source in keys:
-            section = (
-                section_id_map.get(source.section_id)
-                if source.catalog_id == ""
-                else section_map.get(source.key)
-            )
-            if section is None:
-                missing.append(source.section_id)
-            else:
-                sections.append(section)
+        if candidate.section_sources:
+            for source in candidate.section_sources:
+                section = section_map.get(source.key)
+                if section is None:
+                    missing.append(source.section_id)
+                else:
+                    sections.append(section)
+        else:
+            for section_id in candidate.section_ids:
+                section = section_id_map.get(section_id)
+                if section is None:
+                    missing.append(section_id)
+                else:
+                    sections.append(section)
         if missing:
             raise LookupError("missing section details: " + ", ".join(sorted(set(missing))))
         return sections
@@ -426,14 +426,22 @@ class TimetableScoringService:
         summary = self._gap_summary(sections, policy)
         trade_code = self._compact_code(summary["total_gap_minutes"])
         trade_offs.append(ScoringTradeOff(code=trade_code, values=summary))
-        if preferences.compact_schedule is not True:
+        if preferences.compact_schedule is None:
             return
-        score = (
-            policy.compact_schedule_weight
-            - policy.gap_penalty_per_minute * summary["total_gap_minutes"]
-            - policy.long_gap_penalty * summary["long_gap_count"]
-        )
-        is_satisfied = summary["total_gap_minutes"] <= policy.long_gap_threshold_minutes
+        if preferences.compact_schedule is True:
+            score = (
+                policy.compact_schedule_weight
+                - policy.gap_penalty_per_minute * summary["total_gap_minutes"]
+                - policy.long_gap_penalty * summary["long_gap_count"]
+            )
+            is_satisfied = summary["total_gap_minutes"] <= policy.long_gap_threshold_minutes
+        else:
+            score = (
+                policy.gap_penalty_per_minute * summary["total_gap_minutes"]
+                + policy.long_gap_penalty * summary["long_gap_count"]
+                - policy.compact_schedule_weight
+            )
+            is_satisfied = summary["total_gap_minutes"] >= policy.long_gap_threshold_minutes
         evidence = self._evidence(
             trade_code,
             ScoreComponentCode.COMPACT_SCHEDULE,

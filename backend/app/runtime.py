@@ -147,7 +147,7 @@ class AgentRuntime:
         except Exception as exc:
             raise AppError(
                 "AGENT_RUN_FAILED",
-                "PlaNU Agent ?ㅽ뻾 以??ㅻ쪟媛 諛쒖깮?덉뒿?덈떎.",
+                "PlaNU Agent 실행 중 오류가 발생했습니다.",
                 status_code=502,
             ) from exc
 

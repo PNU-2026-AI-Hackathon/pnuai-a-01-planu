@@ -32,7 +32,9 @@ class TimetableValidator:
         campus_rule_engine: CampusRuleEngine | None = None,
         *,
         min_credit: float | None = None,
+        min_credit_inclusive: bool = True,
         max_credit: float | None = None,
+        max_credit_inclusive: bool = True,
         travel_check_max_gap: int | None = None,
     ) -> None:
         if min_credit is not None and min_credit < 0:
@@ -43,7 +45,9 @@ class TimetableValidator:
             raise ValueError("min_credit must not exceed max_credit")
         self.campus_rule_engine = campus_rule_engine or CampusRuleEngine()
         self.min_credit = min_credit
+        self.min_credit_inclusive = min_credit_inclusive if min_credit is not None else True
         self.max_credit = max_credit
+        self.max_credit_inclusive = max_credit_inclusive if max_credit is not None else True
         self.travel_check_max_gap = travel_check_max_gap
 
     def validate(
@@ -52,7 +56,9 @@ class TimetableValidator:
         *,
         fixed_courses: Iterable[Course] = (),
         min_credit: float | None = None,
+        min_credit_inclusive: bool = True,
         max_credit: float | None = None,
+        max_credit_inclusive: bool = True,
     ) -> ValidationResult:
         selected = list(courses)
         fixed = list(fixed_courses)
@@ -82,13 +88,15 @@ class TimetableValidator:
 
         total_credit = sum(course.credit for course in combined)
         lower = self.min_credit if min_credit is None else min_credit
+        lower_inclusive = self.min_credit_inclusive if min_credit_inclusive is None else min_credit_inclusive
         upper = self.max_credit if max_credit is None else max_credit
-        if lower is not None and total_credit < lower:
+        upper_inclusive = self.max_credit_inclusive if max_credit_inclusive is None else max_credit_inclusive
+        if lower is not None and (total_credit < lower if lower_inclusive else total_credit <= lower):
             issues.append(ValidationIssue(
                 "CREDIT_BELOW_MINIMUM",
                 f"총 학점 {total_credit:g}은 최소 학점 {lower:g}보다 적습니다.",
             ))
-        if upper is not None and total_credit > upper:
+        if upper is not None and (total_credit > upper if upper_inclusive else total_credit >= upper):
             issues.append(ValidationIssue(
                 "CREDIT_ABOVE_MAXIMUM",
                 f"총 학점 {total_credit:g}은 최대 학점 {upper:g}보다 많습니다.",
@@ -168,12 +176,16 @@ def validate_timetable(
     fixed_courses: Iterable[Course] = (),
     campus_rule_engine: CampusRuleEngine | None = None,
     min_credit: float | None = None,
+    min_credit_inclusive: bool = True,
     max_credit: float | None = None,
+    max_credit_inclusive: bool = True,
 ) -> ValidationResult:
     """Functional convenience API for generators that do not retain a validator."""
 
     return TimetableValidator(
         campus_rule_engine,
         min_credit=min_credit,
+        min_credit_inclusive=min_credit_inclusive,
         max_credit=max_credit,
+        max_credit_inclusive=max_credit_inclusive,
     ).validate(courses, fixed_courses=fixed_courses)

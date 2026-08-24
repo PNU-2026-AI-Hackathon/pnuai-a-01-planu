@@ -1388,11 +1388,19 @@ class SessionService:
                 excluded_elective_areas,
             )
         min_credit = getattr(patch, "min_credit", None)
+        min_credit_inclusive = getattr(patch, "min_credit_inclusive", None)
         max_credit = getattr(patch, "max_credit", None)
+        max_credit_inclusive = getattr(patch, "max_credit_inclusive", None)
         if min_credit is not None:
             update["min_credit"] = min_credit
+            update["min_credit_inclusive"] = True if min_credit_inclusive is None else min_credit_inclusive
+        elif min_credit_inclusive is not None and hard_constraints.min_credit is not None:
+            update["min_credit_inclusive"] = min_credit_inclusive
         if max_credit is not None:
             update["max_credit"] = max_credit
+            update["max_credit_inclusive"] = True if max_credit_inclusive is None else max_credit_inclusive
+        elif max_credit_inclusive is not None and hard_constraints.max_credit is not None:
+            update["max_credit_inclusive"] = max_credit_inclusive
         if "required_course_ids" in update and "excluded_course_ids" not in update:
             required = set(update["required_course_ids"])
             update["excluded_course_ids"] = [
@@ -1478,6 +1486,8 @@ class SessionService:
     def _cleared_preference_value(field_name: str) -> object:
         if field_name.endswith("_ids") or field_name.endswith("_days") or field_name.endswith("_areas"):
             return []
+        if field_name.endswith("_inclusive"):
+            return True
         return None
 
     def _refresh_unchanged_state(
@@ -1569,8 +1579,8 @@ class SessionService:
         for area in areas:
             if not isinstance(area, int):
                 raise SessionValidationError(field_name, area, "elective area must be an integer")
-            if not 1 <= area <= 7:
-                raise SessionValidationError(field_name, str(area), "elective areas must be between 1 and 7")
+            if not 1 <= area <= 9:
+                raise SessionValidationError(field_name, str(area), "elective areas must be between 1 and 9")
             values.append(area)
         return list(dict.fromkeys(values))
 
