@@ -280,6 +280,8 @@ class TimetableRanker:
             components.append(self._daily_first_start_component(candidate, context))
 
         for component in components[1:]:
+            if not self._should_explain_component(component, preferences):
+                continue
             if component.value > 0:
                 reasons.append(component.reason)
             elif component.value < 0:
@@ -303,8 +305,29 @@ class TimetableRanker:
             key="valid_candidate",
             label="유효한 시간표 후보",
             value=context.weights.valid_candidate,
-            reason="하드 조건을 모두 통과한 유효한 시간표 후보입니다.",
+            reason="필수조건을 모두 통과한 시간표입니다.",
         )
+
+    @staticmethod
+    def _should_explain_component(
+        component: ScoreComponent,
+        preferences: PreferenceRules,
+    ) -> bool:
+        if component.key in {
+            "attendance_days",
+            "consecutive_classes",
+            "compact_schedule",
+            "daily_first_start",
+        }:
+            return (
+                (component.key == "attendance_days" and preferences.minimize_attendance_days)
+                or (
+                    component.key == "consecutive_classes"
+                    and preferences.minimize_consecutive_classes
+                )
+                or (component.key == "compact_schedule" and preferences.compact_schedule)
+            )
+        return True
 
     def _preferred_free_day_components(
         self,
@@ -837,6 +860,33 @@ class TimetableRanker:
     def _course_id_key(candidate: Timetable) -> tuple[tuple[str, str], ...]:
         return tuple(sorted((course.course_id, course.division) for course in candidate.courses))
 
+    @staticmethod
+    def _display_timetable_key(
+        candidate: Timetable,
+    ) -> tuple[tuple[str, str, tuple[tuple[str, str, str, str], ...]], ...]:
+        """Canonical key for candidates that render as the same user-facing timetable."""
+
+        return tuple(
+            sorted(
+                (
+                    " ".join(course.course_name.casefold().split()),
+                    course.division,
+                    tuple(
+                        sorted(
+                            (
+                                meeting.day.value,
+                                meeting.start,
+                                meeting.end,
+                                meeting.classroom,
+                            )
+                            for meeting in course.class_times
+                        )
+                    ),
+                )
+                for course in candidate.courses
+            )
+        )
+
     @classmethod
     def dedupe_candidates(
         cls,
@@ -846,6 +896,23 @@ class TimetableRanker:
         seen: set[tuple[tuple[str, str], ...]] = set()
         for candidate in candidates:
             key = cls._course_id_key(candidate)
+            if key in seen:
+                continue
+            deduped.append(candidate)
+            seen.add(key)
+        return deduped
+
+    @classmethod
+    def dedupe_display_equivalent_candidates(
+        cls,
+        candidates: Iterable[TimetableCandidate],
+    ) -> list[TimetableCandidate]:
+        deduped: list[TimetableCandidate] = []
+        seen: set[
+            tuple[tuple[str, str, tuple[tuple[str, str, str, str], ...]], ...]
+        ] = set()
+        for candidate in candidates:
+            key = cls._display_timetable_key(candidate)
             if key in seen:
                 continue
             deduped.append(candidate)

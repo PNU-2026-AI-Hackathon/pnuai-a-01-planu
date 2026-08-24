@@ -274,6 +274,7 @@ class HardConstraintsPatch(_ToolInput):
     latest_end_time: str | None = Field(default=None)
     required_course_ids: list[str] | None = Field(default=None)
     excluded_course_ids: list[str] | None = Field(default=None)
+    excluded_elective_areas: list[int] | None = Field(default=None)
     min_credit: float | None = Field(default=None, ge=0, description="완성된 시간표 전체의 최소 총학점")
     max_credit: float | None = Field(default=None, ge=0, description="완성된 시간표 전체의 최대 총학점")
     clear_fields: list[HardClearField] = Field(default_factory=list)
@@ -292,6 +293,13 @@ class HardConstraintsPatch(_ToolInput):
             raise ValueError("course id lists must not contain empty ids")
         return values
 
+    @field_validator("excluded_elective_areas")
+    @classmethod
+    def validate_excluded_elective_areas(cls, values: list[int] | None) -> list[int] | None:
+        if values is not None and any(not 1 <= value <= 7 for value in values):
+            raise ValueError("elective areas must be between 1 and 7")
+        return values
+
     def to_service_update(self) -> HardConstraintsUpdate:
         return HardConstraintsUpdate(
             required_free_days=self.required_free_days,
@@ -299,6 +307,7 @@ class HardConstraintsPatch(_ToolInput):
             latest_end_time=self.latest_end_time,
             required_course_ids=self.required_course_ids,
             excluded_course_ids=self.excluded_course_ids,
+            excluded_elective_areas=self.excluded_elective_areas,
             min_credit=self.min_credit,
             max_credit=self.max_credit,
             clear_fields=tuple(dict.fromkeys(self.clear_fields)),

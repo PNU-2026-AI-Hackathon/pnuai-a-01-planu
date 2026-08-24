@@ -9,12 +9,22 @@ from fastapi.testclient import TestClient
 from backend.app.agent_tools import CourseDiscoveryTools, SessionAgentTools
 from backend.app.agents import SessionStateAgent, SessionStateToolset
 from backend.app.agents.simple_session_model import SimpleSessionStateModel
-from backend.app.deps import get_session_state_agent, get_session_store
+from backend.app.deps import (
+    get_condition_summary_service,
+    get_session_service,
+    get_session_state_agent,
+    get_session_store,
+)
 from backend.app.main import app
 from backend.app.models import Category, ClassTime, Course, Day
 from backend.app.repositories import SessionStoreCatalogRepository, SessionStoreRepository
+from backend.app.services.condition_summary_service import ConditionSummaryService
 from backend.app.services.course_discovery_service import CourseDiscoveryService
 from backend.app.services.session_service import SessionService
+from backend.app.services.session_update_models import (
+    HardConstraintsUpdate,
+    SoftPreferencesUpdate,
+)
 from backend.app.services.session_store import SessionStage, SessionStore
 from backend.app.services.timetable_generation_service import TimetableGenerationService
 
@@ -58,6 +68,39 @@ def _named_course(course_id: str, name: str, *, category: Category = Category.MA
             )
         ],
     )
+
+
+def test_delete_timetable_condition_removes_one_list_value_and_returns_summary() -> None:
+    store = SessionStore()
+    service = SessionService(SessionStoreRepository(store))
+    summary_service = ConditionSummaryService()
+    state = service.create_session()
+    service.update_preferences(
+        state.session_id,
+        hard_patch=HardConstraintsUpdate(required_free_days=[Day.WED, Day.FRI]),
+        soft_patch=SoftPreferencesUpdate(preferred_free_days=[Day.THU]),
+    )
+    app.dependency_overrides[get_session_service] = lambda: service
+    app.dependency_overrides[get_condition_summary_service] = lambda: summary_service
+    client = TestClient(app)
+
+    try:
+        response = client.patch(
+            f"/sessions/{state.session_id}/conditions",
+            json={"scope": "hard", "key": "required_free_days", "value": "FRI"},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200, response.text
+    saved = service.get_session(state.session_id)
+    assert saved.hard_constraints.required_free_days == [Day.WED]
+    hard_items = {
+        item["key"]: item
+        for item in response.json()["hard_constraints"]
+        if item["status"] == "SET"
+    }
+    assert hard_items["required_free_days"]["raw_value"] == ["WED"]
 
 
 class ScriptedModel:

@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from itertools import combinations
 
-from ..models.course import Course, time_to_minutes
+from ..models.course import Category, Course, time_to_minutes
 from ..models.course_discovery import CourseSection
 from ..models.timetable_generation import (
     ResolvedSection,
@@ -47,6 +47,7 @@ class TimetableValidationService:
         *,
         required_course_ids: Iterable[str] = (),
         excluded_course_ids: Iterable[str] = (),
+        excluded_elective_areas: Iterable[int] = (),
         required_free_days: Iterable[object] = (),
         earliest_start_time: str | None = None,
         latest_end_time: str | None = None,
@@ -61,6 +62,7 @@ class TimetableValidationService:
         violations: list[TimetableViolation] = []
         required = set(required_course_ids)
         excluded = set(excluded_course_ids)
+        excluded_areas = set(excluded_elective_areas)
         selected_course_ids = [item.section.course_id for item in values]
         selected_course_id_set = set(selected_course_ids)
 
@@ -96,6 +98,17 @@ class TimetableValidationService:
                     course_id=section.course_id,
                     section_id=section.section_id,
                     constraint="excluded_course_ids",
+                ))
+            if (
+                section.category is Category.GENERAL_ELECTIVE
+                and section.area in excluded_areas
+            ):
+                violations.append(TimetableViolation(
+                    code=TimetableViolationCode.EXCLUDED_ELECTIVE_AREA_INCLUDED,
+                    message="제외한 교양 영역의 수업이 시간표에 포함되어 있습니다.",
+                    course_id=section.course_id,
+                    section_id=section.section_id,
+                    constraint="excluded_elective_areas",
                 ))
             violations.extend(self._single_section_violations(
                 item,

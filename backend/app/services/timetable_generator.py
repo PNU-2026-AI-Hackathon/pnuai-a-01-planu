@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Iterable
-from itertools import combinations
+from itertools import combinations, product
 from math import ceil, floor
 from time import perf_counter
 
@@ -116,6 +116,7 @@ class TimetableGenerator:
         required_candidates = self._dedupe_by_course_identity(
             required_general_candidates
         )
+        required_groups = self._group_required_candidates(required_candidates)
         elective_candidates = self._dedupe_by_course_identity(
             elective_general_candidates
         )
@@ -127,8 +128,7 @@ class TimetableGenerator:
         stats: Counter[str] = Counter()
         started_at = perf_counter()
 
-        credit_ceiling = self._credit_ceiling(target, max_credit)
-        fixed_result = self.validator.validate(fixed, max_credit=credit_ceiling)
+        fixed_result = self.validator.validate(fixed, max_credit=max_credit)
         if not fixed_result.valid:
             return TimetableGenerationResult(
                 diagnostics=[
@@ -157,6 +157,7 @@ class TimetableGenerator:
                     )
                 ]
             )
+        credit_ceiling = self._credit_ceiling(target, max_credit)
 
         if not required_candidates:
             diagnostics.append(GenerationDiagnostic(
@@ -172,14 +173,19 @@ class TimetableGenerator:
             ))
 
         hard_filter = TimetableRanker()
-        required_sizes = range(len(required_candidates), -1, -1)
+        required_sizes = range(len(required_groups), -1, -1)
         candidates: list[TimetableGenerationCandidate] = []
-        seen_timetables: set[tuple[str, ...]] = set()
+        seen_timetables: set[tuple[tuple[str, str], ...]] = set()
         truncated = False
 
         for required_count in required_sizes:
-            for required_group in combinations(required_candidates, required_count):
-                selected_required = list(required_group)
+            for required_group_candidates in self._required_group_combinations(
+                required_groups,
+                required_count,
+                base_credits=fixed_credits,
+                credit_ceiling=credit_ceiling,
+            ):
+                selected_required = list(required_group_candidates)
                 if self._has_duplicate_logical_course(fixed + selected_required):
                     stats["DUPLICATE_LOGICAL_COURSE"] += 1
                     continue
@@ -239,7 +245,12 @@ class TimetableGenerator:
                             stats["HARD_CONDITION_FAILED"] += 1
                             continue
 
-                        key = tuple(sorted(course.course_id for course in all_courses))
+                        key = tuple(
+                            sorted(
+                                (course.course_id, course.division)
+                                for course in all_courses
+                            )
+                        )
                         if key in seen_timetables:
                             stats["DUPLICATE_TIMETABLE"] += 1
                             continue
@@ -303,6 +314,34 @@ class TimetableGenerator:
         """Backward-compatible alias; division is part of candidate identity."""
 
         return TimetableGenerator._dedupe_by_course_identity(courses)
+
+    @classmethod
+    def _group_required_candidates(cls, courses: Iterable[Course]) -> list[list[Course]]:
+        groups_by_key: dict[str, list[Course]] = {}
+        for course in courses:
+            groups_by_key.setdefault(cls._logical_course_key(course), []).append(course)
+        return list(groups_by_key.values())
+
+    @staticmethod
+    def _required_group_combinations(
+        groups: list[list[Course]],
+        count: int,
+        *,
+        base_credits: float,
+        credit_ceiling: float | None,
+    ) -> Iterable[tuple[Course, ...]]:
+        if count == 0:
+            yield ()
+            return
+        for selected_groups in combinations(groups, count):
+            if credit_ceiling is not None:
+                minimum_group_credits = sum(
+                    min(course.credit for course in group)
+                    for group in selected_groups
+                )
+                if base_credits + minimum_group_credits > credit_ceiling:
+                    continue
+            yield from product(*selected_groups)
 
     @staticmethod
     def _elective_sizes(
@@ -396,6 +435,8 @@ class TimetableGenerator:
             if target.additional_elective_count is None
             else target.additional_elective_count - len(elective)
         )
+        if elective_gap is not None:
+            elective_gap = max(elective_gap, 0)
         return CourseLoadSatisfaction(
             final_total_credits=final_total,
             target_total_credits=target.target_total_credits,

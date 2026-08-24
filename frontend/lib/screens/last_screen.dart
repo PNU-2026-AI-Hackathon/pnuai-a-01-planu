@@ -54,7 +54,10 @@ class LastScreen extends StatelessWidget {
                   const SizedBox(height: 24),
                   _BottomActions(
                     onViewCandidates: onViewCandidates,
-                    onStartOver: onStartOver,
+                    onStartOver: () {
+                      flow.reset();
+                      onStartOver();
+                    },
                   ),
                 ],
               ],
@@ -154,6 +157,7 @@ class _LastCandidateView extends StatelessWidget {
       (candidate['score_components'] as List? ?? const [])
           .whereType<Map>()
           .map((item) => item.cast<String, dynamic>())
+          .where(_isUserConditionComponent)
           .toList();
   List<String> get warnings => [
     ...(timetable['warnings'] as List? ?? const []).whereType<String>(),
@@ -714,15 +718,30 @@ String _dayLabel(String value) => switch (value) {
 };
 
 String _categoryLabel(String value) => switch (value) {
-  'major' => '전공',
-  'general_required' => '교양필수',
-  'general_elective' => '교양선택',
+  'MAJOR_BASIC' || 'major_basic' || '전공기초' => '전공기초',
+  'MAJOR_REQUIRED' || 'major_required' || 'major' || '전공필수' || '전공' => '전공필수',
+  'MAJOR_ELECTIVE' || 'major_elective' || '전공선택' => '전공선택',
+  'GENERAL_REQUIRED' || 'general_required' || '교양필수' => '교양필수',
+  'GENERAL_ELECTIVE' || 'general_elective' || '교양선택' => '교양선택',
   _ => value.isEmpty ? '수업' : value,
 };
 
 Color _categoryColor(String value) => switch (value) {
-  'major' => const Color(0xFFDDE5FF),
-  'general_required' => const Color(0xFFCCF5E3),
-  'general_elective' => const Color(0xFFFFE5C7),
+  'MAJOR_BASIC' || 'major_basic' => const Color(0xFFDDE5FF),
+  'MAJOR_REQUIRED' || 'major_required' || 'major' => const Color(0xFFDDE5FF),
+  'MAJOR_ELECTIVE' || 'major_elective' => const Color(0xFFE0E7FF),
+  'GENERAL_REQUIRED' || 'general_required' => const Color(0xFFCCF5E3),
+  'GENERAL_ELECTIVE' || 'general_elective' => const Color(0xFFFFE5C7),
   _ => const Color(0xFFF5F5F5),
 };
+
+bool _isUserConditionComponent(Map<String, dynamic> item) {
+  final key = '${item['key'] ?? ''}';
+  return !{
+    'valid_candidate',
+    'attendance_days',
+    'consecutive_classes',
+    'compact_schedule',
+    'daily_first_start',
+  }.contains(key);
+}

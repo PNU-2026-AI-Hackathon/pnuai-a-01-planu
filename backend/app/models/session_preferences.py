@@ -50,6 +50,7 @@ class HardConstraints(BaseModel):
     max_credit: float | None = Field(default=None, ge=0)
     required_course_ids: list[CourseId] = Field(default_factory=list)
     excluded_course_ids: list[CourseId] = Field(default_factory=list)
+    excluded_elective_areas: list[int] = Field(default_factory=list)
 
     @field_validator("earliest_start_time", "latest_end_time")
     @classmethod
@@ -62,9 +63,17 @@ class HardConstraints(BaseModel):
         "required_free_days",
         "required_course_ids",
         "excluded_course_ids",
+        "excluded_elective_areas",
     )
     @classmethod
     def remove_duplicates(cls, values: list) -> list:
+        return _deduplicate(values)
+
+    @field_validator("excluded_elective_areas")
+    @classmethod
+    def validate_excluded_elective_areas(cls, values: list[int]) -> list[int]:
+        if any(not 1 <= value <= 7 for value in values):
+            raise ValueError("elective areas must be between 1 and 7")
         return _deduplicate(values)
 
     @model_validator(mode="after")

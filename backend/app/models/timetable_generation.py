@@ -38,6 +38,7 @@ class TimetableViolationCode(str, Enum):
     DUPLICATE_COURSE = "DUPLICATE_COURSE"
     MISSING_REQUIRED_COURSE = "MISSING_REQUIRED_COURSE"
     EXCLUDED_COURSE_INCLUDED = "EXCLUDED_COURSE_INCLUDED"
+    EXCLUDED_ELECTIVE_AREA_INCLUDED = "EXCLUDED_ELECTIVE_AREA_INCLUDED"
     REQUIRED_FREE_DAY_VIOLATION = "REQUIRED_FREE_DAY_VIOLATION"
     EARLIEST_START_VIOLATION = "EARLIEST_START_VIOLATION"
     LATEST_END_VIOLATION = "LATEST_END_VIOLATION"
@@ -105,6 +106,7 @@ class TimetableGenerationRequest(_Model):
     )
     required_course_ids: list[str] = Field(default_factory=list)
     excluded_course_ids: list[str] = Field(default_factory=list)
+    excluded_elective_areas: list[int] = Field(default_factory=list)
     required_free_days: list[Day] = Field(default_factory=list)
     earliest_start_time: str | None = None
     latest_end_time: str | None = None
@@ -125,6 +127,13 @@ class TimetableGenerationRequest(_Model):
     def dedupe_non_empty_text(cls, values: list[str]) -> list[str]:
         if any(not value.strip() for value in values):
             raise ValueError("id lists must not contain empty values")
+        return list(dict.fromkeys(values))
+
+    @field_validator("excluded_elective_areas")
+    @classmethod
+    def validate_excluded_elective_areas(cls, values: list[int]) -> list[int]:
+        if any(not 1 <= value <= 7 for value in values):
+            raise ValueError("elective areas must be between 1 and 7")
         return list(dict.fromkeys(values))
 
     @field_validator("fixed_section_sources")
@@ -210,6 +219,7 @@ class TimetableValidationRequest(_Model):
     section_sources: list[SectionSource] = Field(min_length=1)
     required_course_ids: list[str] = Field(default_factory=list)
     excluded_course_ids: list[str] = Field(default_factory=list)
+    excluded_elective_areas: list[int] = Field(default_factory=list)
     required_free_days: list[Day] = Field(default_factory=list)
     earliest_start_time: str | None = None
     latest_end_time: str | None = None
@@ -222,6 +232,13 @@ class TimetableValidationRequest(_Model):
     def dedupe_ids(cls, values: list[str]) -> list[str]:
         if any(not value.strip() for value in values):
             raise ValueError("course id lists must not contain empty values")
+        return list(dict.fromkeys(values))
+
+    @field_validator("excluded_elective_areas")
+    @classmethod
+    def validate_validation_excluded_elective_areas(cls, values: list[int]) -> list[int]:
+        if any(not 1 <= value <= 7 for value in values):
+            raise ValueError("elective areas must be between 1 and 7")
         return list(dict.fromkeys(values))
 
     @field_validator("section_sources")

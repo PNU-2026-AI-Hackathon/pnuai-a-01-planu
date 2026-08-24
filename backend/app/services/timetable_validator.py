@@ -37,8 +37,8 @@ class TimetableValidator:
     ) -> None:
         if min_credit is not None and min_credit < 0:
             raise ValueError("min_credit must not be negative")
-        if max_credit is not None and max_credit <= 0:
-            raise ValueError("max_credit must be positive")
+        if max_credit is not None and max_credit < 0:
+            raise ValueError("max_credit must not be negative")
         if min_credit is not None and max_credit is not None and min_credit > max_credit:
             raise ValueError("min_credit must not exceed max_credit")
         self.campus_rule_engine = campus_rule_engine or CampusRuleEngine()

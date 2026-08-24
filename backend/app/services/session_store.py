@@ -23,6 +23,7 @@ from ..models.timetable import (
     TimetableGenerationCandidate,
     TimetableRankingResult,
 )
+from ..models.timetable_selection import SelectedTimetable, SelectedTimetableStatus
 
 
 def _utcnow() -> datetime:
@@ -104,6 +105,8 @@ class SessionData:
     generation_hard_conditions: PreferenceRules | None = None
     preference_unsupported_conditions: list[UnsupportedCondition] = field(default_factory=list)
     preference_warnings: list[PreferenceWarning] = field(default_factory=list)
+    selected_timetable: SelectedTimetable | None = None
+    selected_timetable_status: SelectedTimetableStatus | None = None
     generation_truncated: bool = False
     generated_at: datetime | None = None
     confirmed_major_credits: float = 0
@@ -172,6 +175,20 @@ class SessionData:
             else PreferenceWarning.model_validate(item)
             for item in self.preference_warnings
         ]
+        if self.selected_timetable is not None and not isinstance(
+            self.selected_timetable,
+            SelectedTimetable,
+        ):
+            self.selected_timetable = SelectedTimetable.model_validate(
+                self.selected_timetable
+            )
+        if (
+            self.selected_timetable_status is not None
+            and not isinstance(self.selected_timetable_status, SelectedTimetableStatus)
+        ):
+            self.selected_timetable_status = SelectedTimetableStatus(
+                self.selected_timetable_status
+            )
         if not isinstance(self.session_stage, SessionStage):
             self.session_stage = SessionStage(self.session_stage)
         if self.expires_at is None:
@@ -417,6 +434,9 @@ class SessionStore:
         generation_hard_conditions: PreferenceRules | None = None,
         preference_unsupported_conditions: Iterable[UnsupportedCondition] | None = None,
         preference_warnings: Iterable[PreferenceWarning] | None = None,
+        selected_timetable: SelectedTimetable | None = None,
+        selected_timetable_status: SelectedTimetableStatus | None = None,
+        clear_selected_timetable: bool = False,
         generation_truncated: bool | None = None,
         generated_at: datetime | None = None,
     ) -> SessionData:
@@ -509,6 +529,13 @@ class SessionStore:
                 data.preference_unsupported_conditions = list(preference_unsupported_conditions)
             if preference_warnings is not None:
                 data.preference_warnings = list(preference_warnings)
+            if clear_selected_timetable:
+                data.selected_timetable = None
+                data.selected_timetable_status = None
+            if selected_timetable is not None:
+                data.selected_timetable = selected_timetable
+            if selected_timetable_status is not None:
+                data.selected_timetable_status = selected_timetable_status
             if generation_truncated is not None:
                 data.generation_truncated = generation_truncated
             if generated_at is not None:
@@ -706,6 +733,12 @@ class SessionStore:
             ),
             preference_unsupported_conditions=list(data.preference_unsupported_conditions),
             preference_warnings=list(data.preference_warnings),
+            selected_timetable=(
+                data.selected_timetable.model_copy(deep=True)
+                if data.selected_timetable is not None
+                else None
+            ),
+            selected_timetable_status=data.selected_timetable_status,
             generation_truncated=data.generation_truncated,
             generated_at=data.generated_at,
             session_stage=data.session_stage,

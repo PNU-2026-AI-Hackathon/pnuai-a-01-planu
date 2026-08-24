@@ -130,6 +130,7 @@ class TimetablePreparationService:
                 candidate_section_sources_by_course=candidate_sources,
                 required_course_ids=required_course_ids,
                 excluded_course_ids=excluded_course_ids,
+                excluded_elective_areas=list(summary.hard_constraints.excluded_elective_areas),
                 required_free_days=list(summary.hard_constraints.required_free_days),
                 earliest_start_time=summary.hard_constraints.earliest_start_time,
                 latest_end_time=summary.hard_constraints.latest_end_time,

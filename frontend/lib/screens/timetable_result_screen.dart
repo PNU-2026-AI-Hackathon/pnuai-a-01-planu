@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../models/app_flow_state.dart';
 import '../models/major_models.dart';
 import '../services/planu_api.dart';
+import '../services/session_error_handler.dart';
 import '../widgets/flow_step_badge.dart';
 import 'last_screen.dart';
 
@@ -58,23 +59,45 @@ class _TimetableResultScreenState extends State<TimetableResultScreen> {
 
     try {
       final candidateId = _candidateId(candidate);
-      if (candidateId != null) {
-        await widget.api.selectTimetableCandidate(
-          sessionId: sessionId,
-          candidateId: candidateId,
+      if (candidateId == null) {
+        setState(() => _selectionError = '후보 ID가 없어 최종 선택을 진행할 수 없습니다.');
+        return;
+      }
+      final response = await widget.api.selectTimetableCandidate(
+        sessionId: sessionId,
+        candidateId: candidateId,
+      );
+      final selected =
+          (response['selected_timetable'] as Map?)?.cast<String, dynamic>();
+      if (selected == null) {
+        throw const ApiError(
+          'TIMETABLE_SELECTION_EMPTY',
+          '선택된 시간표 정보를 받지 못했습니다.',
+        );
+      }
+      final selectedCandidateId = selected['candidate_id']?.toString();
+      if (selectedCandidateId != null && selectedCandidateId != candidateId) {
+        throw const ApiError(
+          'TIMETABLE_SELECTION_MISMATCH',
+          '선택한 시간표와 서버에 저장된 시간표가 일치하지 않습니다.',
         );
       }
       if (!mounted) return;
+      final finalCandidate = _candidateForFinalScreen(
+        candidate: candidate,
+        selected: selected,
+      );
+      widget.flow.selectedTimetable = finalCandidate;
       widget.flow.rankedCandidates = {
         ...?widget.flow.rankedCandidates,
-        'selected_candidate': candidate,
+        'selected_candidate': finalCandidate,
       };
       Navigator.of(context).push(
         MaterialPageRoute<void>(
           settings: const RouteSettings(name: '/timetable-final'),
           builder: (_) => LastScreen(
             flow: widget.flow,
-            candidate: candidate,
+            candidate: finalCandidate,
             onViewCandidates: () => Navigator.of(context).pop(),
             onStartOver: widget.onSessionExpired,
           ),
@@ -82,8 +105,12 @@ class _TimetableResultScreenState extends State<TimetableResultScreen> {
       );
     } on ApiError catch (error) {
       if (!mounted) return;
-      if (error.code == 'SESSION_NOT_FOUND') {
-        widget.onSessionExpired();
+      if (handleSessionExpiredError(
+        context,
+        error,
+        flow: widget.flow,
+        onSessionExpired: widget.onSessionExpired,
+      )) {
         return;
       }
       setState(() => _selectionError = error.message);
@@ -155,8 +182,18 @@ class _TimetableResultScreenState extends State<TimetableResultScreen> {
                       _selectionError = null;
                     }),
                   ),
+                  if (_candidates.length < 3) ...[
+                    const SizedBox(height: 12),
+                    _InfoBanner(
+                      message:
+                          '현재 조건을 모두 만족하는 시간표는 ${_candidates.length}개입니다.',
+                    ),
+                  ],
                   const SizedBox(height: 22),
-                  _CandidateView(candidate: selected),
+                  _CandidateView(
+                    key: ValueKey(_candidateId(selected) ?? _candidateSignature(selected)),
+                    candidate: selected,
+                  ),
                   const SizedBox(height: 24),
                   if (_selectionError != null) ...[
                     _ErrorBanner(message: _selectionError!),
@@ -261,7 +298,7 @@ class _CandidateTabs extends StatelessWidget {
 }
 
 class _CandidateView extends StatelessWidget {
-  const _CandidateView({required this.candidate});
+  const _CandidateView({super.key, required this.candidate});
 
   final Map<String, dynamic> candidate;
 
@@ -290,6 +327,7 @@ class _CandidateView extends StatelessWidget {
       (candidate['score_components'] as List? ?? const [])
           .whereType<Map>()
           .map((item) => item.cast<String, dynamic>())
+          .where(_isUserConditionComponent)
           .toList();
 
   @override
@@ -840,6 +878,23 @@ class _ErrorBanner extends StatelessWidget {
   );
 }
 
+class _InfoBanner extends StatelessWidget {
+  const _InfoBanner({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.all(14),
+    decoration: BoxDecoration(
+      color: const Color(0xFFF0F9FF),
+      border: Border.all(color: const Color(0xFF38BDF8)),
+      borderRadius: BorderRadius.circular(8),
+    ),
+    child: Text(message, style: const TextStyle(color: Color(0xFF075985))),
+  );
+}
+
 class _EmptyResult extends StatelessWidget {
   const _EmptyResult({required this.onEditConditions});
 
@@ -926,6 +981,39 @@ String? _candidateId(Map<String, dynamic> candidate) {
   return null;
 }
 
+Map<String, dynamic> _candidateForFinalScreen({
+  required Map<String, dynamic> candidate,
+  required Map<String, dynamic> selected,
+}) {
+  return {
+    ...candidate,
+    'candidate_id': selected['candidate_id'] ?? candidate['candidate_id'],
+    'selection': selected,
+    'selected_at': selected['selected_at'],
+    'selected_status': selected['status'],
+    'selected_section_ids': selected['section_ids'],
+    'selected_course_ids': [
+      for (final course in selected['courses'] as List? ?? const [])
+        if (course is Map && course['course_id'] != null)
+          course['course_id'].toString(),
+    ],
+    'selected_total_credits': selected['total_credits'],
+  };
+}
+
+String _candidateSignature(Map<String, dynamic> candidate) {
+  final timetable = (candidate['timetable'] as Map?)?.cast<String, dynamic>();
+  final courses = (timetable?['courses'] as List? ?? const [])
+      .whereType<Map>()
+      .map((course) {
+        final value = course.cast<String, dynamic>();
+        return '${value['course_id'] ?? value['course_name']}:${value['division'] ?? value['section'] ?? ''}';
+      })
+      .toList()
+    ..sort();
+  return courses.join('|');
+}
+
 String _formatConditionWarning(String value) {
   final normalized = value.trim();
   if (normalized.isEmpty) return '조건을 만족하지 못했습니다.';
@@ -999,15 +1087,30 @@ String _score(Object? value) {
 }
 
 String _categoryLabel(String value) => switch (value) {
-  'major' => '전공',
-  'general_required' => '교양필수',
-  'general_elective' => '교양선택',
+  'MAJOR_BASIC' || 'major_basic' || '전공기초' => '전공기초',
+  'MAJOR_REQUIRED' || 'major_required' || 'major' || '전공필수' || '전공' => '전공필수',
+  'MAJOR_ELECTIVE' || 'major_elective' || '전공선택' => '전공선택',
+  'GENERAL_REQUIRED' || 'general_required' || '교양필수' => '교양필수',
+  'GENERAL_ELECTIVE' || 'general_elective' || '교양선택' => '교양선택',
   _ => value.isEmpty ? '수업' : value,
 };
 
 Color _categoryColor(String value) => switch (value) {
-  'major' => const Color(0xFFDDE5FF),
-  'general_required' => const Color(0xFFCCF5E3),
-  'general_elective' => const Color(0xFFFFE5C7),
+  'MAJOR_BASIC' || 'major_basic' => const Color(0xFFDDE5FF),
+  'MAJOR_REQUIRED' || 'major_required' || 'major' => const Color(0xFFDDE5FF),
+  'MAJOR_ELECTIVE' || 'major_elective' => const Color(0xFFE0E7FF),
+  'GENERAL_REQUIRED' || 'general_required' => const Color(0xFFCCF5E3),
+  'GENERAL_ELECTIVE' || 'general_elective' => const Color(0xFFFFE5C7),
   _ => const Color(0xFFF5F5F5),
 };
+
+bool _isUserConditionComponent(Map<String, dynamic> item) {
+  final key = '${item['key'] ?? ''}';
+  return !{
+    'valid_candidate',
+    'attendance_days',
+    'consecutive_classes',
+    'compact_schedule',
+    'daily_first_start',
+  }.contains(key);
+}

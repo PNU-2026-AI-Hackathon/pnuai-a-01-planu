@@ -57,6 +57,7 @@ class TimetableCandidateValidationService:
             sections,
             required_course_ids=request.required_course_ids,
             excluded_course_ids=request.excluded_course_ids,
+            excluded_elective_areas=request.excluded_elective_areas,
             required_free_days=request.required_free_days,
             earliest_start_time=request.earliest_start_time,
             latest_end_time=request.latest_end_time,

@@ -1381,6 +1381,12 @@ class SessionService:
                 patch.excluded_course_ids,
                 field_name="excluded_course_ids",
             )
+        excluded_elective_areas = getattr(patch, "excluded_elective_areas", None)
+        if excluded_elective_areas is not None:
+            update["excluded_elective_areas"] = self._normalize_elective_areas(
+                "excluded_elective_areas",
+                excluded_elective_areas,
+            )
         min_credit = getattr(patch, "min_credit", None)
         max_credit = getattr(patch, "max_credit", None)
         if min_credit is not None:
@@ -1470,7 +1476,7 @@ class SessionService:
 
     @staticmethod
     def _cleared_preference_value(field_name: str) -> object:
-        if field_name.endswith("_ids") or field_name.endswith("_days"):
+        if field_name.endswith("_ids") or field_name.endswith("_days") or field_name.endswith("_areas"):
             return []
         return None
 
@@ -1556,6 +1562,17 @@ class SessionService:
     @staticmethod
     def _normalize_time(field_name: str, time_value: str) -> str:
         return SessionInputNormalizer.time(field_name, time_value)
+
+    @staticmethod
+    def _normalize_elective_areas(field_name: str, areas: Iterable[int]) -> list[int]:
+        values: list[int] = []
+        for area in areas:
+            if not isinstance(area, int):
+                raise SessionValidationError(field_name, area, "elective area must be an integer")
+            if not 1 <= area <= 7:
+                raise SessionValidationError(field_name, str(area), "elective areas must be between 1 and 7")
+            values.append(area)
+        return list(dict.fromkeys(values))
 
 
 

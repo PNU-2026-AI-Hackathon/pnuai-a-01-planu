@@ -9,10 +9,11 @@ from fastapi.testclient import TestClient
 from typing import get_type_hints
 
 from backend.app.agents import AgentDomain, RunnableAgent
+from backend.app.agents.simple_session_model import SimpleSessionStateModel
 from backend.app.container import build_container
 from backend.app.deps import get_agent_runtime
 from backend.app.main import app
-from backend.app.runtime import AgentRuntime, _credit_bounds_from_message
+from backend.app.runtime import AgentRuntime
 from backend.app.models import Category, ClassTime, Course, Day
 from backend.app.models.course_discovery import CatalogKind
 from backend.app.services.general_preference_parser import GeneralPreferenceParser
@@ -51,16 +52,6 @@ def _course(course_id: str, name: str, *, day: Day = Day.MON) -> Course:
             )
         ],
     )
-
-
-def test_explicit_credit_bounds_are_extracted_from_compound_korean_condition() -> None:
-    assert _credit_bounds_from_message(
-        "금요일은 꼭 공강이고 최소 학점은 12 최대학점은 15를 들어야 해요"
-    ) == (12.0, 15.0)
-    assert _credit_bounds_from_message("15학점 이상 18학점 이하") == (15.0, 18.0)
-    assert _credit_bounds_from_message("총 18학점으로 시간표를 만들어줘") == (18.0, 18.0)
-    assert _credit_bounds_from_message("18학점에 맞춰 구성해줘") == (18.0, 18.0)
-    assert _credit_bounds_from_message("3학점 과목을 추천해줘") == (None, None)
 
 
 def test_composition_root_shares_repositories_and_registers_all_agent_tools() -> None:
@@ -254,6 +245,203 @@ def test_public_chat_accumulates_real_korean_timetable_conditions() -> None:
     assert hard_items["min_credit"]["raw_value"] == 18
     assert soft_items["preferred_earliest_start_time"]["raw_value"] == "10:00"
     assert soft_items["compact_schedule"]["raw_value"] is False
+
+
+def test_public_chat_credit_conditions_are_saved_only_by_agent_tool() -> None:
+    container = build_container()
+    runtime = AgentRuntime(
+        session_service=container.session_service,
+        agent=container.supervisor_agent,
+        selection_tools=container.timetable_selection_tools,
+        condition_summary_service=container.condition_summary_service,
+    )
+    app.dependency_overrides[get_agent_runtime] = lambda: runtime
+    client = TestClient(app)
+
+    try:
+        state = container.session_service.create_session()
+        session_id = state.session_id
+        combined = client.post(
+            f"/sessions/{session_id}/chat",
+            json={"message": "금요일은 꼭 공강이고 최소 12학점, 최대 15학점으로 만들어줘"},
+        )
+        assert combined.status_code == 200, combined.text
+        saved = container.session_service.get_session(session_id)
+        assert saved.hard_constraints.required_free_days == [Day.FRI]
+        assert saved.hard_constraints.min_credit == 12
+        assert saved.hard_constraints.max_credit == 15
+
+        negative = client.post(
+            f"/sessions/{session_id}/chat",
+            json={"message": "최소 18학점은 너무 많아서 싫어"},
+        )
+        assert negative.status_code == 200, negative.text
+        saved = container.session_service.get_session(session_id)
+        assert saved.hard_constraints.min_credit == 12
+
+        over_limit = client.post(
+            f"/sessions/{session_id}/chat",
+            json={"message": "22학점 초과는 못들어요"},
+        )
+        assert over_limit.status_code == 200, over_limit.text
+        saved = container.session_service.get_session(session_id)
+        assert saved.hard_constraints.max_credit == 22
+
+        over_or_equal_limit = client.post(
+            f"/sessions/{session_id}/chat",
+            json={"message": "22학점 이상은 못들어요"},
+        )
+        assert over_or_equal_limit.status_code == 200, over_or_equal_limit.text
+        saved = container.session_service.get_session(session_id)
+        assert saved.hard_constraints.max_credit == 21.5
+
+        more_than_lower_bound = client.post(
+            f"/sessions/{session_id}/chat",
+            json={"message": "15학점 초과로 듣고 싶어요"},
+        )
+        assert more_than_lower_bound.status_code == 200, more_than_lower_bound.text
+        saved = container.session_service.get_session(session_id)
+        assert saved.hard_constraints.min_credit == 15.5
+
+        clear = client.post(
+            f"/sessions/{session_id}/chat",
+            json={"message": "최소 학점 조건을 취소해줘"},
+        )
+        assert clear.status_code == 200, clear.text
+        saved = container.session_service.get_session(session_id)
+        assert saved.hard_constraints.min_credit is None
+        assert saved.hard_constraints.max_credit == 21.5
+
+        invalid = client.post(
+            f"/sessions/{session_id}/chat",
+            json={"message": "최소 18학점, 최대 15학점으로 만들어줘"},
+        )
+        assert invalid.status_code == 200, invalid.text
+        body = invalid.json()
+        assert body["changed"] is False
+        assert "INVALID_VALUE" in body["message"]
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_public_chat_accepts_supported_preferences_and_keeps_ambiguous_requests_unresolved() -> None:
+    container = build_container()
+    runtime = AgentRuntime(
+        session_service=container.session_service,
+        agent=container.supervisor_agent,
+        selection_tools=container.timetable_selection_tools,
+        condition_summary_service=container.condition_summary_service,
+    )
+    app.dependency_overrides[get_agent_runtime] = lambda: runtime
+    client = TestClient(app)
+
+    try:
+        state = container.session_service.create_session()
+        session_id = state.session_id
+        compact = client.post(
+            f"/sessions/{session_id}/chat",
+            json={"message": "가능하면 수업을 몰아서 듣고 싶어"},
+        )
+        ambiguous = client.post(
+            f"/sessions/{session_id}/chat",
+            json={"message": "편하게 만들어줘"},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert compact.status_code == 200, compact.text
+    assert compact.json()["changed"] is True
+    assert "요청을 어떤 작업으로 처리할지 확인이 필요합니다" not in compact.json()["message"]
+    saved = container.session_service.get_session(session_id)
+    assert saved.soft_preferences.compact_schedule is True
+    summary = compact.json()["condition_summary"]
+    soft_items = {item["key"]: item for item in summary["soft_preferences"]}
+    assert soft_items["compact_schedule"]["status"] == "SET"
+    assert soft_items["compact_schedule"]["display_value"] == "몰아듣기 선호"
+    assert soft_items["compact_schedule"]["raw_value"] is True
+
+    assert ambiguous.status_code == 200, ambiguous.text
+    assert ambiguous.json()["changed"] is False
+
+
+def test_public_chat_handles_consecutive_area_and_latest_end_variants() -> None:
+    container = build_container()
+    runtime = AgentRuntime(
+        session_service=container.session_service,
+        agent=container.supervisor_agent,
+        selection_tools=container.timetable_selection_tools,
+        condition_summary_service=container.condition_summary_service,
+    )
+    app.dependency_overrides[get_agent_runtime] = lambda: runtime
+    client = TestClient(app)
+
+    try:
+        state = container.session_service.create_session()
+        session_id = state.session_id
+        responses = [
+            client.post(f"/sessions/{session_id}/chat", json={"message": message})
+            for message in [
+                "연강은 싫어요",
+                "외국어 강의는 싫어요.",
+                "수업이 가능하면 16시 이전에 전부 끝났으면 좋겠어요.",
+                "모든 수업이 18시 이전에 끝났으면 좋겠어요.",
+            ]
+        ]
+    finally:
+        app.dependency_overrides.clear()
+
+    for response in responses:
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["changed"] is True
+        assert "요청을 어떤 작업으로 처리할지 확인이 필요합니다" not in body["message"]
+        assert "변경할 조건을 찾지 못했습니다" not in body["message"]
+
+    saved = container.session_service.get_session(session_id)
+    assert saved.soft_preferences.compact_schedule is False
+    assert saved.hard_constraints.excluded_elective_areas == [6]
+    assert saved.soft_preferences.preferred_latest_end_time == "16:00"
+    assert saved.hard_constraints.latest_end_time == "18:00"
+
+    summary = responses[-1].json()["condition_summary"]
+    hard_items = {item["key"]: item for item in summary["hard_constraints"]}
+    soft_items = {item["key"]: item for item in summary["soft_preferences"]}
+    assert hard_items["excluded_elective_areas"]["raw_value"] == [6]
+    assert hard_items["latest_end_time"]["raw_value"] == "18:00"
+    assert soft_items["preferred_latest_end_time"]["raw_value"] == "16:00"
+    assert soft_items["compact_schedule"]["display_value"] == "연강 회피"
+
+
+def test_simple_session_model_routes_course_names_to_catalog_search() -> None:
+    model = SimpleSessionStateModel()
+
+    result = model(
+        {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": {
+                        "message": "고전읽기와토론은 선호하고 경제학원론은 제외해줘",
+                        "current_state_summary": {
+                            "major_catalog_id": "major-catalog",
+                            "elective_catalog_id": "elective-catalog",
+                        },
+                    },
+                }
+            ]
+        }
+    )
+
+    calls = result["tool_calls"]
+    assert [call["name"] for call in calls] == ["search_courses_by_name"] * 4
+    assert {call["arguments"]["query"] for call in calls} == {
+        "고전읽기와토론",
+        "경제학원론",
+    }
+    assert {call["arguments"]["catalog_id"] for call in calls} == {
+        "major-catalog",
+        "elective-catalog",
+    }
 
 
 def test_general_preference_parser_reports_missing_llm_configuration(monkeypatch) -> None:
