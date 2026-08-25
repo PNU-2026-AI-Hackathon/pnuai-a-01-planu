@@ -3,11 +3,18 @@
 from __future__ import annotations
 
 import json
+import os
 import re
-from typing import Any, Literal, Protocol
+from typing import Any, Callable, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from ..services.openai_client import (
+    DEFAULT_OPENAI_BASE_URL,
+    DEFAULT_OPENAI_MODEL,
+    has_openai_api_key,
+    request_chat_completions,
+)
 from ..services.preference_constants import MORNING_END_TIME
 
 
@@ -64,27 +71,6 @@ class CourseMention(BaseModel):
     catalog_hint: Literal["major", "elective"] | None = None
 
 
-class LlmSessionStateModel:
-    """Placeholder for a production tool-calling LLM adapter.
-
-    The dependency container may instantiate this when a provider is explicitly
-    configured. The agent itself stays SDK-agnostic; wiring a concrete OpenAI or
-    proxy client belongs here rather than in ``SessionStateAgent``.
-    """
-
-    def __init__(self, *, provider: Any | None = None) -> None:
-        self.provider = provider
-
-    def __call__(self, payload: dict[str, Any]) -> dict[str, Any]:
-        if self.provider is None:
-            raise RuntimeError("LLM session-state model provider is not configured")
-        if hasattr(self.provider, "invoke"):
-            return self.provider.invoke(payload)
-        if callable(self.provider):
-            return self.provider(payload)
-        raise RuntimeError("configured LLM provider is not invokable")
-
-
 class SimpleSessionStateModel:
     """Conservative rule-based model for local development and tests.
 
@@ -99,6 +85,7 @@ class SimpleSessionStateModel:
         user_content = _user_content(messages)
         text = str(user_content.get("user_message") or user_content.get("message") or "")
         current = user_content.get("current_state_summary") or {}
+        available_tools = _available_tool_names(payload)
         transcript = [
             message for message in messages
             if isinstance(message, dict) and message.get("role") == "tool"
@@ -109,28 +96,36 @@ class SimpleSessionStateModel:
         hard, soft, unresolved = _extract_non_course_preferences(text, current)
         mentions = _extract_course_mentions(text)
         search_results = _search_results_by_key(transcript)
-        search_calls = _missing_search_calls(mentions, current, search_results)
-        if search_calls:
-            return {
-                "tool_calls": search_calls,
-                "unresolved_requests": unresolved,
-            }
+        if _tool_available("search_courses_by_name", available_tools):
+            search_calls = _missing_search_calls(mentions, current, search_results)
+            if search_calls:
+                return {
+                    "tool_calls": search_calls,
+                    "unresolved_requests": unresolved,
+                }
 
         resolved = _resolve_course_mentions(mentions, current, search_results)
         unresolved.extend(resolved["unresolved"])
         _merge_course_ids(hard, soft, resolved["course_ids"])
 
         if hard or soft:
-            return {
-                "tool_calls": [{
-                    "name": "update_timetable_preferences",
-                    "arguments": {
-                        **({"hard": hard} if hard else {}),
-                        **({"soft": soft} if soft else {}),
-                    },
-                }],
-                "unresolved_requests": unresolved,
-            }
+            if _tool_available("update_timetable_preferences", available_tools):
+                return {
+                    "tool_calls": [{
+                        "name": "update_timetable_preferences",
+                        "arguments": {
+                            **({"hard": hard} if hard else {}),
+                            **({"soft": soft} if soft else {}),
+                        },
+                    }],
+                    "unresolved_requests": unresolved,
+                }
+            unresolved.append({
+                "source_text": text,
+                "reason": "현재 에이전트에 조건 변경 도구가 노출되어 있지 않습니다.",
+                "needed_information": "조건 변경을 처리할 수 있는 단계에서 다시 요청해주세요.",
+                "requires_user_confirmation": True,
+            })
 
         return {
             "message": (
@@ -139,6 +134,47 @@ class SimpleSessionStateModel:
                 else "변경할 조건을 찾지 못했습니다."
             ),
             "unresolved_requests": unresolved,
+        }
+
+
+class LlmSessionStateModel:
+    """OpenAI-compatible chat completions adapter for the session-state agent."""
+
+    def __init__(
+        self,
+        *,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        model_name: str | None = None,
+        chat_completions: Callable[..., dict[str, Any]] = request_chat_completions,
+    ) -> None:
+        self._api_key = api_key if api_key is not None else os.getenv("OPENAI_API_KEY")
+        self._base_url = base_url if base_url is not None else os.getenv("OPENAI_BASE_URL", DEFAULT_OPENAI_BASE_URL)
+        self._model_name = model_name if model_name is not None else os.getenv("OPENAI_MODEL", DEFAULT_OPENAI_MODEL)
+        self._chat_completions = chat_completions
+
+    def __call__(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if not has_openai_api_key(self._api_key):
+            raise RuntimeError("OPENAI_API_KEY is not configured")
+
+        request_payload: dict[str, Any] = {
+            "model": self._model_name,
+            "messages": _chat_completion_messages(payload.get("messages") or []),
+        }
+        tools = _chat_completion_tools(payload.get("tools") or [])
+        if tools:
+            request_payload["tools"] = tools
+            request_payload["tool_choice"] = "auto"
+
+        response = self._chat_completions(
+            request_payload,
+            api_key=self._api_key,
+            base_url=self._base_url,
+        )
+        message = (response.get("choices") or [{}])[0].get("message") or {}
+        return {
+            "message": message.get("content"),
+            "tool_calls": _tool_calls_from_chat_message(message),
         }
 
 
@@ -703,6 +739,69 @@ def _catalog_type(catalog_id: str) -> str:
     return "unknown"
 
 
+def _available_tool_names(payload: dict[str, Any]) -> set[str] | None:
+    if "tools" not in payload:
+        return None
+    return {
+        str(spec.get("name"))
+        for spec in payload.get("tools") or []
+        if isinstance(spec, dict) and spec.get("name")
+    }
+
+
+def _tool_available(name: str, available_tools: set[str] | None) -> bool:
+    return available_tools is None or name in available_tools
+
+
+def _chat_completion_messages(messages: list[Any]) -> list[dict[str, Any]]:
+    converted: list[dict[str, Any]] = []
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        role = message.get("role")
+        if role not in {"system", "user", "assistant", "tool"}:
+            continue
+        item = dict(message)
+        content = item.get("content")
+        if isinstance(content, (dict, list)):
+            item["content"] = json.dumps(content, ensure_ascii=False)
+        converted.append(item)
+    return converted
+
+
+def _chat_completion_tools(tools: list[Any]) -> list[dict[str, Any]]:
+    converted: list[dict[str, Any]] = []
+    for spec in tools:
+        if not isinstance(spec, dict) or not spec.get("name"):
+            continue
+        converted.append({
+            "type": "function",
+            "function": {
+                "name": spec["name"],
+                "description": spec.get("description", ""),
+                "parameters": spec.get("parameters") or {"type": "object", "properties": {}},
+            },
+        })
+    return converted
+
+
+def _tool_calls_from_chat_message(message: dict[str, Any]) -> list[dict[str, Any]]:
+    calls: list[dict[str, Any]] = []
+    for call in message.get("tool_calls") or []:
+        function = call.get("function") or {}
+        name = function.get("name")
+        if not name:
+            continue
+        raw_arguments = function.get("arguments") or "{}"
+        try:
+            arguments = json.loads(raw_arguments) if isinstance(raw_arguments, str) else raw_arguments
+        except json.JSONDecodeError:
+            arguments = {}
+        if not isinstance(arguments, dict):
+            arguments = {}
+        calls.append({"name": name, "arguments": arguments})
+    return calls
+
 def _user_content(messages: list[Any]) -> dict[str, Any]:
     for message in messages:
         if not isinstance(message, dict) or message.get("role") != "user":
@@ -717,3 +816,5 @@ def _user_content(messages: list[Any]) -> dict[str, Any]:
                 return {"user_message": content}
             return parsed if isinstance(parsed, dict) else {"user_message": content}
     return {}
+
+

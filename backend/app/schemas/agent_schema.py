@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ..agent_tools.schemas import SessionStateSummary
 from .condition_summary_schema import ConditionSummaryDto
-from ..agents.session_state_agent import AgentCourseCandidate, UnresolvedSessionRequest
+from ..agents.session_state_agent import AgentCourseCandidate, SessionStateAgentError, UnresolvedSessionRequest
 from ..models.timetable_selection import SelectedTimetable
 
 
@@ -86,6 +86,8 @@ class PlanuChatRequest(_Model):
 class PlanuChatResponse(_Model):
     session_id: str
     message: str
+    success: bool = True
+    error: SessionStateAgentError | None = None
     changed: bool = False
     needs_confirmation: bool = False
     confirmation: ConfirmationDto | None = None

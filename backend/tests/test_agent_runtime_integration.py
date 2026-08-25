@@ -103,6 +103,8 @@ def test_chat_api_uses_agent_tools_and_returns_public_dto() -> None:
         assert response.status_code == 200, response.text
         body = response.json()
         assert body["session_id"] == session_id
+        assert body["success"] is True
+        assert body["error"] is None
         assert body["changed"] is True
         assert body["session_summary"]["hard_constraints"]["required_free_days"] == ["FRI"]
         assert "executed_tools" not in body
@@ -447,6 +449,59 @@ def test_simple_session_model_routes_course_names_to_catalog_search() -> None:
     }
 
 
+def test_simple_session_model_respects_exposed_tool_list() -> None:
+    model = SimpleSessionStateModel()
+
+    result = model(
+        {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": {
+                        "message": "자료구조는 선호하고 금요일은 반드시 비워줘",
+                        "current_state_summary": {
+                            "major_catalog_id": "major-catalog",
+                            "elective_catalog_id": "elective-catalog",
+                        },
+                    },
+                }
+            ],
+            "tools": [
+                {"name": "get_session_summary"},
+                {"name": "update_timetable_preferences"},
+                {"name": "reset_session_preferences"},
+            ],
+        }
+    )
+
+    assert [call["name"] for call in result["tool_calls"]] == ["update_timetable_preferences"]
+    args = result["tool_calls"][0]["arguments"]
+    assert args["hard"]["required_free_days"] == ["FRI"]
+    assert result["unresolved_requests"]
+    assert "자료구조" in result["unresolved_requests"][0]["source_text"]
+
+
+def test_simple_session_model_does_not_call_update_when_not_exposed() -> None:
+    model = SimpleSessionStateModel()
+
+    result = model(
+        {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": {
+                        "message": "금요일은 반드시 비워줘",
+                        "current_state_summary": {},
+                    },
+                }
+            ],
+            "tools": [{"name": "get_session_summary"}],
+        }
+    )
+
+    assert result.get("tool_calls", []) == []
+    assert result["unresolved_requests"]
+
 def test_general_preference_parser_accepts_injected_llm_without_env(monkeypatch) -> None:
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
@@ -491,5 +546,4 @@ def test_agent_runtime_constructor_depends_on_runnable_agent_protocol() -> None:
     hints = get_type_hints(AgentRuntime.__init__)
 
     assert hints["agent"] is RunnableAgent
-
 

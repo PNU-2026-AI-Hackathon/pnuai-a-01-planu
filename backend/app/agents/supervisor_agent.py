@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import Enum
@@ -15,6 +16,9 @@ from .session_state_agent import (
     SessionStateAgentInput,
     SessionStateAgentResult,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 class AgentDomain(str, Enum):
@@ -77,6 +81,12 @@ class PlanuSupervisorAgent:
     def run(self, data: SessionStateAgentInput | Mapping[str, object]) -> SessionStateAgentResult:
         request = SessionStateAgentInput.model_validate(data)
         route = classify_supervisor_route(request.user_message)
+        logger.info(
+            "planu_supervisor_route route=%s session_id=%s request_id=%s",
+            route.value,
+            request.session_id,
+            request.request_id,
+        )
         attempted: list[AgentDomain] = []
         result = self._run_domain(route, request, attempted)
         if _is_not_my_responsibility(result):

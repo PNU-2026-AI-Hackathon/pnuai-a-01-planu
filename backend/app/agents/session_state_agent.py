@@ -80,7 +80,6 @@ READ_ONLY_TOOL_NAMES = {
     "prepare_timetable_revision",
 }
 
-
 class SessionStateAgentErrorCode(str, Enum):
     """Stable error codes returned by the session-state agent."""
 
@@ -94,7 +93,6 @@ class SessionStateAgentErrorCode(str, Enum):
     TOOL_CALL_LIMIT_EXCEEDED = "TOOL_CALL_LIMIT_EXCEEDED"
     INTERNAL_ERROR = "INTERNAL_ERROR"
 
-
 class SessionStateAgentError(BaseModel):
     """Structured error for failures of the agent execution itself."""
 
@@ -105,7 +103,6 @@ class SessionStateAgentError(BaseModel):
     tool_name: str | None = None
     field: str | None = None
     value: str | None = None
-
 
 class SessionStateAgentInput(BaseModel):
     """Input for one PlaNU session-state agent run."""
@@ -128,7 +125,6 @@ class SessionStateAgentInput(BaseModel):
             raise ValueError("value must not be empty")
         return value
 
-
 class ExecutedSessionTool(BaseModel):
     """Safe summary of one tool execution."""
 
@@ -143,7 +139,6 @@ class ExecutedSessionTool(BaseModel):
     error_field: str | None = None
     error_value: str | None = None
 
-
 class UnresolvedCourseCandidate(BaseModel):
     """A candidate the user may need to choose from."""
 
@@ -155,7 +150,6 @@ class UnresolvedCourseCandidate(BaseModel):
     course_name: str | None = None
     matching_section_ids: list[str] = Field(default_factory=list)
     resolution: str | None = None
-
 
 class UnresolvedSessionRequest(BaseModel):
     """A user request the current session-state tools cannot safely apply."""
@@ -171,7 +165,6 @@ class UnresolvedSessionRequest(BaseModel):
     needed_information: str | None = None
     requires_user_confirmation: bool = False
     candidates: list[UnresolvedCourseCandidate] = Field(default_factory=list)
-
 
 class AgentCourseCandidate(BaseModel):
     """A compact course candidate safe to return from an agent run."""
@@ -189,7 +182,6 @@ class AgentCourseCandidate(BaseModel):
     matching_section_ids: list[str] = Field(default_factory=list)
     match_reasons: list[str] = Field(default_factory=list)
 
-
 class AgentDiscoveryResult(BaseModel):
     """Compact summary of one discovery/search tool result."""
 
@@ -203,7 +195,6 @@ class AgentDiscoveryResult(BaseModel):
     message: str
     candidate_courses: list[AgentCourseCandidate] = Field(default_factory=list)
 
-
 class ConfirmationRequest(BaseModel):
     """A user-facing request to choose among stable course candidates."""
 
@@ -212,7 +203,6 @@ class ConfirmationRequest(BaseModel):
     reason: str
     question: str
     candidates: list[AgentCourseCandidate] = Field(default_factory=list)
-
 
 class AgentTimetableGenerationSummary(BaseModel):
     """Compact, user-safe summary of a timetable generation result."""
@@ -227,7 +217,6 @@ class AgentTimetableGenerationSummary(BaseModel):
     applied_hard_constraints: dict[str, Any] = Field(default_factory=dict)
     target_additional_course_count: int | None = None
     target_additional_credits: float | None = None
-
 
 class AgentTimetableCandidate(BaseModel):
     """A generated timetable candidate safe to return from an agent run."""
@@ -246,7 +235,6 @@ class AgentTimetableCandidate(BaseModel):
     valid: bool
     generation_order: int
 
-
 class AgentTimetableSection(BaseModel):
     """User-safe course and section detail for a ranked candidate."""
 
@@ -262,7 +250,6 @@ class AgentTimetableSection(BaseModel):
     credit: float
     class_times: list[dict[str, Any]] = Field(default_factory=list)
 
-
 class AgentScoredPreferenceEvidence(BaseModel):
     """Compact scoring evidence safe for user explanation."""
 
@@ -271,7 +258,6 @@ class AgentScoredPreferenceEvidence(BaseModel):
     code: str
     component_code: str | None = None
     values: dict[str, Any] = Field(default_factory=dict)
-
 
 class AgentScoreComponent(BaseModel):
     """Compact score component safe for user explanation."""
@@ -284,7 +270,6 @@ class AgentScoreComponent(BaseModel):
     satisfied: bool
     details: dict[str, Any] = Field(default_factory=dict)
 
-
 class AgentTimetableTradeOff(BaseModel):
     """Compact trade-off evidence safe for user explanation."""
 
@@ -292,7 +277,6 @@ class AgentTimetableTradeOff(BaseModel):
 
     code: str
     values: dict[str, Any] = Field(default_factory=dict)
-
 
 class AgentRankedTimetableCandidate(BaseModel):
     """A ranked timetable candidate preserving ranking tool order."""
@@ -311,7 +295,6 @@ class AgentRankedTimetableCandidate(BaseModel):
     trade_offs: list[AgentTimetableTradeOff] = Field(default_factory=list)
     tie_breaker: dict[str, Any] = Field(default_factory=dict)
 
-
 class AgentRankingSummary(BaseModel):
     """Compact summary of a timetable ranking run."""
 
@@ -326,7 +309,6 @@ class AgentRankingSummary(BaseModel):
     lowest_score: float | None = None
     has_tied_scores: bool = False
     message: str | None = None
-
 
 class AgentRankingError(BaseModel):
     """Structured ranking failure preserved separately from generation."""
@@ -349,7 +331,6 @@ class AgentGenerationFailureReason(BaseModel):
     constraint: str | None = None
     count: int = 1
 
-
 class AgentValidationResult(BaseModel):
     """Compact validation result returned when validation is requested."""
 
@@ -359,7 +340,6 @@ class AgentValidationResult(BaseModel):
     checked_section_ids: list[str]
     violation_codes: list[str] = Field(default_factory=list)
     violation_messages: list[str] = Field(default_factory=list)
-
 
 class SessionStateAgentResult(BaseModel):
     """Final structured result of a session-state agent run."""
@@ -392,7 +372,6 @@ class SessionStateAgentResult(BaseModel):
     confirmation_request: ConfirmationRequest | None = None
     error: SessionStateAgentError | None = None
 
-
 class SessionStateToolCall(BaseModel):
     """Tool call requested by the injected model."""
 
@@ -400,7 +379,6 @@ class SessionStateToolCall(BaseModel):
 
     name: str = Field(min_length=1)
     arguments: dict[str, Any] = Field(default_factory=dict)
-
 
 class SessionStateModelResponse(BaseModel):
     """Normalized response from a tool-calling model."""
@@ -411,7 +389,6 @@ class SessionStateModelResponse(BaseModel):
     message: str | None = None
     unresolved_requests: list[UnresolvedSessionRequest] = Field(default_factory=list)
 
-
 class SessionStateToolSpec(BaseModel):
     """Description passed to native or fake tool-calling models."""
 
@@ -421,12 +398,22 @@ class SessionStateToolSpec(BaseModel):
     description: str
     parameters: dict[str, Any]
 
-
 class SessionStateToolset:
     """Registry of the session-state tools available to the agent."""
 
     def __init__(self, tools: Mapping[str, Callable[[Mapping[str, object]], Any]]) -> None:
         self._tools = dict(tools)
+        self._validate_registered_tool_metadata()
+
+    def _validate_registered_tool_metadata(self) -> None:
+        missing_input_models = sorted(set(self._tools) - set(_TOOL_INPUT_MODELS))
+        missing_descriptions = sorted(set(self._tools) - set(_TOOL_DESCRIPTIONS))
+        if missing_input_models or missing_descriptions:
+            raise ValueError(
+                "session-state tool metadata is incomplete: "
+                f"missing_input_models={missing_input_models}, "
+                f"missing_descriptions={missing_descriptions}"
+            )
 
     @classmethod
     def from_query_and_command_tools(cls, queries: object, commands: object) -> "SessionStateToolset":
@@ -514,7 +501,6 @@ class SessionStateToolset:
                 }
             )
         return cls(tools)
-
     def has_tool(self, name: str) -> bool:
         return name in self._tools
 
@@ -530,7 +516,6 @@ class SessionStateToolset:
             )
             for name in self._tools
         ]
-
 
 _TOOL_INPUT_MODELS: dict[str, type[BaseModel]] = {
     "get_session_summary": SessionIdInput,
@@ -664,7 +649,6 @@ _TOOL_DESCRIPTIONS: dict[str, str] = {
     "clear_soft_preferences": "Clear all Soft preferences only.",
     "clear_all_preferences": "Clear both Hard constraints and Soft preferences.",
 }
-
 
 class SessionStateAgent:
     """Run one tool-calling session-state agent turn."""
@@ -877,12 +861,16 @@ class SessionStateAgent:
 
             for tool_call in model_response.tool_calls:
                 if not self.tools.has_tool(tool_call.name):
+                    available_tools = [spec.name for spec in self.tools.specs()]
                     logger.warning(
-                        "session_state_agent_unknown_tool",
+                        "session_state_agent_unknown_tool tool_name=%s available_tools=%s",
+                        tool_call.name,
+                        available_tools,
                         extra={
                             "session_id": request.session_id,
                             "request_id": request.request_id,
                             "tool_name": tool_call.name,
+                            "available_tools": available_tools,
                         },
                     )
                     return self._failure(
@@ -894,7 +882,6 @@ class SessionStateAgent:
                         changed,
                         tool_name=tool_call.name,
                 )
-
                 arguments = {**tool_call.arguments}
                 if (
                     tool_call.name == "rank_timetable_candidates"
@@ -1285,12 +1272,10 @@ class SessionStateAgent:
     def _is_read_only_tool(name: str) -> bool:
         return name in READ_ONLY_TOOL_NAMES
 
-
 class _ToolExecution(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     result: Any
-
 
 def _agent_error_from_tool_result(
     result: SessionToolResult,
@@ -1314,10 +1299,8 @@ def _agent_error_from_tool_result(
         value=result.error.value,
     )
 
-
 def _failed_tools(executed: list[ExecutedSessionTool]) -> list[ExecutedSessionTool]:
     return [tool for tool in executed if not tool.success]
-
 
 def _tool_execution_success(name: str, result: Any) -> bool:
     if name == "generate_timetable_candidates":
@@ -1354,7 +1337,6 @@ def _tool_execution_success(name: str, result: Any) -> bool:
         return ranking.success
     return bool(getattr(result, "success", False))
 
-
 def _generation_result(
     tool_name: str,
     arguments: Mapping[str, object],
@@ -1371,7 +1353,6 @@ def _generation_result(
         logger.warning("session_state_agent_unexpected_generation_result")
         return None
     return request, generation
-
 
 def _validation_result(
     tool_name: str,
@@ -1392,7 +1373,6 @@ def _validation_result(
         violation_codes=[violation.code.value for violation in validation.violations],
         violation_messages=[violation.message for violation in validation.violations[:3]],
     )
-
 
 def _ranking_result(
     tool_name: str,
@@ -1415,7 +1395,6 @@ def _ranking_result(
         return None
     return request, ranking
 
-
 def _agent_ranked_timetable_candidates(
     request: TimetableScoringRequest | None,
     result: TimetableRankingResult,
@@ -1425,7 +1404,6 @@ def _agent_ranked_timetable_candidates(
         _agent_ranked_timetable_candidate(candidate, section_map)
         for candidate in result.ranked_candidates
     ]
-
 
 def _agent_ranked_timetable_candidate(
     candidate: ScoredTimetableCandidate,
@@ -1454,14 +1432,12 @@ def _agent_ranked_timetable_candidate(
         tie_breaker=dict(candidate.tie_breaker),
     )
 
-
 def _resolved_section_map(sections: list[ResolvedSection]) -> dict[str, ResolvedSection]:
     mapping: dict[str, ResolvedSection] = {}
     for section in sections:
         mapping[section.source.key] = section
         mapping[section.section.section_id] = section
     return mapping
-
 
 def _sections_for_candidate(
     candidate: ScoredTimetableCandidate,
@@ -1479,7 +1455,6 @@ def _sections_for_candidate(
                 resolved.append(section)
     return resolved
 
-
 def _agent_timetable_section(section: ResolvedSection) -> AgentTimetableSection:
     course_section = section.section
     return AgentTimetableSection(
@@ -1494,7 +1469,6 @@ def _agent_timetable_section(section: ResolvedSection) -> AgentTimetableSection:
         class_times=[meeting.model_dump(mode="json") for meeting in course_section.class_times],
     )
 
-
 def _agent_score_component(component: ScoreComponent) -> AgentScoreComponent:
     return AgentScoreComponent(
         code=component.code.value,
@@ -1503,7 +1477,6 @@ def _agent_score_component(component: ScoreComponent) -> AgentScoreComponent:
         satisfied=component.satisfied,
         details=dict(component.details),
     )
-
 
 def _agent_scored_preference_evidence(
     evidence: PreferenceEvidence,
@@ -1514,13 +1487,11 @@ def _agent_scored_preference_evidence(
         values=dict(evidence.values),
     )
 
-
 def _agent_timetable_trade_off(trade_off: ScoringTradeOff) -> AgentTimetableTradeOff:
     return AgentTimetableTradeOff(
         code=trade_off.code.value,
         values=dict(trade_off.values),
     )
-
 
 def _agent_ranking_summary(
     request: TimetableScoringRequest | None,
@@ -1543,14 +1514,12 @@ def _agent_ranking_summary(
         message=result.message,
     )
 
-
 def _agent_ranking_error(error: TimetableScoringError) -> AgentRankingError:
     return AgentRankingError(
         code=error.code.value,
         message=error.message,
         candidate_id=error.candidate_id,
     )
-
 
 def _soft_preferences_present(preferences: object) -> bool:
     data = preferences.model_dump(mode="json") if hasattr(preferences, "model_dump") else {}
@@ -1586,7 +1555,6 @@ def _agent_generation_summary(
         target_additional_credits=request.target_additional_credits,
     )
 
-
 def _agent_timetable_candidates(
     candidates: list[GeneratedTimetableCandidate],
 ) -> list[AgentTimetableCandidate]:
@@ -1615,7 +1583,6 @@ def _agent_timetable_candidates(
         for candidate in sorted(candidates, key=lambda item: item.generation_order)
     ]
 
-
 def _agent_generation_failure_reasons(
     reasons: list[GenerationFailureReason],
     *,
@@ -1632,7 +1599,6 @@ def _agent_generation_failure_reasons(
         )
         for reason in reasons[:limit]
     ]
-
 
 def _generation_failure_message(reason: GenerationFailureReason) -> str:
     messages = {
@@ -1660,7 +1626,6 @@ def _generation_failure_message(reason: GenerationFailureReason) -> str:
     }
     return messages.get(reason.code, reason.message)
 
-
 def _unresolved_requests_from_failed_tools(
     failed_tools: list[ExecutedSessionTool],
 ) -> list[UnresolvedSessionRequest]:
@@ -1678,7 +1643,6 @@ def _unresolved_requests_from_failed_tools(
             )
         )
     return unresolved
-
 
 def _agent_discovery_result(
     tool_name: str,
@@ -1708,7 +1672,6 @@ def _agent_discovery_result(
         ],
     )
 
-
 def _agent_course_candidate(candidate: CourseCandidate) -> AgentCourseCandidate:
     return AgentCourseCandidate(
         course_id=candidate.course_id,
@@ -1722,7 +1685,6 @@ def _agent_course_candidate(candidate: CourseCandidate) -> AgentCourseCandidate:
         matching_section_ids=list(candidate.matching_section_ids),
         match_reasons=list(candidate.match_reasons),
     )
-
 
 def _candidate_courses_from_discovery(
     discovery_results: list[AgentDiscoveryResult],
@@ -1738,7 +1700,6 @@ def _candidate_courses_from_discovery(
             candidates.append(candidate)
     return candidates
 
-
 def _confirmation_request_from_discovery(
     discovery_results: list[AgentDiscoveryResult],
 ) -> ConfirmationRequest | None:
@@ -1751,7 +1712,6 @@ def _confirmation_request_from_discovery(
             candidates=discovery.candidate_courses,
         )
     return None
-
 
 def _partial_or_failed_message(
     changed: bool,
@@ -1778,10 +1738,8 @@ def _partial_or_failed_message(
         ]
     )
 
-
 def load_session_state_agent_prompt() -> str:
     return SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
-
 
 def result_to_pretty_json(result: SessionStateAgentResult) -> str:
     return json.dumps(result.model_dump(mode="json"), ensure_ascii=False, indent=2)

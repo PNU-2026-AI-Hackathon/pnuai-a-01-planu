@@ -70,9 +70,11 @@ class ConditionSummaryItem {
         }
         if (courseRefs.isNotEmpty) {
           final candidates = courseRefs
-              .map((ref) => ref.courseName?.trim().isNotEmpty == true
-                  ? ref.courseName
-                  : ref.courseId)
+              .map(
+                (ref) => ref.courseName?.trim().isNotEmpty == true
+                    ? ref.courseName
+                    : ref.courseId,
+              )
               .whereType<String>()
               .toSet()
               .join(', ');
@@ -166,12 +168,12 @@ class ConditionSummary {
             .whereType<Map<String, dynamic>>()
             .map(ConditionSummaryItem.fromJson)
             .toList(),
-        selectedMajorCourses: (json['selected_major_courses'] as List? ?? const [])
-            .whereType<Map<String, dynamic>>()
-            .map(ConditionCourseRef.fromJson)
-            .toList(),
-        generationReadiness:
-            GenerationReadiness.fromJson(
+        selectedMajorCourses:
+            (json['selected_major_courses'] as List? ?? const [])
+                .whereType<Map<String, dynamic>>()
+                .map(ConditionCourseRef.fromJson)
+                .toList(),
+        generationReadiness: GenerationReadiness.fromJson(
           (json['generation_readiness'] as Map<String, dynamic>?) ?? const {},
         ),
       );
@@ -181,20 +183,29 @@ class PlanuChatResponse {
   const PlanuChatResponse({
     required this.sessionId,
     required this.message,
+    this.success = true,
+    this.error,
     this.conditionSummary,
   });
 
   final String sessionId;
   final String message;
+  final bool success;
+  final Map<String, dynamic>? error;
   final ConditionSummary? conditionSummary;
 
   factory PlanuChatResponse.fromJson(Map<String, dynamic> json) =>
       PlanuChatResponse(
         sessionId: json['session_id'] as String? ?? '',
         message: json['message'] as String? ?? '',
+        success: json['success'] as bool? ?? true,
+        error: json['error'] == null
+            ? null
+            : (json['error'] as Map).cast<String, dynamic>(),
         conditionSummary: json['condition_summary'] == null
             ? null
             : ConditionSummary.fromJson(
-                (json['condition_summary'] as Map).cast<String, dynamic>()),
+                (json['condition_summary'] as Map).cast<String, dynamic>(),
+              ),
       );
 }

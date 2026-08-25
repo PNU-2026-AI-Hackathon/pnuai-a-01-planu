@@ -175,6 +175,8 @@ def chat_response_from_agent_result(
     return PlanuChatResponse(
         session_id=result.session_id or "",
         message=result.message,
+        success=result.success,
+        error=result.error,
         changed=result.changed,
         needs_confirmation=result.needs_confirmation,
         confirmation=confirmation,

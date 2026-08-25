@@ -20,6 +20,7 @@ from backend.app.agents import (
     SessionStateAgentErrorCode,
     SessionStateToolset,
 )
+from backend.app.agents.simple_session_model import LlmSessionStateModel
 from backend.app.models import CatalogKind, Category, ClassTime, Course, Day
 from backend.app.repositories import InMemoryCatalogRepository, InMemorySessionRepository
 from backend.app.services.course_discovery_service import CourseDiscoveryService
@@ -36,7 +37,6 @@ from backend.app.services.timetable_preparation_service import (
     TimetablePreparationService,
 )
 
-
 class MutableClock:
     def __init__(self, current: datetime) -> None:
         self.current = current
@@ -47,7 +47,6 @@ class MutableClock:
     def advance(self, delta: timedelta) -> datetime:
         self.current = self.current + delta
         return self.current
-
 
 class ScriptedModel:
     def __init__(self, *responses: dict[str, Any] | Exception) -> None:
@@ -63,13 +62,11 @@ class ScriptedModel:
             raise response
         return response
 
-
 class RecordingTools(SessionStateToolset):
     def __init__(self, wrapped: SessionStateToolset) -> None:
         self.wrapped = wrapped
         self.calls: list[tuple[str, dict[str, object]]] = []
         self.results: list[Any] = []
-
     def has_tool(self, name: str) -> bool:
         return self.wrapped.has_tool(name)
 
@@ -81,7 +78,6 @@ class RecordingTools(SessionStateToolset):
 
     def specs(self):
         return self.wrapped.specs()
-
 
 class ExplodingTools(RecordingTools):
     def __init__(self, wrapped: SessionStateToolset, *, fail_on: str) -> None:
@@ -96,10 +92,8 @@ class ExplodingTools(RecordingTools):
         self.results.append(result)
         return result
 
-
 def _now() -> datetime:
     return datetime(2026, 7, 26, 12, 0, tzinfo=timezone.utc)
-
 
 def _service(clock: MutableClock | None = None) -> SessionService:
     return SessionService(
@@ -108,7 +102,6 @@ def _service(clock: MutableClock | None = None) -> SessionService:
         now_provider=clock or MutableClock(_now()),
         session_id_provider=lambda: "session-1",
     )
-
 
 def _agent(
     model: ScriptedModel,
@@ -132,7 +125,6 @@ def _agent(
         service,
         tools,
     )
-
 
 def _agent_with_discovery(
     model: ScriptedModel,
@@ -171,10 +163,8 @@ def _agent_with_discovery(
         catalog_repository,
     )
 
-
 def _create_session(service: SessionService) -> str:
     return service.create_session().session_id
-
 
 def _run(
     agent: SessionStateAgent,
@@ -188,10 +178,78 @@ def _run(
         data["request_id"] = request_id
     return agent.run(data)
 
-
 def _tool(name: str, **arguments: object) -> dict[str, Any]:
     return {"name": name, "arguments": arguments}
 
+def test_toolset_rejects_registered_tool_without_llm_metadata() -> None:
+    with pytest.raises(ValueError, match="metadata is incomplete"):
+        SessionStateToolset({"unexposed_tool": lambda _args: None})
+
+
+def test_llm_session_state_model_exposes_registered_tools_to_openai() -> None:
+    requests: list[dict[str, Any]] = []
+
+    def fake_chat_completions(payload: dict[str, Any], **_kwargs: object) -> dict[str, Any]:
+        requests.append(payload)
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "function": {
+                                    "name": "search_courses_by_name",
+                                    "arguments": "{\"catalog_id\": \"major-1\", \"query\": \"자료구조\"}",
+                                }
+                            }
+                        ],
+                    }
+                }
+            ]
+        }
+
+    model = LlmSessionStateModel(
+        api_key="test-key",
+        model_name="test-model",
+        chat_completions=fake_chat_completions,
+    )
+    result = model(
+        {
+            "messages": [
+                {"role": "system", "content": "system prompt"},
+                {"role": "user", "content": {"user_message": "자료구조 찾아줘"}},
+            ],
+            "tools": [
+                {
+                    "name": "search_courses_by_name",
+                    "description": "Search by course name.",
+                    "parameters": {"type": "object", "properties": {"query": {"type": "string"}}},
+                }
+            ],
+        }
+    )
+
+    assert requests[0]["tools"] == [
+        {
+            "type": "function",
+            "function": {
+                "name": "search_courses_by_name",
+                "description": "Search by course name.",
+                "parameters": {"type": "object", "properties": {"query": {"type": "string"}}},
+            },
+        }
+    ]
+    assert requests[0]["tool_choice"] == "auto"
+    assert result == {
+        "message": None,
+        "tool_calls": [
+            {
+                "name": "search_courses_by_name",
+                "arguments": {"catalog_id": "major-1", "query": "자료구조"},
+            }
+        ],
+    }
 
 def _class_time(day: Day, start: str, end: str) -> ClassTime:
     return ClassTime(
@@ -201,7 +259,6 @@ def _class_time(day: Day, start: str, end: str) -> ClassTime:
         classroom="609-313",
         building_code="609",
     )
-
 
 def _course(
     code: str,
@@ -224,7 +281,6 @@ def _course(
         class_times=class_times or [_class_time(Day.MON, "10:00", "11:15")],
     )
 
-
 def _class_time_json(day: str, start: str, end: str) -> dict[str, str]:
     return {
         "day": day,
@@ -233,7 +289,6 @@ def _class_time_json(day: str, start: str, end: str) -> dict[str, str]:
         "classroom": "609-313",
         "building_code": "609",
     }
-
 
 def _section_json(
     catalog_id: str,
@@ -262,7 +317,6 @@ def _section_json(
         },
     }
 
-
 def _candidate_json(
     candidate_id: str,
     added_section_id: str,
@@ -290,7 +344,6 @@ def _candidate_json(
         },
         "generation_order": 1 if added_course_id == "GEN101" else 2,
     }
-
 
 def _register_test_catalogs(repository: InMemoryCatalogRepository) -> None:
     repository.register(
@@ -372,7 +425,6 @@ def _register_test_catalogs(repository: InMemoryCatalogRepository) -> None:
         ],
     )
 
-
 def test_blank_user_message_is_rejected_without_model_or_tool_call() -> None:
     model = ScriptedModel({"tool_calls": []})
     agent, _service, tools = _agent(model)
@@ -385,7 +437,6 @@ def test_blank_user_message_is_rejected_without_model_or_tool_call() -> None:
     assert model.calls == []
     assert tools.calls == []
 
-
 def test_missing_session_stops_before_state_mutations() -> None:
     agent, _service, tools = _agent(
         ScriptedModel({"tool_calls": [_tool("add_required_free_day", day="FRI")]})
@@ -397,7 +448,6 @@ def test_missing_session_stops_before_state_mutations() -> None:
     assert result.error is not None
     assert result.error.code == SessionStateAgentErrorCode.SESSION_NOT_AVAILABLE
     assert [name for name, _args in tools.calls] == ["get_session_summary"]
-
 
 def test_initial_and_final_session_summary_are_called_even_without_changes() -> None:
     model = ScriptedModel({"message": "변경 없음", "tool_calls": []})
@@ -413,7 +463,6 @@ def test_initial_and_final_session_summary_are_called_even_without_changes() -> 
         "get_session_summary",
         "get_session_summary",
     ]
-
 
 @pytest.mark.parametrize(
     ("message", "tool_call", "expected_field"),
@@ -474,7 +523,6 @@ def test_single_condition_tool_selection_results_in_expected_state(
     else:
         assert summary.soft_preferences.compact_schedule == expected
 
-
 @pytest.mark.parametrize(
     ("setup_tool", "tool_call", "expected_names"),
     [
@@ -512,7 +560,6 @@ def test_removal_requests_call_targeted_clear_or_remove_tools(
 
     assert result.success is True
     assert [name for name, _args in tools.calls] == expected_names
-
 
 def test_multiple_conditions_execute_in_order_and_continue_after_idempotent_tool() -> None:
     agent, service, tools = _agent(
@@ -553,7 +600,6 @@ def test_multiple_conditions_execute_in_order_and_continue_after_idempotent_tool
         "add_excluded_course",
     ]
 
-
 def test_tool_error_makes_final_result_partial_even_when_following_tool_runs() -> None:
     agent, service, _tools = _agent(
         ScriptedModel(
@@ -584,7 +630,6 @@ def test_tool_error_makes_final_result_partial_even_when_following_tool_runs() -
     assert result.state_summary.hard_constraints.required_free_days == [Day.TUE]
     assert any("add_preferred_course" in item.source_text for item in result.unresolved_requests)
 
-
 def test_partial_success_does_not_trust_unsafe_model_message() -> None:
     agent, service, _tools = _agent(
         ScriptedModel(
@@ -612,7 +657,6 @@ def test_partial_success_does_not_trust_unsafe_model_message() -> None:
     assert "모든 조건" not in result.message
     assert "일부 조건" in result.message
 
-
 def test_first_mutation_failure_returns_structured_failure_without_state_change() -> None:
     agent, service, _tools = _agent(
         ScriptedModel(
@@ -637,7 +681,6 @@ def test_first_mutation_failure_returns_structured_failure_without_state_change(
     assert result.state_summary is not None
     assert result.state_summary.soft_preferences.preferred_course_ids == []
     assert result.state_summary.hard_constraints.excluded_course_ids == ["C001"]
-
 
 def test_current_state_modification_uses_remove_then_add_without_replacing_state() -> None:
     agent, service, tools = _agent(
@@ -667,7 +710,6 @@ def test_current_state_modification_uses_remove_then_add_without_replacing_state
     assert result.state_summary is not None
     assert result.state_summary.hard_constraints.required_free_days == [Day.TUE]
 
-
 def test_repeated_same_condition_returns_changed_false() -> None:
     agent, service, _tools = _agent(
         ScriptedModel(
@@ -687,7 +729,6 @@ def test_repeated_same_condition_returns_changed_false() -> None:
     assert result.partially_applied is False
     assert result.failed_tools == []
 
-
 def test_idempotent_remove_missing_value_is_not_failed_tool() -> None:
     agent, service, _tools = _agent(
         ScriptedModel(
@@ -705,7 +746,6 @@ def test_idempotent_remove_missing_value_is_not_failed_tool() -> None:
     assert result.failed_tools == []
     assert result.executed_tools[1].success is True
     assert result.executed_tools[1].changed is False
-
 
 @pytest.mark.parametrize(
     ("message", "source_text", "reason"),
@@ -761,10 +801,9 @@ def test_unresolved_requests_are_structured_and_not_applied(
     ]
     assert "반영했습니다" not in result.message
 
-
 def test_unknown_tool_name_returns_structured_model_error() -> None:
     agent, service, _tools = _agent(
-        ScriptedModel({"tool_calls": [_tool("search_course_by_name", query="자료구조")]})
+        ScriptedModel({"tool_calls": [_tool("lookup_course_by_name", query="자료구조")]})
     )
     session_id = _create_session(service)
 
@@ -773,8 +812,7 @@ def test_unknown_tool_name_returns_structured_model_error() -> None:
     assert result.success is False
     assert result.error is not None
     assert result.error.code == SessionStateAgentErrorCode.UNKNOWN_TOOL
-    assert result.error.tool_name == "search_course_by_name"
-
+    assert result.error.tool_name == "lookup_course_by_name"
 
 def test_invalid_tool_arguments_return_structured_model_error() -> None:
     agent, service, _tools = _agent(
@@ -789,7 +827,6 @@ def test_invalid_tool_arguments_return_structured_model_error() -> None:
     assert result.error.code == SessionStateAgentErrorCode.INVALID_TOOL_ARGUMENTS
     assert result.error.tool_name == "add_required_course"
     assert result.error.field == "course_id"
-
 
 def test_tool_call_limit_stops_without_infinite_recall() -> None:
     model = ScriptedModel(
@@ -807,7 +844,6 @@ def test_tool_call_limit_stops_without_infinite_recall() -> None:
     assert result.changed is False
     assert result.partially_applied is False
     assert len(model.calls) == 1
-
 
 def test_max_mutation_tool_calls_excludes_initial_and_final_summary_queries() -> None:
     agent, service, tools = _agent(
@@ -837,7 +873,6 @@ def test_max_mutation_tool_calls_excludes_initial_and_final_summary_queries() ->
     assert result.state_summary is not None
     assert result.state_summary.hard_constraints.required_free_days == [Day.FRI]
     assert result.state_summary.hard_constraints.earliest_start_time == "10:00"
-
 
 def test_mutation_limit_excess_tool_is_not_executed_and_current_state_is_returned() -> None:
     agent, service, tools = _agent(
@@ -872,7 +907,6 @@ def test_mutation_limit_excess_tool_is_not_executed_and_current_state_is_returne
     assert result.state_summary.hard_constraints.earliest_start_time == "10:00"
     assert result.state_summary.hard_constraints.latest_end_time is None
 
-
 def test_request_id_is_passed_to_model_and_result() -> None:
     model = ScriptedModel({"message": "변경 없음", "tool_calls": []})
     agent, service, _tools = _agent(model)
@@ -882,7 +916,6 @@ def test_request_id_is_passed_to_model_and_result() -> None:
 
     assert result.request_id == "req-123"
     assert model.calls[0]["messages"][1]["content"]["request_id"] == "req-123"
-
 
 def test_model_failure_is_sanitized_and_external_llm_is_not_required() -> None:
     model = ScriptedModel(RuntimeError("raw provider failure"))
@@ -895,7 +928,6 @@ def test_model_failure_is_sanitized_and_external_llm_is_not_required() -> None:
     assert result.error is not None
     assert result.error.code == SessionStateAgentErrorCode.MODEL_CALL_FAILED
     assert "raw provider failure" not in result.message
-
 
 def test_model_supplied_session_id_is_overridden_by_request_session_id() -> None:
     ids = iter(["url-session", "other-session"])
@@ -940,7 +972,6 @@ def test_model_supplied_session_id_is_overridden_by_request_session_id() -> None
     assert service.get_session(url_session_id).hard_constraints.required_free_days == [Day.FRI]
     assert service.get_session(other_session_id).hard_constraints.required_free_days == []
 
-
 def test_unexpected_tool_exception_returns_structured_internal_error() -> None:
     service = _service()
     wrapped = SessionStateToolset.from_agent_and_discovery_tools(
@@ -982,7 +1013,6 @@ def test_unexpected_tool_exception_returns_structured_internal_error() -> None:
     assert result.failed_tools == []
     assert service.get_session(session_id).hard_constraints.required_free_days == [Day.FRI]
 
-
 @pytest.mark.parametrize(
     ("max_tool_calls", "max_mutation_tool_calls", "message"),
     [
@@ -1005,7 +1035,6 @@ def test_tool_call_limit_configuration_rejects_invalid_values(
             max_mutation_tool_calls=max_mutation_tool_calls,
         )
 
-
 def test_tool_call_limit_configuration_accepts_boundary_values() -> None:
     agent = SessionStateAgent(
         model=ScriptedModel({"tool_calls": []}),
@@ -1016,7 +1045,6 @@ def test_tool_call_limit_configuration_accepts_boundary_values() -> None:
 
     assert agent.max_total_tool_calls == 1
     assert agent.max_mutation_tool_calls == 0
-
 
 def test_result_tool_records_are_ordered_and_final_summary_matches_storage() -> None:
     agent, service, _tools = _agent(
@@ -1049,7 +1077,6 @@ def test_result_tool_records_are_ordered_and_final_summary_matches_storage() -> 
     assert result.state_summary.department == stored.department
     assert result.state_summary.soft_preferences == stored.soft_preferences
 
-
 def test_discovery_tools_are_registered_with_single_agent_toolset() -> None:
     agent, service, tools, _catalogs = _agent_with_discovery(
         ScriptedModel({"message": "확인했습니다.", "tool_calls": []})
@@ -1074,7 +1101,6 @@ def test_discovery_tools_are_registered_with_single_agent_toolset() -> None:
         "get_session_summary",
     ]
 
-
 def test_timetable_generation_tools_are_registered_with_single_agent_toolset() -> None:
     agent, service, tools, _catalogs = _agent_with_discovery(
         ScriptedModel({"message": "확인했습니다.", "tool_calls": []})
@@ -1092,7 +1118,6 @@ def test_timetable_generation_tools_are_registered_with_single_agent_toolset() -
         "rank_timetable_candidates",
     } <= specs
     assert len(specs) == len(tools.specs())
-
 
 def test_generation_tool_result_is_returned_without_saving_to_session() -> None:
     agent, service, tools, _catalogs = _agent_with_discovery(
@@ -1149,7 +1174,6 @@ def test_generation_tool_result_is_returned_without_saving_to_session() -> None:
         "generate_timetable_candidates",
         "get_session_summary",
     ]
-
 
 def test_generation_then_ranking_result_is_returned_without_auto_selecting_top_candidate() -> None:
     candidates = [
@@ -1267,7 +1291,6 @@ def test_generation_then_ranking_result_is_returned_without_auto_selecting_top_c
         "get_session_summary",
     ]
 
-
 def test_ranking_failure_keeps_generated_candidates_and_reports_ranking_error() -> None:
     candidates = [_candidate_json("candidate-missing-section", "GEN101-001", "GEN101")]
     agent, service, tools, _catalogs = _agent_with_discovery(
@@ -1363,7 +1386,6 @@ def test_generation_failure_reasons_are_capped_and_user_facing() -> None:
     assert "자동 완화" not in result.message
     assert "generate_timetable_candidates" in [name for name, _args in tools.calls]
 
-
 def test_validation_tool_result_is_returned_for_explicit_section_check() -> None:
     agent, service, tools, _catalogs = _agent_with_discovery(
         ScriptedModel(
@@ -1389,7 +1411,6 @@ def test_validation_tool_result_is_returned_for_explicit_section_check() -> None
     assert result.validation_results[0].valid is False
     assert "TIME_CONFLICT" in result.validation_results[0].violation_codes
     assert "generate_timetable_candidates" not in [name for name, _args in tools.calls]
-
 
 def test_preparation_service_builds_generation_request_from_discovery_candidates() -> None:
     agent, service, tools, _catalogs = _agent_with_discovery(
@@ -1442,7 +1463,6 @@ def test_preparation_service_builds_generation_request_from_discovery_candidates
         for source in sources
     )
 
-
 def test_preparation_service_carries_session_credit_bounds_to_validation_request() -> None:
     agent, service, tools, _catalogs = _agent_with_discovery(
         ScriptedModel({"message": "확인했습니다.", "tool_calls": []})
@@ -1488,7 +1508,6 @@ def test_preparation_service_carries_session_credit_bounds_to_validation_request
     assert prepared.request.min_credit == 12
     assert prepared.request.max_credit == 22
     assert prepared.request.target_additional_credits == 3
-
 
 def test_preparation_service_requires_major_section_when_only_course_id_is_selected() -> None:
     agent, service, _tools, _catalogs = _agent_with_discovery(
@@ -1561,7 +1580,6 @@ def test_explicit_major_course_search_returns_candidate_without_state_change() -
         "get_session_summary",
     ]
 
-
 def test_exact_search_can_feed_required_course_update_after_resolution() -> None:
     agent, service, tools, _catalogs = _agent_with_discovery(
         ScriptedModel(
@@ -1603,7 +1621,6 @@ def test_exact_search_can_feed_required_course_update_after_resolution() -> None
         "get_session_summary",
     ]
 
-
 def test_ambiguous_search_sets_confirmation_without_selecting_first_candidate() -> None:
     agent, service, tools, _catalogs = _agent_with_discovery(
         ScriptedModel(
@@ -1635,7 +1652,6 @@ def test_ambiguous_search_sets_confirmation_without_selecting_first_candidate() 
         "GEN202",
     }
     assert "update_timetable_preferences" not in [name for name, _args in tools.calls]
-
 
 def test_condition_discovery_uses_structured_filters_and_candidate_summary() -> None:
     agent, service, tools, _catalogs = _agent_with_discovery(
@@ -1680,7 +1696,6 @@ def test_condition_discovery_uses_structured_filters_and_candidate_summary() -> 
     assert discover_args["excluded_days"] == ["FRI"]
     assert discover_args["earliest_start_time"] == "10:00"
     assert "get_course_sections" not in [name for name, _args in tools.calls]
-
 
 def test_state_change_then_discovery_uses_updated_hard_constraints_in_order() -> None:
     agent, service, tools, _catalogs = _agent_with_discovery(
@@ -1728,7 +1743,6 @@ def test_state_change_then_discovery_uses_updated_hard_constraints_in_order() ->
     ]
     assert tools.calls[3][1]["excluded_days"] == ["FRI"]
 
-
 def test_soft_preferences_are_not_sent_as_hard_discovery_filters() -> None:
     agent, service, tools, _catalogs = _agent_with_discovery(
         ScriptedModel(
@@ -1766,7 +1780,6 @@ def test_soft_preferences_are_not_sent_as_hard_discovery_filters() -> None:
     assert result.state_summary.soft_preferences.preferred_free_days == [Day.FRI]
     assert "excluded_days" not in tools.calls[3][1]
 
-
 def test_catalog_missing_request_stays_unresolved_without_discovery_call() -> None:
     agent, service, tools, _catalogs = _agent_with_discovery(
         ScriptedModel(
@@ -1794,7 +1807,6 @@ def test_catalog_missing_request_stays_unresolved_without_discovery_call() -> No
         "get_session_summary",
         "get_session_summary",
     ]
-
 
 def test_sections_and_section_details_are_called_only_when_requested() -> None:
     agent, service, tools, _catalogs = _agent_with_discovery(
