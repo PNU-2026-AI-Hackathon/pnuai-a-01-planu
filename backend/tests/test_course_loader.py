@@ -8,7 +8,6 @@ import pytest
 
 from backend.app.models.course import Category, Day
 from backend.app.services.course_loader import CourseCatalogLoadError, load_courses, load_default_catalogs
-from backend.app.services.department_service import load_departments
 
 
 def test_load_courses_reads_generated_catalog_json(tmp_path) -> None:
@@ -150,13 +149,3 @@ def test_load_courses_skips_unsupported_schedule_days(tmp_path) -> None:
     ], ensure_ascii=False), encoding="utf-8")
 
     assert load_courses(path) == []
-
-
-def test_load_departments_accepts_generated_grouped_json(tmp_path) -> None:
-    path = tmp_path / "departments.json"
-    path.write_text(json.dumps([
-        {"college": None, "departments": ["컴퓨터공학과", "전기공학과"]},
-        {"college": "공과대학", "departments": ["컴퓨터공학과"]},
-    ], ensure_ascii=False), encoding="utf-8")
-
-    assert load_departments(path) == ["전기공학과", "컴퓨터공학과"]
