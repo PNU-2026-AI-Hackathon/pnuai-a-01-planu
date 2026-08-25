@@ -541,6 +541,78 @@ def test_ranking_service_removes_duplicates_and_saves_result() -> None:
     assert saved.latest_ranking_result == result
 
 
+def test_ranking_service_removes_user_facing_duplicate_timetables() -> None:
+    store = SessionStore()
+    session = store.create("computer science")
+    original = Timetable(courses=[_course("GEN-A", day=Day.MON)])
+    visible_duplicate = Timetable(
+        courses=[
+            _course("GEN-A-HIDDEN-COPY", day=Day.MON).model_copy(
+                update={"course_name": original.courses[0].course_name}
+            )
+        ]
+    )
+    alternative_1 = Timetable(courses=[_course("GEN-B", day=Day.TUE)])
+    alternative_2 = Timetable(courses=[_course("GEN-C", day=Day.WED)])
+    store.update_generated_candidates(
+        session.session_id,
+        candidates=[original, visible_duplicate, alternative_1, alternative_2],
+    )
+
+    result = TimetableRankingService(store).rank_for_session(
+        session_id=session.session_id,
+        template=RankingTemplate.BALANCED,
+        top_n=3,
+    )
+
+    signatures = [
+        tuple(
+            sorted(
+                (
+                    course.course_name,
+                    course.division,
+                    tuple((item.day, item.start, item.end) for item in timetable.schedule_items),
+                )
+                for course in timetable.courses
+            )
+        )
+        for timetable in (item.timetable for item in result.ranked_candidates)
+    ]
+    assert len(result.ranked_candidates) == 3
+    assert len(set(signatures)) == 3
+    assert any(
+        diagnostic.code == "DUPLICATE_VISIBLE_TIMETABLE_REMOVED"
+        and diagnostic.details["removed_count"] == 1
+        for diagnostic in result.diagnostics
+    )
+
+
+def test_ranking_service_returns_only_real_unique_candidates_when_top_three_unavailable() -> None:
+    store = SessionStore()
+    session = store.create("computer science")
+    original = Timetable(courses=[_course("GEN-A", day=Day.MON)])
+    visible_duplicate = Timetable(
+        courses=[
+            _course("GEN-A-HIDDEN-COPY", day=Day.MON).model_copy(
+                update={"course_name": original.courses[0].course_name}
+            )
+        ]
+    )
+    store.update_generated_candidates(
+        session.session_id,
+        candidates=[original, visible_duplicate],
+    )
+
+    result = TimetableRankingService(store).rank_for_session(
+        session_id=session.session_id,
+        template=RankingTemplate.BALANCED,
+        top_n=3,
+    )
+
+    assert len(result.ranked_candidates) == 1
+    assert result.ranked_candidates[0].timetable.courses[0].course_id == "GEN-A"
+
+
 def test_ranking_service_hard_filter_diagnostic_matches_ranked_count() -> None:
     store = SessionStore()
     session = store.create("정보컴퓨터공학부")

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../models/app_flow_state.dart';
 import '../models/major_models.dart';
 import '../services/planu_api.dart';
+import '../services/session_error_handler.dart';
 import 'timetable_result_screen.dart';
 import '../widgets/flow_step_badge.dart';
 
@@ -47,6 +48,7 @@ class _TimetableLoadingScreenState extends State<TimetableLoadingScreen> {
         prompt: widget.flow.preferencePrompt,
         targetCredits: widget.flow.targetTotalCredits,
         electiveCount: widget.flow.additionalElectiveCount,
+        maxCandidates: 100,
       );
       if (!mounted) return;
       setState(() => _step = '추천 순위 계산 중');
@@ -66,8 +68,12 @@ class _TimetableLoadingScreenState extends State<TimetableLoadingScreen> {
       );
     } on ApiError catch (e) {
       if (!mounted) return;
-      if (e.code == 'SESSION_NOT_FOUND') {
-        widget.onSessionExpired();
+      if (handleSessionExpiredError(
+        context,
+        e,
+        flow: widget.flow,
+        onSessionExpired: widget.onSessionExpired,
+      )) {
         return;
       }
       ScaffoldMessenger.of(

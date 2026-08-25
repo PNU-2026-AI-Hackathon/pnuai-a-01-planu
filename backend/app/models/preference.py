@@ -1,4 +1,10 @@
-"""Validated rules produced from a user's natural-language preferences."""
+﻿"""Input DTOs for free-text and LLM-produced timetable preferences.
+
+These models describe user intent before it has been committed to a session.
+They may contain course names, parser traces, warnings, raw LLM output, and
+other interpretation metadata. Resolved session state lives in
+``session_preferences.py`` and stores concrete ``course_id`` values instead.
+"""
 
 from __future__ import annotations
 
@@ -141,10 +147,12 @@ class ExcludedTimeRange(TimeRange):
 
 
 class PreferenceRules(BaseModel):
-    """Concrete user preference content for filtering and ranking.
+    """Parsed user preference content from UI or LLM input.
 
     Every field has a safe default so an LLM parsing failure can fall back to an
-    empty ``PreferenceRules`` instance as required by the backend design.
+    empty ``PreferenceRules`` instance as required by the backend design. Course
+    fields are names at this layer; they must be resolved to catalog course ids
+    before being stored in ``HardConstraints`` or ``SoftPreferences``.
     """
 
     model_config = ConfigDict(
@@ -163,6 +171,8 @@ class PreferenceRules(BaseModel):
     latest_end_time: str | None = None
     excluded_time_ranges: list[ExcludedTimeRange] = Field(default_factory=list)
     excluded_professors: list[str] = Field(default_factory=list)
+    required_course_ids: list[str] = Field(default_factory=list)
+    excluded_course_ids: list[str] = Field(default_factory=list)
     required_course_names: list[str] = Field(
         default_factory=list,
         description=(
@@ -188,9 +198,12 @@ class PreferenceRules(BaseModel):
 
     # Soft ranking preferences
     preferred_first_class_time: str | None = None
+    preferred_latest_end_time: str | None = None
     preferred_free_time_ranges: list[TimeRange] = Field(default_factory=list)
     preferred_free_days: list[Day] = Field(default_factory=list)
     preferred_elective_areas: list[int] = Field(default_factory=list)
+    preferred_course_ids: list[str] = Field(default_factory=list)
+    disliked_course_ids: list[str] = Field(default_factory=list)
     preferred_course_names: list[str] = Field(
         default_factory=list,
         description=(
@@ -217,10 +230,10 @@ class PreferenceRules(BaseModel):
     )
     minimize_attendance_days: bool = False
     minimize_consecutive_classes: bool = False
-    compact_schedule: bool = False
+    compact_schedule: bool | None = None
 
     @field_validator(
-        "earliest_start_time", "latest_end_time", "preferred_first_class_time"
+        "earliest_start_time", "latest_end_time", "preferred_first_class_time", "preferred_latest_end_time"
     )
     @classmethod
     def validate_time(cls, value: str | None) -> str | None:
@@ -240,8 +253,12 @@ class PreferenceRules(BaseModel):
         "required_free_days",
         "preferred_free_days",
         "excluded_professors",
+        "required_course_ids",
+        "excluded_course_ids",
         "required_course_names",
         "excluded_course_names",
+        "preferred_course_ids",
+        "disliked_course_ids",
         "preferred_course_names",
         "avoided_course_names",
     )
@@ -317,7 +334,11 @@ class PreferenceParseResult(BaseModel):
 
 
 class HardPreferenceConditions(BaseModel):
-    """Hard filters supported by timetable generation."""
+    """Hard conditions emitted by the preference parser.
+
+    This is an input DTO that may carry course names from natural language. It
+    should not be persisted directly as session preference state.
+    """
 
     model_config = ConfigDict(
         extra="forbid",
@@ -331,6 +352,8 @@ class HardPreferenceConditions(BaseModel):
     latest_end_time: str | None = None
     excluded_time_ranges: list[ExcludedTimeRange] = Field(default_factory=list)
     excluded_professors: list[str] = Field(default_factory=list)
+    required_course_ids: list[str] = Field(default_factory=list)
+    excluded_course_ids: list[str] = Field(default_factory=list)
     required_course_names: list[str] = Field(
         default_factory=list,
         description=(
@@ -358,6 +381,8 @@ class HardPreferenceConditions(BaseModel):
         "excluded_days",
         "required_free_days",
         "excluded_professors",
+        "required_course_ids",
+        "excluded_course_ids",
         "required_course_names",
         "excluded_course_names",
     )
@@ -385,7 +410,11 @@ class HardPreferenceConditions(BaseModel):
 
 
 class SoftPreferenceConditions(BaseModel):
-    """Soft ranking preferences supported by the timetable ranker."""
+    """Soft conditions emitted by the preference parser.
+
+    This is an input DTO that may carry course names from natural language. It
+    should not be persisted directly as session preference state.
+    """
 
     model_config = ConfigDict(
         extra="forbid",
@@ -394,6 +423,7 @@ class SoftPreferenceConditions(BaseModel):
     )
 
     preferred_first_class_time: str | None = None
+    preferred_latest_end_time: str | None = None
     preferred_free_time_ranges: list[TimeRange] = Field(default_factory=list)
     preferred_free_days: list[Day] = Field(
         default_factory=list,
@@ -403,6 +433,8 @@ class SoftPreferenceConditions(BaseModel):
         ),
     )
     preferred_elective_areas: list[int] = Field(default_factory=list)
+    preferred_course_ids: list[str] = Field(default_factory=list)
+    disliked_course_ids: list[str] = Field(default_factory=list)
     preferred_course_names: list[str] = Field(
         default_factory=list,
         description=(
@@ -421,7 +453,7 @@ class SoftPreferenceConditions(BaseModel):
     )
     minimize_attendance_days: bool = False
     minimize_consecutive_classes: bool = False
-    compact_schedule: bool = False
+    compact_schedule: bool | None = None
 
     @field_validator("preferred_first_class_time")
     @classmethod
@@ -439,6 +471,8 @@ class SoftPreferenceConditions(BaseModel):
 
     @field_validator(
         "preferred_free_days",
+        "preferred_course_ids",
+        "disliked_course_ids",
         "preferred_course_names",
         "avoided_course_names",
     )
@@ -518,3 +552,4 @@ def merge_preference_rules(
             base[field_name] = getattr(selected, field_name)
 
     return PreferenceRules.model_validate(base)
+

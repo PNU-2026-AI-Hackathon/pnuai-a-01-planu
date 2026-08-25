@@ -1,6 +1,22 @@
-"""Public domain models for the PlaNU backend."""
+﻿"""Public domain models for the PlaNU backend."""
 
 from .course import Category, ClassTime, Course, Day, normalize_course_category, time_to_minutes
+from .course_discovery import (
+    CatalogKind,
+    CatalogRecord,
+    CourseCandidate,
+    CourseDiscoveryRequest,
+    CourseDiscoveryResult,
+    CourseMatchType,
+    CourseSection,
+    CourseSectionsResult,
+    DiscoveryResolution,
+    DiscoveryToolError,
+    DiscoveryToolErrorCode,
+    SectionDetailsResult,
+    derive_course_code,
+    normalize_course_search_text,
+)
 from .course_load import (
     CourseLoadCalculationResult,
     CourseLoadTarget,
@@ -38,6 +54,13 @@ from .preference import (
     UnsupportedCondition,
     merge_preference_rules,
 )
+from .planu_session_state import PlanuSessionState
+from .session_preferences import CourseId, HardConstraints, SoftPreferences
+from .timetable_selection import SelectedTimetable, SelectedTimetableStatus
+from .timetable_revision import (
+    TimetableRevisionPreparationResult,
+    TimetableRevisionRequest,
+)
 from .timetable import (
     CourseLoadSatisfaction,
     GenerationDiagnostic,
@@ -53,21 +76,46 @@ from .timetable import (
     TimetableGenerationResult,
     TimetableRankingResult,
 )
+from .timetable_scoring import (
+    PreferenceEvidence,
+    PreferenceEvidenceCode,
+    ScoredTimetableCandidate,
+    ScoreComponentCode,
+    ScoringErrorCode,
+    ScoringTradeOff,
+    TimetableScoringError,
+    TimetableScoringPolicy,
+    TimetableScoringRequest,
+    TimetableRankingResult as SoftTimetableRankingResult,
+)
 
 __all__ = [
     "Category",
+    "CatalogKind",
+    "CatalogRecord",
     "ClassTime",
     "Course",
+    "CourseCandidate",
+    "CourseDiscoveryRequest",
+    "CourseDiscoveryResult",
+    "CourseId",
+    "CourseMatchType",
+    "CourseSection",
+    "CourseSectionsResult",
     "CourseLoadSatisfaction",
     "CourseLoadCalculationResult",
     "CourseLoadTarget",
     "CourseLoadWarning",
     "Day",
+    "DiscoveryResolution",
+    "DiscoveryToolError",
+    "DiscoveryToolErrorCode",
     "ExcludedTimeRange",
     "ExcludedCourseDiagnostic",
     "GeneralPreferenceLLMOutput",
     "GeneralPreferenceParseResult",
     "HardPreferenceConditions",
+    "HardConstraints",
     "GeneralCoursePoolResult",
     "GeneralCoursePools",
     "GenerationDiagnostic",
@@ -85,22 +133,39 @@ __all__ = [
     "PreferenceToolUsage",
     "PreferenceTraceEvent",
     "PreferenceWarning",
+    "PlanuSessionState",
     "SoftPreferenceConditions",
+    "SoftPreferences",
     "RankingDiagnostic",
     "RankingResult",
     "RankingTemplate",
     "ScheduleItem",
+    "SectionDetailsResult",
     "ScoreComponent",
+    "ScoreComponentCode",
     "ScoreDetail",
+    "ScoredTimetableCandidate",
+    "ScoringErrorCode",
+    "ScoringTradeOff",
     "TimeRange",
+    "TimetableScoringError",
+    "TimetableScoringPolicy",
+    "TimetableScoringRequest",
     "Timetable",
     "TimetableCandidate",
     "TimetableGenerationCandidate",
     "TimetableGenerationResult",
     "TimetableRankingResult",
+    "SoftTimetableRankingResult",
+    "PreferenceEvidence",
+    "PreferenceEvidenceCode",
     "UnmatchedMajorCourse",
     "UnsupportedCondition",
+    "derive_course_code",
     "merge_preference_rules",
     "normalize_course_category",
+    "normalize_course_search_text",
     "time_to_minutes",
 ]
+
+

@@ -13,7 +13,8 @@ from ..schemas.recommend_schema import (
     TimetableRankingRequest,
     TimetableRankingResponse,
 )
-from ..services.timetable_generation_service import TimetableGenerationService
+from ..models.timetable import Timetable
+from ..services.timetable_generation_service import TimetableGenerationService, legacy_candidate_id_for_courses
 from ..services.ranking_template_service import normalize_ranking_template
 from ..services.session_store import SessionNotFoundError
 from ..services.timetable_ranking_service import (
@@ -106,8 +107,10 @@ def rank_timetable_candidates(
             status_code=500,
         ) from exc
 
+    candidate_ids_by_sections = _candidate_ids_by_sections(session.generated_timetable_candidates)
     ranked_candidates = [
         RankedTimetableResponse(
+            candidate_id=_ranked_candidate_id(item.timetable, candidate_ids_by_sections),
             rank=item.timetable.rank,
             timetable=item.timetable,
             raw_score=item.raw_score,
@@ -139,3 +142,31 @@ def _validate_top_n(top_n: int) -> None:
             "top_n은 1 이상 10 이하로 요청해 주세요.",
             status_code=400,
         )
+
+
+def _candidate_ids_by_sections(candidates: list[object]) -> dict[tuple[str, ...], str]:
+    result: dict[tuple[str, ...], str] = {}
+    for candidate in candidates:
+        section_ids = getattr(candidate, "section_ids", None)
+        candidate_id = getattr(candidate, "candidate_id", None)
+        if not section_ids or not candidate_id:
+            continue
+        result[tuple(sorted(str(section_id) for section_id in section_ids))] = str(candidate_id)
+    return result
+
+
+def _ranked_candidate_id(
+    timetable: Timetable,
+    candidate_ids_by_sections: dict[tuple[str, ...], str],
+) -> str:
+    section_ids = [_course_section_identity(course) for course in timetable.courses]
+    return candidate_ids_by_sections.get(
+        tuple(sorted(section_ids)),
+        legacy_candidate_id_for_courses(section_ids),
+    )
+
+
+def _course_section_identity(course: object) -> str:
+    course_id = str(getattr(course, "course_id"))
+    division = str(getattr(course, "division", "") or "")
+    return f"{course_id}:{division}" if division else course_id

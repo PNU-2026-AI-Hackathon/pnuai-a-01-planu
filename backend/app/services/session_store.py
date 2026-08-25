@@ -1,4 +1,4 @@
-"""Thread-safe, in-memory session storage used by the MVP API."""
+﻿"""Thread-safe, in-memory session storage used by the MVP API."""
 
 from __future__ import annotations
 
@@ -16,12 +16,14 @@ from ..models.general_course_pool import (
     GeneralCoursePoolResult,
 )
 from ..models.preference import PreferenceRules, PreferenceWarning, UnsupportedCondition
+from ..models.session_preferences import HardConstraints, SoftPreferences
 from ..models.timetable import (
     GenerationDiagnostic,
     TimetableCandidate,
     TimetableGenerationCandidate,
     TimetableRankingResult,
 )
+from ..models.timetable_selection import SelectedTimetable, SelectedTimetableStatus
 
 
 def _utcnow() -> datetime:
@@ -77,9 +79,17 @@ class SessionStage(str, Enum):
 class SessionData:
     session_id: str
     department: str
+    major_catalog_id: str | None = None
+    elective_catalog_id: str | None = None
     major_candidates: list[Course] = field(default_factory=list)
     elective_candidates: list[Course] = field(default_factory=list)
     fixed_courses: list[Course] = field(default_factory=list)
+    selected_major_course_ids: list[str] = field(default_factory=list)
+    hard_constraints: HardConstraints = field(default_factory=HardConstraints)
+    soft_preferences: SoftPreferences = field(default_factory=SoftPreferences)
+    generation_preferences_confirmed_at: datetime | None = None
+    generation_preferences_confirmed_version: int | None = None
+    generation_revision: int = 1
     general_required_candidates: list[Course] = field(default_factory=list)
     general_elective_candidates: list[Course] = field(default_factory=list)
     general_pool_diagnostics: list[ExcludedCourseDiagnostic] = field(default_factory=list)
@@ -96,6 +106,8 @@ class SessionData:
     generation_hard_conditions: PreferenceRules | None = None
     preference_unsupported_conditions: list[UnsupportedCondition] = field(default_factory=list)
     preference_warnings: list[PreferenceWarning] = field(default_factory=list)
+    selected_timetable: SelectedTimetable | None = None
+    selected_timetable_status: SelectedTimetableStatus | None = None
     generation_truncated: bool = False
     generated_at: datetime | None = None
     confirmed_major_credits: float = 0
@@ -105,6 +117,9 @@ class SessionData:
     pending_major_preview: dict[str, Any] | None = None
     created_at: datetime = field(default_factory=_utcnow)
     updated_at: datetime = field(default_factory=_utcnow)
+    last_accessed_at: datetime = field(default_factory=_utcnow)
+    expires_at: datetime | None = None
+    version: int = 1
 
     def __post_init__(self) -> None:
         if not self.session_id.strip():
@@ -115,6 +130,15 @@ class SessionData:
         self.major_candidates = list(self.major_candidates)
         self.elective_candidates = list(self.elective_candidates)
         self.fixed_courses = list(self.fixed_courses)
+        if self.major_catalog_id is None and self.major_candidates:
+            self.major_catalog_id = f"{self.session_id}:major"
+        self.selected_major_course_ids = list(dict.fromkeys(self.selected_major_course_ids))
+        if not self.selected_major_course_ids and self.fixed_courses:
+            self.selected_major_course_ids = [course.course_id for course in self.fixed_courses]
+        if not isinstance(self.hard_constraints, HardConstraints):
+            self.hard_constraints = HardConstraints.model_validate(self.hard_constraints)
+        if not isinstance(self.soft_preferences, SoftPreferences):
+            self.soft_preferences = SoftPreferences.model_validate(self.soft_preferences)
         self.general_required_candidates = list(self.general_required_candidates)
         self.general_elective_candidates = list(self.general_elective_candidates)
         self.general_pool_diagnostics = list(self.general_pool_diagnostics)
@@ -152,8 +176,24 @@ class SessionData:
             else PreferenceWarning.model_validate(item)
             for item in self.preference_warnings
         ]
+        if self.selected_timetable is not None and not isinstance(
+            self.selected_timetable,
+            SelectedTimetable,
+        ):
+            self.selected_timetable = SelectedTimetable.model_validate(
+                self.selected_timetable
+            )
+        if (
+            self.selected_timetable_status is not None
+            and not isinstance(self.selected_timetable_status, SelectedTimetableStatus)
+        ):
+            self.selected_timetable_status = SelectedTimetableStatus(
+                self.selected_timetable_status
+            )
         if not isinstance(self.session_stage, SessionStage):
             self.session_stage = SessionStage(self.session_stage)
+        if self.expires_at is None:
+            self.expires_at = self.updated_at + timedelta(minutes=30)
         if self.latest_major_preview is not None:
             self.latest_major_preview = dict(self.latest_major_preview)
         if self.pending_major_preview is not None:
@@ -195,6 +235,8 @@ class SessionStore:
             elective_candidates=list(elective_candidates),
             created_at=now,
             updated_at=now,
+            last_accessed_at=now,
+            expires_at=now + self.ttl,
         )
         with self._lock:
             self.cleanup_expired(now=now)
@@ -229,6 +271,8 @@ class SessionStore:
                 data.latest_major_preview = dict(preview)
                 data.session_stage = SessionStage.MAJOR_PREVIEW_CREATED
             data.updated_at = self._clock()
+            data.expires_at = data.updated_at + self.ttl
+            data.version += 1
             return self._copy(data)
 
     def confirm_major_preview(
@@ -248,6 +292,7 @@ class SessionStore:
             if data.fixed_courses:
                 if data.confirmed_major_preview_id == preview_id:
                     data.updated_at = self._clock()
+                    data.expires_at = data.updated_at + self.ttl
                     return self._copy(data)
                 raise MajorAlreadyConfirmedError("session already confirmed with another preview")
 
@@ -271,11 +316,15 @@ class SessionStore:
                 )
 
             data.fixed_courses = courses
+            data.selected_major_course_ids = fixed_course_ids
             data.confirmed_major_credits = confirmed_major_credits
             data.session_stage = SessionStage.MAJOR_CONFIRMED
             data.confirmed_major_preview_id = preview_id
             data.latest_major_preview = dict(confirmed_preview)
             data.updated_at = self._clock()
+            data.expires_at = data.updated_at + self.ttl
+            data.generation_revision += 1
+            data.version += 1
             return self._copy(data)
 
     def reconfirm_major_preview(
@@ -303,6 +352,7 @@ class SessionStore:
                 )
             ):
                 data.updated_at = self._clock()
+                data.expires_at = data.updated_at + self.ttl
                 return self._copy(data)
 
             preview = data.pending_major_preview
@@ -322,6 +372,7 @@ class SessionStore:
                 )
 
             data.fixed_courses = courses
+            data.selected_major_course_ids = fixed_course_ids
             data.confirmed_major_credits = confirmed_major_credits
             data.confirmed_major_preview_id = preview_id
             data.latest_major_preview = dict(confirmed_preview)
@@ -348,6 +399,9 @@ class SessionStore:
             data.preference_warnings = []
 
             data.updated_at = self._clock()
+            data.expires_at = data.updated_at + self.ttl
+            data.generation_revision += 1
+            data.version += 1
             return self._copy(data)
 
     def update(
@@ -358,12 +412,24 @@ class SessionStore:
         major_candidates: Iterable[Course] | None = None,
         elective_candidates: Iterable[Course] | None = None,
         fixed_courses: Iterable[Course] | None = None,
+        general_required_candidates: Iterable[Course] | None = None,
+        general_elective_candidates: Iterable[Course] | None = None,
         confirmed_major_credits: float | None = None,
         session_stage: SessionStage | str | None = None,
         confirmed_major_preview_id: str | None = None,
         latest_major_preview: dict[str, Any] | None = None,
         generated_candidates: Iterable[TimetableCandidate] | None = None,
         ranking_preferences: PreferenceRules | None = None,
+        major_catalog_id: str | None = None,
+        elective_catalog_id: str | None = None,
+        selected_major_course_ids: Iterable[str] | None = None,
+        hard_constraints: HardConstraints | None = None,
+        soft_preferences: SoftPreferences | None = None,
+        generation_preferences_confirmed_at: datetime | None = None,
+        generation_preferences_confirmed_version: int | None = None,
+        clear_generation_preferences_confirmation: bool = False,
+        last_accessed_at: datetime | None = None,
+        expires_at: datetime | None = None,
         latest_ranking_result: TimetableRankingResult | None = None,
         generated_timetable_candidates: Iterable[TimetableGenerationCandidate] | None = None,
         generation_diagnostics: Iterable[GenerationDiagnostic] | None = None,
@@ -371,6 +437,9 @@ class SessionStore:
         generation_hard_conditions: PreferenceRules | None = None,
         preference_unsupported_conditions: Iterable[UnsupportedCondition] | None = None,
         preference_warnings: Iterable[PreferenceWarning] | None = None,
+        selected_timetable: SelectedTimetable | None = None,
+        selected_timetable_status: SelectedTimetableStatus | None = None,
+        clear_selected_timetable: bool = False,
         generation_truncated: bool | None = None,
         generated_at: datetime | None = None,
     ) -> SessionData:
@@ -380,13 +449,27 @@ class SessionStore:
             if department is not None:
                 if not department.strip():
                     raise ValueError("department must not be empty")
+                if data.department != department:
+                    self._clear_generation_preferences_confirmation(data)
                 data.department = department
             if major_candidates is not None:
+                self._clear_generation_preferences_confirmation(data)
                 data.major_candidates = list(major_candidates)
             if elective_candidates is not None:
+                self._clear_generation_preferences_confirmation(data)
                 data.elective_candidates = list(elective_candidates)
             if fixed_courses is not None:
+                self._clear_generation_preferences_confirmation(data)
                 data.fixed_courses = list(fixed_courses)
+                data.selected_major_course_ids = [
+                    course.course_id for course in data.fixed_courses
+                ]
+            if general_required_candidates is not None:
+                self._clear_generation_preferences_confirmation(data)
+                data.general_required_candidates = list(general_required_candidates)
+            if general_elective_candidates is not None:
+                self._clear_generation_preferences_confirmation(data)
+                data.general_elective_candidates = list(general_elective_candidates)
             if confirmed_major_credits is not None:
                 data.confirmed_major_credits = confirmed_major_credits
             if session_stage is not None:
@@ -403,6 +486,38 @@ class SessionStore:
                 data.generated_candidates = list(generated_candidates)
             if ranking_preferences is not None:
                 data.ranking_preferences = ranking_preferences
+            if major_catalog_id is not None:
+                if data.major_catalog_id != major_catalog_id:
+                    self._clear_generation_preferences_confirmation(data)
+                data.major_catalog_id = major_catalog_id
+            if elective_catalog_id is not None:
+                if data.elective_catalog_id != elective_catalog_id:
+                    self._clear_generation_preferences_confirmation(data)
+                data.elective_catalog_id = elective_catalog_id
+            if selected_major_course_ids is not None:
+                normalized_selected_major_course_ids = list(dict.fromkeys(selected_major_course_ids))
+                if data.selected_major_course_ids != normalized_selected_major_course_ids:
+                    self._clear_generation_preferences_confirmation(data)
+                data.selected_major_course_ids = normalized_selected_major_course_ids
+            if hard_constraints is not None:
+                if data.hard_constraints != hard_constraints:
+                    self._clear_generation_preferences_confirmation(data)
+                data.hard_constraints = hard_constraints
+            if soft_preferences is not None:
+                if data.soft_preferences != soft_preferences:
+                    self._clear_generation_preferences_confirmation(data)
+                data.soft_preferences = soft_preferences
+            if generation_preferences_confirmed_at is not None:
+                data.generation_preferences_confirmed_at = generation_preferences_confirmed_at
+            if clear_generation_preferences_confirmation:
+                data.generation_preferences_confirmed_at = None
+                data.generation_preferences_confirmed_version = None
+            if generation_preferences_confirmed_version is not None:
+                data.generation_preferences_confirmed_version = generation_preferences_confirmed_version
+            if last_accessed_at is not None:
+                data.last_accessed_at = last_accessed_at
+            if expires_at is not None:
+                data.expires_at = expires_at
             if latest_ranking_result is not None:
                 data.latest_ranking_result = latest_ranking_result
             if generated_timetable_candidates is not None:
@@ -417,11 +532,20 @@ class SessionStore:
                 data.preference_unsupported_conditions = list(preference_unsupported_conditions)
             if preference_warnings is not None:
                 data.preference_warnings = list(preference_warnings)
+            if clear_selected_timetable:
+                data.selected_timetable = None
+                data.selected_timetable_status = None
+            if selected_timetable is not None:
+                data.selected_timetable = selected_timetable
+            if selected_timetable_status is not None:
+                data.selected_timetable_status = selected_timetable_status
             if generation_truncated is not None:
                 data.generation_truncated = generation_truncated
             if generated_at is not None:
                 data.generated_at = generated_at
             data.updated_at = self._clock()
+            data.expires_at = expires_at or data.updated_at + self.ttl
+            data.version += 1
             return self._copy(data)
 
     update_session = update
@@ -439,6 +563,7 @@ class SessionStore:
             now = self._clock()
             data.general_required_candidates = list(result.pools.required_courses)
             data.general_elective_candidates = list(result.pools.elective_courses)
+            self._clear_generation_preferences_confirmation(data)
             data.general_pool_diagnostics = list(result.excluded_courses)
             data.general_pool_warnings = list(result.warnings)
             data.general_pool_data_source = data_source
@@ -457,6 +582,8 @@ class SessionStore:
             data.preference_warnings = []
             data.session_stage = SessionStage.GENERAL_READY
             data.updated_at = now
+            data.expires_at = now + self.ttl
+            data.version += 1
             return self._copy(data)
 
     def update_generated_candidates(
@@ -474,6 +601,8 @@ class SessionStore:
             data.session_stage = SessionStage.CANDIDATES_GENERATED
             data.latest_ranking_result = None
             data.updated_at = self._clock()
+            data.expires_at = data.updated_at + self.ttl
+            data.version += 1
             return self._copy(data)
 
     def update_ranking_result(
@@ -486,6 +615,8 @@ class SessionStore:
             data.latest_ranking_result = result
             data.session_stage = SessionStage.RANKING_COMPLETED
             data.updated_at = self._clock()
+            data.expires_at = data.updated_at + self.ttl
+            data.version += 1
             return self._copy(data)
 
     def update_timetable_generation(
@@ -522,6 +653,8 @@ class SessionStore:
             data.generated_at = now
             data.session_stage = SessionStage.CANDIDATES_GENERATED
             data.updated_at = now
+            data.expires_at = now + self.ttl
+            data.version += 1
             return self._copy(data)
 
     def delete(self, session_id: str) -> bool:
@@ -547,7 +680,7 @@ class SessionStore:
             return len(self._sessions)
 
     def _is_expired(self, data: SessionData, now: datetime) -> bool:
-        return now - data.updated_at >= self.ttl
+        return (data.expires_at or data.updated_at + self.ttl) <= now
 
     def _get_live_locked(self, session_id: str, *, touch: bool) -> SessionData:
         now = self._clock()
@@ -556,8 +689,15 @@ class SessionStore:
             self._sessions.pop(session_id, None)
             raise SessionNotFoundError(session_id)
         if touch:
-            data.updated_at = now
+            data.last_accessed_at = now
+            data.expires_at = now + self.ttl
         return data
+
+    @staticmethod
+    def _clear_generation_preferences_confirmation(data: SessionData) -> None:
+        data.generation_preferences_confirmed_at = None
+        data.generation_preferences_confirmed_version = None
+        data.generation_revision += 1
 
     @staticmethod
     def _copy(data: SessionData) -> SessionData:
@@ -566,6 +706,14 @@ class SessionStore:
             major_candidates=list(data.major_candidates),
             elective_candidates=list(data.elective_candidates),
             fixed_courses=list(data.fixed_courses),
+            major_catalog_id=data.major_catalog_id,
+            elective_catalog_id=data.elective_catalog_id,
+            selected_major_course_ids=list(data.selected_major_course_ids),
+            hard_constraints=data.hard_constraints.model_copy(deep=True),
+            soft_preferences=data.soft_preferences.model_copy(deep=True),
+            generation_preferences_confirmed_at=data.generation_preferences_confirmed_at,
+            generation_preferences_confirmed_version=data.generation_preferences_confirmed_version,
+            generation_revision=data.generation_revision,
             general_required_candidates=list(data.general_required_candidates),
             general_elective_candidates=list(data.general_elective_candidates),
             general_pool_diagnostics=list(data.general_pool_diagnostics),
@@ -590,9 +738,18 @@ class SessionStore:
             ),
             preference_unsupported_conditions=list(data.preference_unsupported_conditions),
             preference_warnings=list(data.preference_warnings),
+            selected_timetable=(
+                data.selected_timetable.model_copy(deep=True)
+                if data.selected_timetable is not None
+                else None
+            ),
+            selected_timetable_status=data.selected_timetable_status,
             generation_truncated=data.generation_truncated,
             generated_at=data.generated_at,
             session_stage=data.session_stage,
+            last_accessed_at=data.last_accessed_at,
+            expires_at=data.expires_at,
+            version=data.version,
             latest_major_preview=(
                 dict(data.latest_major_preview)
                 if data.latest_major_preview is not None
@@ -608,3 +765,6 @@ class SessionStore:
 
 # A single store is sufficient while the application runs in one process.
 session_store = SessionStore()
+
+
+

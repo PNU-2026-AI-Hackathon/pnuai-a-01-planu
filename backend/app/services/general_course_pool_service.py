@@ -1,4 +1,4 @@
-"""Build general-required/elective candidate pools before timetable generation."""
+﻿"""Build general-required/elective candidate pools before timetable generation."""
 
 from __future__ import annotations
 
@@ -22,6 +22,8 @@ from ..models.general_course_pool import (
 )
 from ..schemas.general_schema import GeneralPreparationResponse
 from .major_catalog_upload_service import write_limited_upload_to_temp
+from .exceptions import SessionNotAvailableError
+from .session_service import SessionService
 from .session_store import SessionNotFoundError, SessionStage, SessionStore, session_store
 from .uploaded_catalog_parser import (
     MAX_UPLOAD_SIZE,
@@ -263,6 +265,7 @@ class GeneralCoursePreparationService:
         fallback_elective_courses: Iterable[Course] | None = None,
         elective_parser: ElectiveCatalogParserProtocol | None = None,
         max_upload_size: int = MAX_UPLOAD_SIZE,
+        session_service: SessionService | None = None,
     ) -> None:
         self.store = store
         self.pool_service = pool_service or GeneralCoursePoolService()
@@ -272,6 +275,7 @@ class GeneralCoursePreparationService:
         )
         self.elective_parser = elective_parser or UploadedCatalogParser()
         self.max_upload_size = max_upload_size
+        self.session_service = session_service
 
     async def prepare_for_session(
         self,
@@ -283,13 +287,7 @@ class GeneralCoursePreparationService:
         session_id = session_id.strip()
         if not session_id:
             raise AppError("SESSION_ID_REQUIRED", "session_id는 비어 있을 수 없습니다.", status_code=400)
-        if elective_area is None:
-            raise AppError(
-                "ELECTIVE_AREA_REQUIRED",
-                "교양선택 후보 준비 시 교양 영역을 선택해주세요.",
-                status_code=400,
-            )
-        if not 1 <= elective_area <= 9:
+        if elective_area is not None and not 1 <= elective_area <= 9:
             raise AppError(
                 "INVALID_ELECTIVE_AREA",
                 "교양 영역은 1~9 사이의 정수여야 합니다.",
@@ -338,10 +336,11 @@ class GeneralCoursePreparationService:
                 elective_catalog,
                 elective_area=elective_area,
             )
-            uploaded_elective_courses = _filter_electives_by_area(
-                uploaded_elective_courses,
-                elective_area=elective_area,
-            )
+            if elective_area is not None:
+                uploaded_elective_courses = _filter_electives_by_area(
+                    uploaded_elective_courses,
+                    elective_area=elective_area,
+                )
             if not uploaded_elective_courses:
                 raise AppError(
                     "EMPTY_ELECTIVE_CATALOG",
@@ -361,7 +360,7 @@ class GeneralCoursePreparationService:
                 "서버 기본 교양선택 데이터가 준비되어 있지 않습니다.",
                 status_code=500,
             )
-        if not has_upload:
+        if not has_upload and elective_area is not None:
             fallback_elective_courses = _filter_electives_by_area(
                 fallback_elective_courses,
                 elective_area=elective_area,
@@ -404,7 +403,21 @@ class GeneralCoursePreparationService:
                 "교양 후보 풀을 세션에 저장하지 못했습니다.",
                 status_code=500,
             ) from exc
+        self._register_general_catalog_id(saved.session_id)
+        saved = self.store.get(saved.session_id, touch=False)
         return _response_from_session(saved)
+
+    def _register_general_catalog_id(self, session_id: str) -> None:
+        if self.session_service is None:
+            return
+        try:
+            self.session_service.register_elective_catalog(session_id, f"{session_id}:general")
+        except SessionNotAvailableError as exc:
+            raise AppError(
+                "SESSION_NOT_FOUND",
+                "세션을 찾을 수 없거나 만료되었습니다.",
+                status_code=404,
+            ) from exc
 
     @staticmethod
     def _validate_upload_name(upload_file: UploadFile | None) -> None:
@@ -573,3 +586,4 @@ def _response_from_session(session) -> GeneralPreparationResponse:
         elective_area=session.general_pool_elective_area,
         warnings=list(session.general_pool_warnings),
     )
+

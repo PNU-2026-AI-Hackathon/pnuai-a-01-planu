@@ -1,12 +1,10 @@
-"""Parse general-education preference prompts into supported rule groups."""
+﻿"""Parse general-education preference prompts into supported rule groups."""
 
 from __future__ import annotations
 
 import json
 import os
 import re
-import urllib.error
-import urllib.request
 from typing import Any
 
 from pydantic import BaseModel, ValidationError
@@ -25,13 +23,17 @@ from ..models.preference import (
 from .llm_preference_parser import (
     DEFAULT_CHAT_PROXY_URL,
     DEFAULT_OPENAI_MODEL,
-    chat_completions_url,
-    has_proxy_token,
     load_proxy_env,
+)
+from .preference_constants import MORNING_END_TIME
+from .openai_client import (
+    DEFAULT_OPENAI_BASE_URL,
+    has_openai_api_key,
+    normalize_openai_model_name,
+    request_chat_completions,
 )
 
 
-MORNING_END_TIME = "10:00"
 MAX_PROMPT_LENGTH = 2000
 
 GENERAL_PREFERENCE_SYSTEM_PROMPT = f"""당신은 PlaNU의 교양 시간표 선호 파서입니다.
@@ -106,12 +108,14 @@ class GeneralPreferenceParser:
         model_name: str | None = None,
         base_url: str | None = None,
         timeout_seconds: int = 60,
-    ) -> None:
+        ) -> None:
         load_proxy_env()
         self.llm = llm
-        self.model_name = model_name or os.getenv("OPENAI_MODEL", DEFAULT_OPENAI_MODEL)
-        self.base_url = base_url or os.getenv("CHAT_PROXY_URL", DEFAULT_CHAT_PROXY_URL)
-        self.proxy_token = os.getenv("PROXY_TOKEN")
+        self.model_name = normalize_openai_model_name(
+            model_name or os.getenv("OPENAI_MODEL", DEFAULT_OPENAI_MODEL)
+        )
+        self.base_url = base_url or os.getenv("OPENAI_BASE_URL", DEFAULT_CHAT_PROXY_URL)
+        self.api_key = os.getenv("OPENAI_API_KEY")
         self.timeout_seconds = timeout_seconds
 
     def parse(self, prompt: str) -> GeneralPreferenceParseResult:
@@ -174,47 +178,27 @@ class GeneralPreferenceParser:
         )
 
     def _invoke_openai_compatible_tool_call(self, prompt: str) -> dict[str, Any]:
-        if not has_proxy_token(self.proxy_token):
+        if not has_openai_api_key(self.api_key):
             raise AppError(
                 "PREFERENCE_PARSE_FAILED",
                 "교양 선호 파서 LLM 설정이 없습니다.",
-                hint="PROXY_TOKEN을 설정하거나 테스트에서 llm을 주입해 주세요.",
+                hint="OPENAI_API_KEY를 설정하거나 테스트에서 llm을 주입해 주세요.",
             )
 
         request_payload = self._tool_call_request_payload(prompt)
-        request = urllib.request.Request(
-            chat_completions_url(self.base_url),
-            data=json.dumps(request_payload, ensure_ascii=False).encode("utf-8"),
-            headers={
-                "Authorization": f"Bearer {self.proxy_token}",
-                "Content-Type": "application/json",
-            },
-            method="POST",
-        )
         try:
-            with urllib.request.urlopen(
-                request,
-                timeout=self.timeout_seconds,
-            ) as response:
-                response_payload = json.loads(response.read().decode("utf-8"))
+            response_payload = request_chat_completions(
+                request_payload,
+                api_key=self.api_key,
+                base_url=self.base_url,
+                timeout_seconds=self.timeout_seconds,
+            )
         except TimeoutError as exc:
             raise AppError(
                 "PREFERENCE_PARSE_TIMEOUT",
                 "교양 선호 파서 LLM 호출 시간이 초과되었습니다.",
             ) from exc
-        except urllib.error.HTTPError as exc:
-            raise AppError(
-                "PREFERENCE_PARSE_FAILED",
-                "교양 선호 파서 LLM 호출에 실패했습니다.",
-                details={"status_code": exc.code},
-            ) from exc
-        except urllib.error.URLError as exc:
-            reason = getattr(exc, "reason", "unknown")
-            if isinstance(reason, TimeoutError):
-                raise AppError(
-                    "PREFERENCE_PARSE_TIMEOUT",
-                    "교양 선호 파서 LLM 호출 시간이 초과되었습니다.",
-                ) from reason
+        except RuntimeError as exc:
             raise AppError(
                 "PREFERENCE_PARSE_FAILED",
                 "교양 선호 파서 LLM 호출에 실패했습니다.",
@@ -279,11 +263,11 @@ class GeneralPreferenceParser:
     ) -> dict[str, Any]:
         choices = response_payload.get("choices") or []
         if not choices:
-            raise ValueError("proxy response did not include choices")
+            raise ValueError("OpenAI response did not include choices")
         message = choices[0].get("message") or {}
         tool_calls = message.get("tool_calls") or []
         if not tool_calls:
-            raise ValueError("proxy response did not include a tool call")
+            raise ValueError("OpenAI response did not include a tool call")
         function = tool_calls[0].get("function") or {}
         arguments_text = function.get("arguments") or "{}"
         arguments = json.loads(arguments_text)
@@ -291,11 +275,11 @@ class GeneralPreferenceParser:
         return arguments
 
     def _build_default_llm(self) -> Any:
-        if not has_proxy_token(self.proxy_token):
+        if not has_openai_api_key(self.api_key):
             raise AppError(
                 "PREFERENCE_PARSE_FAILED",
                 "교양 선호 파서 LLM 설정이 없습니다.",
-                hint="PROXY_TOKEN을 설정하거나 테스트에서 llm을 주입해 주세요.",
+                hint="OPENAI_API_KEY를 설정하거나 테스트에서 llm을 주입해 주세요.",
             )
         try:
             from langchain_openai import ChatOpenAI
@@ -304,12 +288,14 @@ class GeneralPreferenceParser:
                 "PREFERENCE_PARSE_FAILED",
                 "교양 선호 파서 LLM 클라이언트를 사용할 수 없습니다.",
             ) from exc
-        return ChatOpenAI(
-            model=self.model_name,
-            api_key=self.proxy_token,
-            base_url=self.base_url,
-            temperature=0,
-        )
+        kwargs: dict[str, Any] = {
+            "model": self.model_name,
+            "api_key": self.api_key,
+            "temperature": 0,
+        }
+        if self.base_url != DEFAULT_OPENAI_BASE_URL:
+            kwargs["base_url"] = self.base_url
+        return ChatOpenAI(**kwargs)
 
     @staticmethod
     def _messages(prompt: str) -> list[tuple[str, str]]:
@@ -691,3 +677,4 @@ def supported_general_preference_fields() -> dict[str, list[str]]:
         "soft_conditions": sorted(SOFT_FIELDS),
         "day_values": [day.value for day in Day],
     }
+

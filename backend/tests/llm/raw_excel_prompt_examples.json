@@ -1,0 +1,97 @@
+[
+  {
+    "id": "math_roman_parentheses_exact",
+    "source_file": "backend/data/raw/general_elective_area_4.xlsx",
+    "catalog_course_name": "수학(I)",
+    "input": "수학(I)을 가능하면 듣고 싶어.",
+    "expected_field": "preferred_course_names",
+    "expected_extracted_names": ["수학(I)"],
+    "should_match_catalog": true
+  },
+  {
+    "id": "math_roman_parentheses_spaced",
+    "source_file": "backend/data/raw/general_elective_area_4.xlsx",
+    "catalog_course_name": "수학(I)",
+    "input": "수학 ( I )는 선호해.",
+    "expected_field": "preferred_course_names",
+    "expected_extracted_names": ["수학 ( I )"],
+    "should_match_catalog": true
+  },
+  {
+    "id": "math_roman_without_parentheses",
+    "source_file": "backend/data/raw/general_elective_area_4.xlsx",
+    "catalog_course_name": "수학(I)",
+    "input": "수학 I를 듣고 싶어.",
+    "expected_field": "preferred_course_names",
+    "expected_extracted_names": ["수학 I"],
+    "should_match_catalog": true
+  },
+  {
+    "id": "math_numeric_typo",
+    "source_file": "backend/data/raw/general_elective_area_4.xlsx",
+    "catalog_course_name": "수학(I)",
+    "input": "수학1을 듣고 싶어.",
+    "expected_field": "preferred_course_names",
+    "expected_extracted_names": ["수학1"],
+    "should_match_catalog": true
+  },
+  {
+    "id": "science_people_spacing",
+    "source_file": "backend/data/raw/general_elective_area_4.xlsx",
+    "catalog_course_name": "한국의과학인물열전",
+    "input": "한국의 과학 인물 열전은 시간표에 있으면 좋겠어.",
+    "expected_field": "preferred_course_names",
+    "expected_extracted_names": ["한국의 과학 인물 열전"],
+    "should_match_catalog": true
+  },
+  {
+    "id": "recreation_spacing_preferred",
+    "source_file": "backend/data/raw/general_elective_area_5.xlsx",
+    "catalog_course_name": "현대생활과레크레이션",
+    "input": "현대생활과 레크레이션을 우선적으로 고려해줘.",
+    "expected_field": "preferred_course_names",
+    "expected_extracted_names": ["현대생활과 레크레이션"],
+    "should_match_catalog": true
+  },
+  {
+    "id": "sports_spacing_avoided",
+    "source_file": "backend/data/raw/general_elective_area_5.xlsx",
+    "catalog_course_name": "현대사회와스포츠",
+    "input": "현대 사회와 스포츠는 다른 선택지가 있으면 피하고 싶어.",
+    "expected_field": "avoided_course_names",
+    "expected_extracted_names": ["현대 사회와 스포츠"],
+    "should_match_catalog": true
+  },
+  {
+    "id": "global_chinese_spacing",
+    "source_file": "backend/data/raw/general_elective_area_6.xlsx",
+    "catalog_course_name": "글로벌중국어1",
+    "input": "글로벌 중국어 1은 가능하면 듣고 싶어.",
+    "expected_field": "preferred_course_names",
+    "expected_extracted_names": ["글로벌 중국어 1"],
+    "should_match_catalog": true
+  },
+  {
+    "id": "veganism_spacing_preferred",
+    "source_file": "backend/data/raw/general_elective_area_7.xlsx",
+    "catalog_course_name": "비거니즘첫만남",
+    "input": "비거니즘 첫만남을 듣고 싶어.",
+    "expected_field": "preferred_course_names",
+    "expected_extracted_names": ["비거니즘 첫만남"],
+    "should_match_catalog": true
+  },
+  {
+    "id": "mixed_prefer_and_avoid",
+    "source_file": "backend/data/raw/general_elective_area_6.xlsx",
+    "catalog_course_name": "글로벌중국어1",
+    "input": "글로벌 중국어 2는 듣고 싶고 글로벌중국어1은 가능하면 피하고 싶어.",
+    "expected_fields": {
+      "preferred_course_names": ["글로벌 중국어 2"],
+      "avoided_course_names": ["글로벌중국어1"]
+    },
+    "catalog_matches": {
+      "글로벌 중국어 2": "글로벌중국어2",
+      "글로벌중국어1": "글로벌중국어1"
+    }
+  }
+]

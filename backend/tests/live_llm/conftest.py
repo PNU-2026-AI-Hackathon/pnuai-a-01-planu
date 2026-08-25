@@ -1,6 +1,6 @@
 """Shared fixtures for opt-in live LLM tests.
 
-These tests intentionally call the configured LLM/proxy only when
+These tests intentionally call the configured OpenAI LLM only when
 RUN_LIVE_LLM_TESTS=1 is present.
 """
 
@@ -37,11 +37,10 @@ from backend.app.services.general_course_pool_service import (
     GeneralCoursePreparationService,
 )
 from backend.app.services.llm_preference_parser import (
-    DEFAULT_CHAT_PROXY_URL,
     DEFAULT_OPENAI_MODEL,
-    has_proxy_token,
     load_proxy_env,
 )
+from backend.app.services.openai_client import has_openai_api_key, normalize_openai_model_name
 from backend.app.services.major_catalog_upload_service import MajorCatalogUploadService
 from backend.app.services.major_confirm_service import MajorConfirmService
 from backend.app.services.major_preview_service import MajorPreviewService
@@ -59,7 +58,7 @@ LIVE_LLM_CALLS: list[dict[str, Any]] = []
 @dataclass(frozen=True)
 class LiveLLMConfig:
     model: str
-    proxy_enabled: bool
+    openai_enabled: bool
     timeout_seconds: int
 
 
@@ -68,18 +67,17 @@ def live_llm_enabled() -> None:
     if os.getenv("RUN_LIVE_LLM_TESTS") != "1":
         pytest.skip("RUN_LIVE_LLM_TESTS=1 is required")
     load_proxy_env()
-    if not has_proxy_token(os.getenv("PROXY_TOKEN")):
-        pytest.skip("PROXY_TOKEN is not configured")
+    if not has_openai_api_key(os.getenv("OPENAI_API_KEY")):
+        pytest.skip("OPENAI_API_KEY is not configured")
 
 
 @pytest.fixture(scope="session")
 def live_llm_config(live_llm_enabled: None) -> LiveLLMConfig:
-    model = os.getenv("OPENAI_MODEL", DEFAULT_OPENAI_MODEL)
-    base_url = os.getenv("CHAT_PROXY_URL", DEFAULT_CHAT_PROXY_URL)
+    model = normalize_openai_model_name(os.getenv("OPENAI_MODEL", DEFAULT_OPENAI_MODEL))
     timeout_seconds = int(os.getenv("LIVE_LLM_TIMEOUT_SECONDS", "60"))
     config = LiveLLMConfig(
         model=model,
-        proxy_enabled=bool(base_url),
+        openai_enabled=True,
         timeout_seconds=timeout_seconds,
     )
     print(
@@ -87,7 +85,7 @@ def live_llm_config(live_llm_enabled: None) -> LiveLLMConfig:
         + json.dumps(
             {
                 "model": config.model,
-                "proxy_enabled": config.proxy_enabled,
+                "openai_enabled": config.openai_enabled,
                 "timeout_seconds": config.timeout_seconds,
             },
             ensure_ascii=False,

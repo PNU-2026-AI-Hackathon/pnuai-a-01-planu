@@ -12,7 +12,7 @@ pytestmark = pytest.mark.live_llm
 
 def test_live_llm_environment_is_configured(live_llm_config) -> None:
     assert live_llm_config.model
-    assert live_llm_config.proxy_enabled is True
+    assert live_llm_config.openai_enabled is True
     assert live_llm_config.timeout_seconds > 0
 
 

@@ -200,7 +200,7 @@ def test_general_prepare_api_upload_passes_area_to_parser() -> None:
     assert saved.general_pool_elective_area == 4
 
 
-def test_general_prepare_api_requires_area_without_upload() -> None:
+def test_general_prepare_api_uses_all_fallback_areas_when_area_is_omitted() -> None:
     store = SessionStore()
     session_id = _confirmed_session(store)
     required = _course("ZE100-001", "고전읽기와토론", Category.GENERAL_REQUIRED, "001")
@@ -210,6 +210,7 @@ def test_general_prepare_api_requires_area_without_upload() -> None:
         general_required_courses=[required],
         fallback_elective_courses=[
             _course("ZE200-001", "과학기술과사회", Category.GENERAL_ELECTIVE, "001", area=2),
+            _course("ZE300-001", "문학과예술", Category.GENERAL_ELECTIVE, "001", area=3),
         ],
     )
     app.dependency_overrides[get_general_course_preparation_service] = lambda: service
@@ -220,11 +221,13 @@ def test_general_prepare_api_requires_area_without_upload() -> None:
     finally:
         app.dependency_overrides.clear()
 
-    assert response.status_code == 400
-    assert response.json()["error"]["code"] == "ELECTIVE_AREA_REQUIRED"
+    assert response.status_code == 200
+    assert response.json()["elective_course_count"] == 2
+    saved = store.get(session_id)
+    assert saved.general_pool_elective_area is None
 
 
-def test_general_prepare_api_requires_area_with_upload() -> None:
+def test_general_prepare_api_uses_all_uploaded_areas_when_area_is_omitted() -> None:
     store = SessionStore()
     session_id = _confirmed_session(store)
     required = _course("ZE100-001", "고전읽기와토론", Category.GENERAL_REQUIRED, "001")
@@ -233,7 +236,17 @@ def test_general_prepare_api_requires_area_with_upload() -> None:
         pool_service=_pool_service_for_required(required),
         general_required_courses=[required],
         fallback_elective_courses=[],
-        elective_parser=FakeElectiveParser([]),
+        elective_parser=FakeElectiveParser(
+            [
+                _course(
+                    "UP100-001",
+                    "업로드교양",
+                    Category.GENERAL_ELECTIVE,
+                    "001",
+                    area=4,
+                )
+            ]
+        ),
     )
     app.dependency_overrides[get_general_course_preparation_service] = lambda: service
     client = TestClient(app)
@@ -247,8 +260,9 @@ def test_general_prepare_api_requires_area_with_upload() -> None:
     finally:
         app.dependency_overrides.clear()
 
-    assert response.status_code == 400
-    assert response.json()["error"]["code"] == "ELECTIVE_AREA_REQUIRED"
+    assert response.status_code == 200
+    assert response.json()["elective_course_count"] == 1
+    assert response.json()["elective_area"] is None
 
 
 def test_general_prepare_api_rejects_invalid_area() -> None:

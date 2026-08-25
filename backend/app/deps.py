@@ -1,117 +1,202 @@
-"""FastAPI dependency providers."""
+"""FastAPI dependency providers backed by the application container."""
 
 from __future__ import annotations
 
-from pathlib import Path
+from fastapi import Request
 
-from .core.errors import AppError
-from .models.course import Category
-from .services.course_loader import CourseCatalogLoadError, load_courses
-from .services.course_restriction_loader import (
-    CourseRestrictionLoadError,
-    load_department_restriction_rules,
+from .agent_tools import (
+    CourseDiscoveryTools,
+    SessionCommandTools,
+    SessionQueryTools,
+    TimetableGenerationTools,
+    TimetableScoringTools,
+    TimetableSelectionTools,
 )
+from .agents import SessionStateAgent, SessionStateToolset
+from . import container as container_module
+from .container import PlanuContainer, build_container
+from .services.course_restriction_loader import load_department_restriction_rules
+from .repositories import SessionRepository, SessionStoreCatalogRepository
+from .repositories.recent_timetable_candidate_repository import RecentTimetableCandidateRepository
+from .services.course_discovery_service import CourseDiscoveryService
 from .services.general_course_pool_service import (
     CourseRestrictionPolicy,
     GeneralCoursePoolService,
     GeneralCoursePreparationService,
 )
-from .services.major_confirm_service import MajorConfirmService
 from .services.major_catalog_upload_service import MajorCatalogUploadService
-from .services.uploaded_catalog_parser import UploadedCatalogParser
+from .services.major_confirm_service import MajorConfirmService
 from .services.major_preview_service import MajorPreviewService
 from .services.major_selection_parser import MajorSelectionParser
-from .services.session_store import SessionStore, session_store
-from .services.timetable_generation_service import TimetableGenerationService
 from .services.ranking_template_service import RankingTemplateService
-from .services.timetable_ranker import TimetableRanker
+from .services.session_service import SessionService
+from .services.session_store import SessionStore
+from .services.timetable_candidate_generation_service import TimetableCandidateGenerationService
+from .services.timetable_candidate_validation_service import TimetableCandidateValidationService
+from .services.timetable_generation_service import TimetableGenerationService
 from .services.timetable_ranking_service import TimetableRankingService
+from .services.timetable_revision_preparation_service import TimetableRevisionPreparationService
+from .services.timetable_scoring_service import TimetableScoringService
+from .services.timetable_soft_ranking_service import TimetableRankingService as SoftTimetableRankingService
+from .services.timetable_validation_service import TimetableValidationService
 
 
-_BACKEND_DIR = Path(__file__).resolve().parents[1]
-_COURSE_CATALOG_PATH = _BACKEND_DIR / "data" / "course_catalog.json"
-_COURSE_RESTRICTIONS_PATH = _BACKEND_DIR / "data" / "course_restrictions.json"
+_DEFAULT_CONTAINER: PlanuContainer | None = None
 
 
-def get_session_store() -> SessionStore:
-    return session_store
+def get_container(request: Request = None) -> PlanuContainer:
+    """Return the process-lifetime PlaNU container for the running app."""
+
+    if request is not None and hasattr(request.app.state, "container"):
+        return request.app.state.container
+    global _DEFAULT_CONTAINER
+    if _DEFAULT_CONTAINER is None:
+        _DEFAULT_CONTAINER = build_container()
+    return _DEFAULT_CONTAINER
+
+
+def get_session_store(request: Request = None) -> SessionStore:
+    return get_container(request).session_store
+
+
+def get_session_repository(request: Request = None) -> SessionRepository:
+    return get_container(request).session_repository
+
+
+def get_catalog_repository(request: Request = None) -> SessionStoreCatalogRepository:
+    return get_container(request).catalog_repository
+
+
+def get_session_service(request: Request = None) -> SessionService:
+    return get_container(request).session_service
+
+
+def get_session_query_tools(request: Request = None) -> SessionQueryTools:
+    return SessionQueryTools(get_session_service(request))
+
+
+def get_session_command_tools(request: Request = None) -> SessionCommandTools:
+    return SessionCommandTools(get_session_service(request))
+
+
+def get_course_discovery_service(request: Request = None) -> CourseDiscoveryService:
+    return get_container(request).course_discovery_service
+
+
+def get_course_discovery_tools(request: Request = None) -> CourseDiscoveryTools:
+    return get_container(request).course_discovery_tools
+
+
+def get_recent_timetable_candidate_repository(request: Request = None) -> RecentTimetableCandidateRepository:
+    return get_container(request).recent_timetable_candidate_repository
+
+
+def get_timetable_revision_preparation_service(request: Request = None) -> TimetableRevisionPreparationService:
+    return get_container(request).timetable_revision_preparation_service
+
+
+def get_timetable_selection_tools(request: Request = None) -> TimetableSelectionTools:
+    return get_container(request).timetable_selection_tools
+
+
+def get_course_restriction_policy(request: Request = None) -> CourseRestrictionPolicy:
+    return get_container(request).general_course_pool_service.restriction_policy
+
+
+def get_timetable_validation_service(request: Request = None) -> TimetableValidationService:
+    return get_container(request).timetable_validation_service
+
+
+def get_timetable_candidate_validation_service(request: Request = None) -> TimetableCandidateValidationService:
+    return get_container(request).timetable_candidate_validation_service
+
+
+def get_timetable_candidate_generation_service(request: Request = None) -> TimetableCandidateGenerationService:
+    return get_container(request).timetable_candidate_generation_service
+
+
+def get_timetable_generation_tools(request: Request = None) -> TimetableGenerationTools:
+    return get_container(request).timetable_generation_tools
+
+
+def get_timetable_scoring_service(request: Request = None) -> TimetableScoringService:
+    return get_container(request).timetable_scoring_service
+
+
+def get_timetable_soft_ranking_service(request: Request = None) -> SoftTimetableRankingService:
+    return get_container(request).timetable_ranking_service_for_agent
+
+
+def get_timetable_scoring_tools(request: Request = None) -> TimetableScoringTools:
+    return get_container(request).timetable_scoring_tools
+
+
+def get_session_state_toolset(request: Request = None) -> SessionStateToolset:
+    return get_container(request).session_state_toolset
+
+
+def get_session_state_agent(request: Request = None) -> SessionStateAgent:
+    return get_container(request).legacy_session_state_agent
+
+
+def clear_dependency_caches() -> None:
+    global _DEFAULT_CONTAINER
+    _DEFAULT_CONTAINER = None
 
 
 def get_major_selection_parser() -> MajorSelectionParser:
     return MajorSelectionParser()
 
 
-def get_major_preview_service() -> MajorPreviewService:
-    return MajorPreviewService(
-        store=get_session_store(),
-        parser=get_major_selection_parser(),
+def get_major_preview_service(request: Request = None) -> MajorPreviewService:
+    return get_container(request).major_preview_service
+
+
+def get_major_confirm_service(request: Request = None) -> MajorConfirmService:
+    return get_container(request).major_confirm_service
+
+
+def get_major_catalog_upload_service(request: Request = None) -> MajorCatalogUploadService:
+    return get_container(request).major_catalog_upload_service
+
+
+def get_timetable_generation_service(request: Request = None) -> TimetableGenerationService:
+    return get_container(request).legacy_timetable_generation_service
+
+
+def get_ranking_template_service(request: Request = None) -> RankingTemplateService:
+    return get_container(request).legacy_timetable_ranking_service.template_service
+
+
+def get_timetable_ranking_service(request: Request = None) -> TimetableRankingService:
+    return get_container(request).legacy_timetable_ranking_service
+
+
+def get_general_course_pool_service(request: Request = None) -> GeneralCoursePoolService:
+    return get_container(request).general_course_pool_service
+
+
+def get_general_course_preparation_service(request: Request = None) -> GeneralCoursePreparationService:
+    return get_container(request).general_course_preparation_service
+
+
+def get_agent_runtime(request: Request = None):
+    from .runtime import AgentRuntime
+
+    container = get_container(request)
+    return AgentRuntime(
+        session_service=container.session_service,
+        agent=container.supervisor_agent,
+        selection_tools=container.timetable_selection_tools,
+        condition_summary_service=container.condition_summary_service,
     )
 
 
-def get_major_confirm_service() -> MajorConfirmService:
-    return MajorConfirmService(store=get_session_store())
+def get_condition_summary_service(request: Request = None):
+    return get_container(request).condition_summary_service
 
 
-def get_major_catalog_upload_service() -> MajorCatalogUploadService:
-    return MajorCatalogUploadService(store=get_session_store())
 
 
-def get_timetable_generation_service() -> TimetableGenerationService:
-    return TimetableGenerationService(store=get_session_store())
 
 
-def get_ranking_template_service() -> RankingTemplateService:
-    return RankingTemplateService()
-
-
-def get_timetable_ranking_service() -> TimetableRankingService:
-    template_service = get_ranking_template_service()
-    return TimetableRankingService(
-        store=get_session_store(),
-        template_service=template_service,
-        ranker=TimetableRanker(template_service=template_service),
-    )
-
-
-def get_course_restriction_policy() -> CourseRestrictionPolicy:
-    try:
-        rules = load_department_restriction_rules(_COURSE_RESTRICTIONS_PATH)
-    except CourseRestrictionLoadError as exc:
-        raise AppError(
-            "COURSE_RESTRICTION_LOAD_FAILED",
-            "교양 수강 제한 데이터를 로딩하지 못했습니다.",
-            status_code=500,
-        ) from exc
-    return CourseRestrictionPolicy(rules=rules)
-
-
-def get_general_course_pool_service() -> GeneralCoursePoolService:
-    return GeneralCoursePoolService(
-        restriction_policy=get_course_restriction_policy(),
-    )
-
-
-def get_general_course_preparation_service() -> GeneralCoursePreparationService:
-    try:
-        general_required_courses = load_courses(
-            _COURSE_CATALOG_PATH,
-            category=Category.GENERAL_REQUIRED,
-        )
-        fallback_elective_courses = load_courses(
-            _COURSE_CATALOG_PATH,
-            category=Category.GENERAL_ELECTIVE,
-        )
-    except CourseCatalogLoadError as exc:
-        raise AppError(
-            "RESTRICTED_COURSE_LOAD_FAILED",
-            "내부 교양 및 제한 과목 데이터를 로딩하지 못했습니다.",
-            status_code=500,
-        ) from exc
-
-    return GeneralCoursePreparationService(
-        store=get_session_store(),
-        pool_service=get_general_course_pool_service(),
-        general_required_courses=general_required_courses,
-        fallback_elective_courses=fallback_elective_courses,
-        elective_parser=UploadedCatalogParser(),
-    )
