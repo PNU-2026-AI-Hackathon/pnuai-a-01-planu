@@ -471,3 +471,151 @@ def test_morning_boundary_uses_shared_constant_for_parser_and_ranker() -> None:
     assert ranker._morning_class_count([before_boundary]) == 1
     assert ranker._morning_class_count([at_boundary]) == 0
     assert ranker._morning_class_count([after_boundary]) == 0
+
+
+def test_normalize_requested_course_ids_matches_only_one_context_per_request_id() -> None:
+    from backend.app.services.course_id_normalizer import normalize_requested_course_ids
+
+    target = _section("A100-001", "A100-001", "10:00", "11:00")
+    unrelated = _section("B200-002", "B200-002", "13:00", "14:00")
+
+    assert normalize_requested_course_ids(["A100-001"], [target, unrelated]) == {"A100"}
+    assert normalize_requested_course_ids(["MISSING-001"], [target, unrelated]) == {"MISSING-001"}
+
+
+def test_validation_required_legacy_id_with_multiple_courses_is_not_reported_missing() -> None:
+    from backend.app.models.timetable_generation import TimetableViolationCode
+    from backend.app.services.timetable_validation_service import TimetableValidationService
+
+    target = _section("A100-001", "A100-001", "10:00", "11:00")
+    unrelated = _section("B200-002", "B200-002", "13:00", "14:00")
+
+    result = TimetableValidationService().validate_sections(
+        [target, unrelated],
+        required_course_ids=["A100-001"],
+    )
+
+    assert result.valid
+    assert not any(
+        violation.code is TimetableViolationCode.MISSING_REQUIRED_COURSE
+        and violation.course_id == "A100-001"
+        for violation in result.violations
+    )
+
+
+def test_validation_excluded_legacy_id_with_multiple_courses_targets_only_matching_course() -> None:
+    from backend.app.models.timetable_generation import TimetableViolationCode
+    from backend.app.services.timetable_validation_service import TimetableValidationService
+
+    target = _section("A100-001", "A100-001", "10:00", "11:00")
+    unrelated = _section("B200-002", "B200-002", "13:00", "14:00")
+
+    result = TimetableValidationService().validate_sections(
+        [target, unrelated],
+        excluded_course_ids=["A100-001"],
+    )
+    excluded = [
+        violation for violation in result.violations
+        if violation.code is TimetableViolationCode.EXCLUDED_COURSE_INCLUDED
+    ]
+
+    assert [violation.course_id for violation in excluded] == ["A100"]
+    assert [violation.section_id for violation in excluded] == ["A100-001"]
+
+
+def test_agent_scoring_legacy_ids_with_multiple_courses_do_not_count_included_as_missing() -> None:
+    from backend.app.models.timetable_scoring import ScoreComponentCode
+
+    target = _section("A100-001", "A100-001", "10:00", "11:00")
+    unrelated = _section("B200-002", "B200-002", "13:00", "14:00")
+    resolved = [ResolvedSection(catalog_id="catalog", section=item) for item in [target, unrelated]]
+    scorer = TimetableScoringService()
+
+    preferred = scorer.score_candidate(
+        candidate=_candidate("preferred-multi", ["A100-001", "B200-002"]),
+        sections=resolved,
+        soft_preferences=SoftPreferences(preferred_course_ids=["A100-001"]),
+    )
+    disliked = scorer.score_candidate(
+        candidate=_candidate("disliked-multi", ["A100-001", "B200-002"]),
+        sections=resolved,
+        soft_preferences=SoftPreferences(disliked_course_ids=["A100-001"]),
+    )
+
+    preferred_component = next(
+        component for component in preferred.score_components
+        if component.code is ScoreComponentCode.PREFERRED_COURSES
+    )
+    disliked_component = next(
+        component for component in disliked.score_components
+        if component.code is ScoreComponentCode.DISLIKED_COURSES
+    )
+
+    assert preferred_component.details["included_course_ids"] == ["A100"]
+    assert preferred_component.details["missing_course_ids"] == []
+    assert preferred.total_score == 8
+    assert disliked_component.details["included_course_ids"] == ["A100"]
+    assert disliked.tie_breaker["disliked_course_count"] == 1
+
+
+def test_legacy_ranker_legacy_ids_with_multiple_courses_target_only_matching_course() -> None:
+    from backend.app.models.preference import PreferenceRules
+    from backend.app.models.timetable import Timetable
+    from backend.app.services.timetable_ranker import TimetableRanker
+
+    def rank_course(course_id: str, division: str, start: str, end: str) -> Course:
+        return Course(
+            course_id=course_id,
+            course_name=course_id,
+            category=Category.GENERAL_ELECTIVE,
+            area=1,
+            credit=3,
+            division=division,
+            professor="교수",
+            class_times=[ClassTime(day=Day.MON, start=start, end=end, classroom="101", building_code="401")],
+        )
+
+    timetable = Timetable(courses=[
+        rank_course("A100-001", "001", "09:00", "10:00"),
+        rank_course("B200-002", "002", "13:00", "14:00"),
+    ])
+    ranker = TimetableRanker()
+
+    assert ranker.apply_hard_filters(
+        [timetable],
+        preferences=PreferenceRules(required_course_ids=["A100-001"]),
+    ) == [timetable]
+    assert ranker.apply_hard_filters(
+        [timetable],
+        preferences=PreferenceRules(excluded_course_ids=["A100-001"]),
+    ) == []
+
+    ranked = ranker.rank(
+        [timetable],
+        preferences=PreferenceRules(
+            preferred_course_ids=["A100-001"],
+            disliked_course_ids=["A100-001"],
+        ),
+    )[0]
+    components = {component.key: component for component in ranked.score_components}
+
+    assert components["preferred_course"].reason.endswith("A100.")
+    assert "preferred_course_missing" not in components
+    assert components["avoided_course"].reason.endswith("A100.")
+    assert "avoided_course_absent" not in components
+
+
+def test_hyphenated_course_code_with_multiple_courses_is_not_truncated() -> None:
+    from backend.app.services.course_id_normalizer import normalize_requested_course_ids
+    from backend.app.services.timetable_validation_service import TimetableValidationService
+
+    target = _section("CS-A100-001", "CS-A100-001", "10:00", "11:00")
+    unrelated = _section("B200-002", "B200-002", "13:00", "14:00")
+
+    assert normalize_requested_course_ids(["CS-A100-001"], [target, unrelated]) == {"CS-A100"}
+    assert normalize_requested_course_ids(["CS-A100"], [target, unrelated]) == {"CS-A100"}
+    assert normalize_requested_course_ids(["CS"], [target, unrelated]) == {"CS"}
+    assert TimetableValidationService().validate_sections(
+        [target, unrelated],
+        required_course_ids=["CS-A100-001"],
+    ).valid

@@ -21,37 +21,78 @@ def logical_course_id_from_requested(
     *,
     candidate_course_id: str,
     candidate_division: str | None = None,
+    candidate_section_id: str | None = None,
 ) -> str:
-    """Normalize a requested id with the candidate's actual division context."""
+    """Normalize a requested id only when it matches the candidate context."""
 
     normalized = str(requested_id).strip()
+    if course_id_matches(
+        normalized,
+        candidate_course_id=candidate_course_id,
+        candidate_division=candidate_division,
+        candidate_section_id=candidate_section_id,
+    ):
+        return logical_course_id(candidate_course_id, candidate_division)
+    return normalized
+
+
+def course_id_matches(
+    requested_id: str,
+    *,
+    candidate_course_id: str,
+    candidate_division: str | None = None,
+    candidate_section_id: str | None = None,
+) -> bool:
+    """Return whether a requested id points at the candidate's logical course."""
+
+    normalized = str(requested_id).strip()
+    course_id = str(candidate_course_id).strip()
+    section_id = str(candidate_section_id or "").strip()
+    logical_id = logical_course_id(course_id, candidate_division)
     division = str(candidate_division or "").strip()
-    candidate_logical = logical_course_id(candidate_course_id, division)
-    if division and normalized == f"{candidate_logical}-{division}":
-        return candidate_logical
-    return logical_course_id(normalized, division)
+
+    if normalized in {course_id, logical_id}:
+        return True
+    if section_id and normalized == section_id:
+        return True
+    if division and normalized == f"{logical_id}-{division}":
+        return True
+    return False
 
 
 def normalize_requested_course_ids(
     course_ids: Iterable[str],
     sections: Iterable[object],
 ) -> set[str]:
-    """Normalize request ids using available section divisions without blind split."""
+    """Normalize each request id once using a matching section context.
+
+    A request id is folded to a logical course id only when an available section
+    actually matches it by logical id, raw course id, section id, or the exact
+    ``-{division}`` legacy suffix. Unmatched ids are preserved as-is instead of
+    being expanded through unrelated section divisions.
+    """
 
     section_values = list(sections)
     normalized: set[str] = set()
     for course_id in course_ids:
-        if not section_values:
-            normalized.add(str(course_id).strip())
-            continue
+        requested = str(course_id).strip()
+        matched = False
         for section in section_values:
-            normalized.add(
-                logical_course_id_from_requested(
-                    course_id,
-                    candidate_course_id=str(getattr(section, "course_id")),
-                    candidate_division=str(getattr(section, "division", "") or ""),
-                )
-            )
+            candidate_course_id = str(getattr(section, "course_id"))
+            candidate_division = str(getattr(section, "division", "") or "")
+            candidate_section_id = getattr(section, "section_id", None)
+            if not course_id_matches(
+                requested,
+                candidate_course_id=candidate_course_id,
+                candidate_division=candidate_division,
+                candidate_section_id=None if candidate_section_id is None else str(candidate_section_id),
+            ):
+                continue
+            normalized.add(logical_course_id(candidate_course_id, candidate_division))
+            matched = True
+            break
+        if not matched:
+            normalized.add(requested)
     return normalized
 
 

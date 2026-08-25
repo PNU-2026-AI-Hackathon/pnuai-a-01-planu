@@ -819,3 +819,34 @@ def test_validation_request_rejects_inverted_credit_range() -> None:
             min_credit=4,
             max_credit=3,
         )
+
+
+def test_required_legacy_course_id_with_multiple_candidate_courses_does_not_report_unavailable() -> None:
+    repo = InMemoryCatalogRepository()
+    repo.register(
+        "general-multi",
+        kind=CatalogKind.ELECTIVE,
+        courses=[
+            _course("A100-001", "대상교양", day=Day.MON, start="09:00", end="10:00"),
+            _course("B200-002", "다른교양", day=Day.TUE, start="09:00", end="10:00"),
+        ],
+    )
+    request = TimetableGenerationRequest(
+        candidate_course_ids=["A100", "B200"],
+        candidate_section_sources_by_course={
+            "A100": [_source("general-multi", "A100-001")],
+            "B200": [_source("general-multi", "B200-002")],
+        },
+        required_course_ids=["A100-001"],
+        target_additional_course_count=1,
+        max_results=3,
+    )
+
+    result = _service(repo).generate(request)
+
+    assert result.error is None
+    assert not any(
+        failure.code is GenerationFailureCode.REQUIRED_COURSE_UNAVAILABLE
+        for failure in result.failure_reasons
+    )
+    assert any("A100-001" in candidate.section_ids for candidate in result.candidates)
