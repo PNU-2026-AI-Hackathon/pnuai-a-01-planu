@@ -1,4 +1,4 @@
-"""Agent tool adapters for timetable generation and validation."""
+﻿"""Agent tool adapters for timetable generation and validation."""
 
 from __future__ import annotations
 
@@ -85,6 +85,7 @@ class TimetableGenerationTools:
         gate_failure = self._generation_gate_failure(request)
         if gate_failure is not None:
             return gate_failure
+        request = self._attach_generation_revision(request)
         if request.session_id is not None and self._recent_candidate_repository is not None:
             self._recent_candidate_repository.clear_candidates(request.session_id)
         result = self._generation_service.generate(request)
@@ -99,6 +100,15 @@ class TimetableGenerationTools:
             )
         return result
 
+
+    def _attach_generation_revision(
+        self,
+        request: TimetableGenerationRequest,
+    ) -> TimetableGenerationRequest:
+        if request.session_id is None or self._session_service is None:
+            return request
+        state = self._session_service.get_session(request.session_id)
+        return request.model_copy(update={"generation_revision": state.generation_revision})
     def _generation_gate_failure(
         self,
         request: TimetableGenerationRequest,
@@ -162,3 +172,4 @@ class TimetableGenerationTools:
                 checked_section_ids=[],
             )
         return self._validation_service.validate(request)
+

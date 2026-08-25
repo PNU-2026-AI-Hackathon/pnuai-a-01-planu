@@ -1,4 +1,4 @@
-"""Filter hard user rules, score valid candidates, and rank them."""
+﻿"""Filter hard user rules, score valid candidates, and rank them."""
 
 from __future__ import annotations
 
@@ -24,6 +24,7 @@ from .ranking_template_service import (
     weights_for_template as ranking_template_weights_for_template,
 )
 from .course_name_matcher import course_name_matches
+from .course_id_normalizer import logical_course_id
 
 
 TEMPLATE_WEIGHT_PROFILES: dict[PreferenceTemplate, RankingWeights] = (
@@ -224,7 +225,7 @@ class TimetableRanker:
         ):
             return True
 
-        course_ids = {course.course_id for _, course in meetings}
+        course_ids = {logical_course_id(course.course_id, course.division) for _, course in meetings}
         if preferences.required_course_ids and not set(preferences.required_course_ids).issubset(course_ids):
             return True
         if preferences.excluded_course_ids and course_ids & set(preferences.excluded_course_ids):
@@ -466,7 +467,7 @@ class TimetableRanker:
         preferences: PreferenceRules,
         context: RankingContext,
     ) -> list[ScoreComponent]:
-        course_ids = {course.course_id for course in candidate.courses}
+        course_ids = {logical_course_id(course.course_id, course.division) for course in candidate.courses}
         id_components: list[ScoreComponent] = []
         if preferences.preferred_course_ids:
             included_ids = sorted(course_ids & set(preferences.preferred_course_ids))
@@ -516,7 +517,7 @@ class TimetableRanker:
         context: RankingContext,
     ) -> list[ScoreComponent]:
         components: list[ScoreComponent] = []
-        course_ids = {course.course_id for course in candidate.courses}
+        course_ids = {logical_course_id(course.course_id, course.division) for course in candidate.courses}
         if preferences.disliked_course_ids:
             disliked_ids = sorted(course_ids & set(preferences.disliked_course_ids))
             absent_ids = [cid for cid in preferences.disliked_course_ids if cid not in course_ids]
@@ -823,6 +824,15 @@ class TimetableRanker:
             if len(meetings) >= 2
         )
 
+
+    def _short_gap_count(self, courses: Iterable[Course], *, threshold_minutes: int = 30) -> int:
+        count = 0
+        for meetings in self._meetings_by_day(courses).values():
+            for previous, following in zip(meetings, meetings[1:]):
+                gap = max(0, following.start_minutes - previous.end_minutes)
+                if gap <= threshold_minutes:
+                    count += 1
+        return count
     def _morning_class_count(self, courses: Iterable[Course]) -> int:
         morning_end = time_to_minutes("12:00")
         return sum(
@@ -1057,3 +1067,5 @@ def rank_timetables(
         template=template,
         top_n=top_n,
     )
+
+

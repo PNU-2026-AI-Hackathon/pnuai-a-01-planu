@@ -1,4 +1,4 @@
-"""Unit tests for PreferenceRules schema and normalization policies."""
+﻿"""Unit tests for PreferenceRules schema and normalization policies."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ def test_valid_structured_preferences_pass_schema() -> None:
     assert rules.earliest_start_time == "10:00"
 
 
-@pytest.mark.parametrize("area", [0, 8])
+@pytest.mark.parametrize("area", [0, 10])
 def test_invalid_elective_area_is_rejected(area: int) -> None:
     with pytest.raises(ValidationError, match="elective areas"):
         PreferenceRules(preferred_elective_areas=[area])
@@ -88,3 +88,4 @@ def test_excluded_and_avoided_course_fields_remain_independent() -> None:
 
     assert rules.excluded_course_names == ["고전읽기와토론"]
     assert rules.avoided_course_names == ["철학의기초"]
+

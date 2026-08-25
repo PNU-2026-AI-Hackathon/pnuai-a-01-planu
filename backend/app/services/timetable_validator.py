@@ -1,4 +1,4 @@
-"""Validation of generated timetable candidates."""
+﻿"""Validation of generated timetable candidates."""
 
 from __future__ import annotations
 
@@ -32,9 +32,9 @@ class TimetableValidator:
         campus_rule_engine: CampusRuleEngine | None = None,
         *,
         min_credit: float | None = None,
-        min_credit_inclusive: bool = True,
+        min_credit_inclusive: bool | None = None,
         max_credit: float | None = None,
-        max_credit_inclusive: bool = True,
+        max_credit_inclusive: bool | None = None,
         travel_check_max_gap: int | None = None,
     ) -> None:
         if min_credit is not None and min_credit < 0:
@@ -45,9 +45,9 @@ class TimetableValidator:
             raise ValueError("min_credit must not exceed max_credit")
         self.campus_rule_engine = campus_rule_engine or CampusRuleEngine()
         self.min_credit = min_credit
-        self.min_credit_inclusive = min_credit_inclusive if min_credit is not None else True
+        self.min_credit_inclusive = (True if min_credit_inclusive is None else min_credit_inclusive) if min_credit is not None else True
         self.max_credit = max_credit
-        self.max_credit_inclusive = max_credit_inclusive if max_credit is not None else True
+        self.max_credit_inclusive = (True if max_credit_inclusive is None else max_credit_inclusive) if max_credit is not None else True
         self.travel_check_max_gap = travel_check_max_gap
 
     def validate(
@@ -56,9 +56,9 @@ class TimetableValidator:
         *,
         fixed_courses: Iterable[Course] = (),
         min_credit: float | None = None,
-        min_credit_inclusive: bool = True,
+        min_credit_inclusive: bool | None = None,
         max_credit: float | None = None,
-        max_credit_inclusive: bool = True,
+        max_credit_inclusive: bool | None = None,
     ) -> ValidationResult:
         selected = list(courses)
         fixed = list(fixed_courses)
@@ -189,3 +189,5 @@ def validate_timetable(
         max_credit=max_credit,
         max_credit_inclusive=max_credit_inclusive,
     ).validate(courses, fixed_courses=fixed_courses)
+
+

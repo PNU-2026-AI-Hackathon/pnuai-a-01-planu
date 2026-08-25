@@ -1,4 +1,4 @@
-"""Thread-safe, in-memory session storage used by the MVP API."""
+﻿"""Thread-safe, in-memory session storage used by the MVP API."""
 
 from __future__ import annotations
 
@@ -89,6 +89,7 @@ class SessionData:
     soft_preferences: SoftPreferences = field(default_factory=SoftPreferences)
     generation_preferences_confirmed_at: datetime | None = None
     generation_preferences_confirmed_version: int | None = None
+    generation_revision: int = 1
     general_required_candidates: list[Course] = field(default_factory=list)
     general_elective_candidates: list[Course] = field(default_factory=list)
     general_pool_diagnostics: list[ExcludedCourseDiagnostic] = field(default_factory=list)
@@ -322,6 +323,7 @@ class SessionStore:
             data.latest_major_preview = dict(confirmed_preview)
             data.updated_at = self._clock()
             data.expires_at = data.updated_at + self.ttl
+            data.generation_revision += 1
             data.version += 1
             return self._copy(data)
 
@@ -398,6 +400,7 @@ class SessionStore:
 
             data.updated_at = self._clock()
             data.expires_at = data.updated_at + self.ttl
+            data.generation_revision += 1
             data.version += 1
             return self._copy(data)
 
@@ -694,6 +697,7 @@ class SessionStore:
     def _clear_generation_preferences_confirmation(data: SessionData) -> None:
         data.generation_preferences_confirmed_at = None
         data.generation_preferences_confirmed_version = None
+        data.generation_revision += 1
 
     @staticmethod
     def _copy(data: SessionData) -> SessionData:
@@ -709,6 +713,7 @@ class SessionStore:
             soft_preferences=data.soft_preferences.model_copy(deep=True),
             generation_preferences_confirmed_at=data.generation_preferences_confirmed_at,
             generation_preferences_confirmed_version=data.generation_preferences_confirmed_version,
+            generation_revision=data.generation_revision,
             general_required_candidates=list(data.general_required_candidates),
             general_elective_candidates=list(data.general_elective_candidates),
             general_pool_diagnostics=list(data.general_pool_diagnostics),
@@ -760,3 +765,6 @@ class SessionStore:
 
 # A single store is sufficient while the application runs in one process.
 session_store = SessionStore()
+
+
+

@@ -1,4 +1,4 @@
-"""Deterministic scoring for generated timetable candidates.
+﻿"""Deterministic scoring for generated timetable candidates.
 
 The service evaluates only Soft preferences against a complete timetable
 candidate, including both fixed and added sections. It does not read sessions,
@@ -19,6 +19,7 @@ from ..models.timetable_generation import (
     ResolvedSection,
     SectionSource,
 )
+from .course_id_normalizer import logical_course_id
 from ..models.timetable_scoring import (
     PreferenceEvidence,
     PreferenceEvidenceCode,
@@ -123,7 +124,7 @@ class TimetableScoringService:
         total_score = round(sum(component.score for component in components), 6)
         gap = self._gap_summary(candidate_sections)
         included_disliked = sorted(
-            set(section.course_id for section in candidate_sections)
+            {logical_course_id(section.course_id, section.division) for section in candidate_sections}
             & set(soft_preferences.disliked_course_ids)
         )
         latest_end = max(
@@ -362,7 +363,7 @@ class TimetableScoringService:
         satisfied: list[PreferenceEvidence],
         unsatisfied: list[PreferenceEvidence],
     ) -> None:
-        course_ids = {section.course_id for section in sections}
+        course_ids = {logical_course_id(section.course_id, section.division) for section in sections}
         if preferences.preferred_course_ids:
             included = sorted(course_ids & set(preferences.preferred_course_ids))
             missing = [cid for cid in preferences.preferred_course_ids if cid not in course_ids]
@@ -447,6 +448,7 @@ class TimetableScoringService:
             ScoreComponentCode.COMPACT_SCHEDULE,
             total_gap_minutes=summary["total_gap_minutes"],
             long_gap_count=summary["long_gap_count"],
+            short_gap_count=summary["short_gap_count"],
         )
         (satisfied if is_satisfied else unsatisfied).append(evidence)
         components.append(ScoreComponent(
@@ -483,6 +485,7 @@ class TimetableScoringService:
         active_policy = policy or self.policy
         total = 0
         long_count = 0
+        short_count = 0
         gaps_by_day: dict[str, list[int]] = {}
         for day, meetings in self._meetings_by_day(sections).items():
             gaps: list[int] = []
@@ -492,11 +495,14 @@ class TimetableScoringService:
                 gaps.append(gap)
                 if gap >= active_policy.long_gap_threshold_minutes and gap > 0:
                     long_count += 1
+                if gap <= 30:
+                    short_count += 1
             if gaps:
                 gaps_by_day[day.value] = gaps
         return {
             "total_gap_minutes": total,
             "long_gap_count": long_count,
+            "short_gap_count": short_count,
             "gaps_by_day": gaps_by_day,
         }
 
@@ -535,3 +541,4 @@ def scoring_error_from_exception(
     else:
         code = ScoringErrorCode.INVALID_SCORING_REQUEST
     return TimetableScoringError(code=code, message=str(exc), candidate_id=candidate_id)
+

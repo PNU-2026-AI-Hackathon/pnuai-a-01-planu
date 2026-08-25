@@ -1,4 +1,4 @@
-"""Deterministic local-development model for the session-state agent."""
+﻿"""Deterministic local-development model for the session-state agent."""
 
 from __future__ import annotations
 
@@ -7,6 +7,8 @@ import re
 from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from ..services.preference_constants import MORNING_END_TIME
 
 
 CourseIntent = Literal["required", "excluded", "preferred", "disliked"]
@@ -41,7 +43,7 @@ KOREAN_HARD_FREE_DAY_MARKERS = (
     "빼줘",
 )
 KOREAN_SOFT_MARKERS = ("가능하면", "선호", "좋겠", "피하고", "싶어", "도록")
-DEFAULT_MORNING_END_TIME = "10:00"
+DEFAULT_MORNING_END_TIME = MORNING_END_TIME
 
 
 class SessionStateModel(Protocol):
@@ -715,3 +717,4 @@ def _user_content(messages: list[Any]) -> dict[str, Any]:
                 return {"user_message": content}
             return parsed if isinstance(parsed, dict) else {"user_message": content}
     return {}
+

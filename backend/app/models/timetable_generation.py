@@ -1,4 +1,4 @@
-"""Structured models for agent-callable timetable generation tools."""
+﻿"""Structured models for agent-callable timetable generation tools."""
 
 from __future__ import annotations
 
@@ -100,6 +100,7 @@ class TimetableGenerationRequest(_Model):
 
     session_id: str | None = Field(default=None, min_length=1)
     session_version: int | None = Field(default=None, ge=1)
+    generation_revision: int | None = Field(default=None, ge=1)
     fixed_section_sources: list[SectionSource] = Field(default_factory=list)
     candidate_course_ids: list[str] = Field(default_factory=list)
     candidate_section_sources_by_course: dict[str, list[SectionSource]] = Field(
@@ -312,6 +313,7 @@ class GeneratedTimetableCandidate(_Model):
     fixed_section_ids: list[str]
     session_id: str | None = Field(default=None, min_length=1)
     session_version: int | None = Field(default=None, ge=1)
+    generation_revision: int | None = Field(default=None, ge=1)
     fixed_section_sources: list[SectionSource] = Field(default_factory=list)
     added_section_ids: list[str]
     added_section_sources: list[SectionSource] = Field(default_factory=list)
@@ -349,3 +351,6 @@ class TimetableGenerationResult(_Model):
     search_diagnostics: list[GenerationFailureReason] = Field(default_factory=list)
     message: str
     error: TimetableGenerationError | None = None
+
+
+

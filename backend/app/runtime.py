@@ -261,9 +261,10 @@ def _section_course(section) -> TimetableCourseDto:
 def _session_unavailable_error() -> AppError:
     return AppError(
         "SESSION_NOT_AVAILABLE",
-        "?몄뀡??李얠쓣 ???녾굅??留뚮즺?섏뿀?듬땲??",
+        "세션을 찾을 수 없거나 만료되었습니다.",
         status_code=404,
     )
+
 
 
 

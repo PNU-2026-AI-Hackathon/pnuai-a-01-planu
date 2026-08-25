@@ -1,4 +1,4 @@
-"""Deterministic preparation for agent timetable generation requests."""
+﻿"""Deterministic preparation for agent timetable generation requests."""
 
 from __future__ import annotations
 
@@ -135,7 +135,9 @@ class TimetablePreparationService:
                 earliest_start_time=summary.hard_constraints.earliest_start_time,
                 latest_end_time=summary.hard_constraints.latest_end_time,
                 min_credit=summary.hard_constraints.min_credit,
+                min_credit_inclusive=summary.hard_constraints.min_credit_inclusive,
                 max_credit=summary.hard_constraints.max_credit,
+                max_credit_inclusive=summary.hard_constraints.max_credit_inclusive,
                 department=summary.department,
                 target_additional_course_count=options.target_additional_course_count,
                 target_additional_credits=options.target_additional_credits,
@@ -274,3 +276,4 @@ def _issue(
         field=field,
         values=values or [],
     )
+

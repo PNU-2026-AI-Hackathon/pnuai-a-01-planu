@@ -1,4 +1,4 @@
-"""Generate valid timetable candidates from fixed majors and general courses."""
+﻿"""Generate valid timetable candidates from fixed majors and general courses."""
 
 from __future__ import annotations
 
@@ -224,6 +224,7 @@ class TimetableGenerator:
                     elective_candidates,
                     base_credits=fixed_credits + required_credit,
                     min_credit=min_credit,
+                    min_credit_inclusive=min_credit_inclusive,
                     max_credit=credit_ceiling,
                     max_credit_inclusive=max_credit_inclusive,
                 )
@@ -379,16 +380,29 @@ class TimetableGenerator:
         requested_count = target.additional_elective_count or 0
         max_count = requested_count
 
+        minimum_credit = min(credits)
         if min_credit is not None and base_credits < min_credit:
             credit_gap = min_credit - base_credits
-            max_count = max(max_count, ceil(credit_gap / min(credits)))
+            count_for_boundary = ceil(credit_gap / minimum_credit)
+            if (
+                not min_credit_inclusive
+                and abs(base_credits + count_for_boundary * minimum_credit - min_credit) < 1e-9
+            ):
+                count_for_boundary += 1
+            max_count = max(max_count, count_for_boundary)
         elif target.target_total_credits is not None:
             remaining = max(target.target_total_credits - base_credits, 0)
-            max_count = max(max_count, floor(remaining / min(credits)))
+            max_count = max(max_count, floor(remaining / minimum_credit))
 
         if max_credit is not None:
             remaining = max(max_credit - base_credits, 0)
-            max_count = min(max_count, floor(remaining / min(credits)))
+            ceiling_count = floor(remaining / minimum_credit)
+            if (
+                not max_credit_inclusive
+                and abs(base_credits + ceiling_count * minimum_credit - max_credit) < 1e-9
+            ):
+                ceiling_count -= 1
+            max_count = min(max_count, max(0, ceiling_count))
 
         max_count = min(max_count, len(elective_candidates))
         return range(max_count, -1, -1)
@@ -606,3 +620,5 @@ def generate_timetables(
         min_credit=min_credit,
         max_credit=max_credit,
     )
+
+

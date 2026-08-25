@@ -1,4 +1,4 @@
-"""Input DTOs for free-text and LLM-produced timetable preferences.
+﻿"""Input DTOs for free-text and LLM-produced timetable preferences.
 
 These models describe user intent before it has been committed to a session.
 They may contain course names, parser traces, warnings, raw LLM output, and
@@ -230,7 +230,7 @@ class PreferenceRules(BaseModel):
     )
     minimize_attendance_days: bool = False
     minimize_consecutive_classes: bool = False
-    compact_schedule: bool = False
+    compact_schedule: bool | None = None
 
     @field_validator(
         "earliest_start_time", "latest_end_time", "preferred_first_class_time", "preferred_latest_end_time"
@@ -453,7 +453,7 @@ class SoftPreferenceConditions(BaseModel):
     )
     minimize_attendance_days: bool = False
     minimize_consecutive_classes: bool = False
-    compact_schedule: bool = False
+    compact_schedule: bool | None = None
 
     @field_validator("preferred_first_class_time")
     @classmethod
@@ -552,3 +552,4 @@ def merge_preference_rules(
             base[field_name] = getattr(selected, field_name)
 
     return PreferenceRules.model_validate(base)
+

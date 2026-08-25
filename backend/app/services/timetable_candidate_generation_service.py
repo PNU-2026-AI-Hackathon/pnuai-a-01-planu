@@ -1,4 +1,4 @@
-"""Agent-callable timetable candidate generation from prepared section ids."""
+﻿"""Agent-callable timetable candidate generation from prepared section ids."""
 
 from __future__ import annotations
 
@@ -70,6 +70,7 @@ class TimetableCandidateGenerationService:
             earliest_start_time=request.earliest_start_time,
             latest_end_time=request.latest_end_time,
             max_credit=request.max_credit,
+            max_credit_inclusive=request.max_credit_inclusive,
             department=request.department,
         )
         if not fixed_validation.valid:
@@ -389,7 +390,9 @@ class TimetableCandidateGenerationService:
             earliest_start_time=request.earliest_start_time,
             latest_end_time=request.latest_end_time,
             min_credit=request.min_credit,
+            min_credit_inclusive=request.min_credit_inclusive,
             max_credit=request.max_credit,
+            max_credit_inclusive=request.max_credit_inclusive,
             department=request.department,
         )
         if not validation.valid:
@@ -421,6 +424,9 @@ class TimetableCandidateGenerationService:
             total_credits=sum(item.section.credit for item in all_sections),
             validation=validation,
             generation_order=len(results) + 1,
+            session_id=request.session_id,
+            session_version=request.session_version,
+            generation_revision=request.generation_revision,
         ))
 
     @staticmethod
@@ -588,3 +594,5 @@ def _unreachable_target_message(
         "남은 후보로 목표 과목 수를 만족할 수 없습니다.",
         "target_additional_course_count",
     )
+
+

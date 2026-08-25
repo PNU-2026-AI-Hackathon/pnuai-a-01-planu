@@ -1,4 +1,4 @@
-"""Service boundary for future PlaNU agent session state tools."""
+﻿"""Service boundary for future PlaNU agent session state tools."""
 
 from __future__ import annotations
 
@@ -1197,6 +1197,7 @@ class SessionService:
         now = self._now()
         update = self._mark_selected_timetable_stale_if_needed(state, dict(update))
         update = self._invalidate_generation_confirmation_if_needed(state, update)
+        update = self._bump_generation_revision_if_needed(state, update)
         changed = self._build_validated_state(
             state,
             {
@@ -1234,6 +1235,27 @@ class SessionService:
             update["selected_timetable_status"] = SelectedTimetableStatus.STALE
         return update
 
+
+    @staticmethod
+    def _bump_generation_revision_if_needed(
+        state: PlanuSessionState,
+        update: dict[str, object],
+    ) -> dict[str, object]:
+        generation_input_fields = {
+            "department",
+            "major_catalog_id",
+            "elective_catalog_id",
+            "selected_major_course_ids",
+            "hard_constraints",
+            "soft_preferences",
+        }
+        should_bump = any(
+            field_name in update and update[field_name] != getattr(state, field_name)
+            for field_name in generation_input_fields
+        )
+        if should_bump and "generation_revision" not in update:
+            update["generation_revision"] = state.generation_revision + 1
+        return update
     @staticmethod
     def _invalidate_generation_confirmation_if_needed(
         state: PlanuSessionState,
@@ -1583,6 +1605,7 @@ class SessionService:
                 raise SessionValidationError(field_name, str(area), "elective areas must be between 1 and 9")
             values.append(area)
         return list(dict.fromkeys(values))
+
 
 
 

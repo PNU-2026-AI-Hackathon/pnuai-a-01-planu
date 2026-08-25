@@ -1,4 +1,4 @@
-"""Parse natural-language general-education preferences with trace output."""
+﻿"""Parse natural-language general-education preferences with trace output."""
 
 from __future__ import annotations
 
@@ -19,6 +19,7 @@ from ..models.preference import (
     PreferenceTraceEvent,
     merge_preference_rules,
 )
+from .preference_constants import MORNING_END_TIME
 from .openai_client import (
     DEFAULT_OPENAI_BASE_URL,
     DEFAULT_OPENAI_MODEL,
@@ -37,7 +38,7 @@ PROXY_TOKEN_PLACEHOLDER = OPENAI_API_KEY_PLACEHOLDER
 PROXY_TOKEN_PLACEHOLDERS = OPENAI_API_KEY_PLACEHOLDERS
 
 
-SYSTEM_PROMPT = """You are PlaNU's preference parser.
+SYSTEM_PROMPT = f"""You are PlaNU's preference parser.
 Extract only general-education timetable preferences from the user's Korean or
 English free text. Do not choose courses, do not build a timetable, and do not
 change selected_preferences. Return only fields that fit PreferenceRules.
@@ -45,10 +46,10 @@ change selected_preferences. Return only fields that fit PreferenceRules.
 Rules:
 - Use MON, TUE, WED, THU, FRI for weekdays.
 - Use HH:MM 24-hour time.
-- In PlaNU, morning classes are classes that start before 10:00.
-- If the user strongly forbids morning classes, use earliest_start_time: "10:00".
+- In PlaNU, morning classes are classes that start before {MORNING_END_TIME}.
+- If the user strongly forbids morning classes, use earliest_start_time: "{MORNING_END_TIME}".
 - If the user softly prefers avoiding morning classes, use
-  preferred_first_class_time: "10:00".
+  preferred_first_class_time: "{MORNING_END_TIME}".
 - If the user gives a concrete time, prefer the user's time over PlaNU defaults.
 - earliest_start_time is a hard filter. preferred_first_class_time is a soft
   ranking preference.
@@ -116,7 +117,7 @@ Rules:
   when the user says classes or the first class should start at or after that
   time. Phrases such as "첫 수업은 10시부터", "첫 수업은 10시 이후",
   "10시보다 이른 수업은 싫다", and "10시 이후 수업" should produce
-  earliest_start_time: "10:00". Use preferred_first_class_time only for a
+  earliest_start_time: "{MORNING_END_TIME}". Use preferred_first_class_time only for a
   purely soft ranking preference that does not constrain allowed schedules.
 - For elective-area preferences, extract only the explicit numeric areas stated
   by the user. "4영역" means [4], not [1, 2, 3, 4]. Do not expand a single
@@ -1127,3 +1128,4 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main(sys.argv[1:]))
+

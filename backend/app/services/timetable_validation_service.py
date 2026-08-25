@@ -1,4 +1,4 @@
-"""Deterministic validation for concrete timetable section selections."""
+﻿"""Deterministic validation for concrete timetable section selections."""
 
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ from ..models.timetable_generation import (
     TimetableViolationCode,
 )
 from .campus_rule_engine import CampusRuleEngine
+from .course_id_normalizer import logical_course_id
 from .general_course_pool_service import CourseRestrictionPolicy
 from .timetable_validator import TimetableValidator
 
@@ -65,7 +66,7 @@ class TimetableValidationService:
         required = set(required_course_ids)
         excluded = set(excluded_course_ids)
         excluded_areas = set(excluded_elective_areas)
-        selected_course_ids = [item.section.course_id for item in values]
+        selected_course_ids = [logical_course_id(item.section.course_id, item.section.division) for item in values]
         selected_course_id_set = set(selected_course_ids)
 
         duplicate_course_ids = sorted(
@@ -93,11 +94,12 @@ class TimetableValidationService:
 
         for item in values:
             section = item.section
-            if section.course_id in excluded:
+            section_course_id = logical_course_id(section.course_id, section.division)
+            if section_course_id in excluded:
                 violations.append(TimetableViolation(
                     code=TimetableViolationCode.EXCLUDED_COURSE_INCLUDED,
                     message="제외 과목이 시간표에 포함되어 있습니다.",
-                    course_id=section.course_id,
+                    course_id=section_course_id,
                     section_id=section.section_id,
                     constraint="excluded_course_ids",
                 ))
@@ -108,7 +110,7 @@ class TimetableValidationService:
                 violations.append(TimetableViolation(
                     code=TimetableViolationCode.EXCLUDED_ELECTIVE_AREA_INCLUDED,
                     message="제외한 교양 영역의 수업이 시간표에 포함되어 있습니다.",
-                    course_id=section.course_id,
+                    course_id=section_course_id,
                     section_id=section.section_id,
                     constraint="excluded_elective_areas",
                 ))
@@ -185,6 +187,7 @@ class TimetableValidationService:
     ) -> list[TimetableViolation]:
         violations: list[TimetableViolation] = []
         section = item.section
+        section_course_id = logical_course_id(section.course_id, section.division)
         free_days = set(required_free_days)
         if free_days and any(meeting.day in free_days for meeting in section.class_times):
             violations.append(TimetableViolation(
@@ -200,7 +203,7 @@ class TimetableValidationService:
                 violations.append(TimetableViolation(
                     code=TimetableViolationCode.EARLIEST_START_VIOLATION,
                     message="가장 이른 시작 시간 조건보다 먼저 시작하는 수업이 있습니다.",
-                    course_id=section.course_id,
+                    course_id=section_course_id,
                     section_id=section.section_id,
                     constraint="earliest_start_time",
                 ))
@@ -210,7 +213,7 @@ class TimetableValidationService:
                 violations.append(TimetableViolation(
                     code=TimetableViolationCode.LATEST_END_VIOLATION,
                     message="가장 늦은 종료 시간 조건보다 늦게 끝나는 수업이 있습니다.",
-                    course_id=section.course_id,
+                    course_id=section_course_id,
                     section_id=section.section_id,
                     constraint="latest_end_time",
                 ))
@@ -223,7 +226,7 @@ class TimetableValidationService:
                 violations.append(TimetableViolation(
                     code=TimetableViolationCode.DEPARTMENT_INELIGIBLE,
                     message=decision.reason,
-                    course_id=section.course_id,
+                    course_id=section_course_id,
                     section_id=section.section_id,
                     constraint="department",
                 ))
@@ -247,3 +250,5 @@ def _section_to_course(section: CourseSection, *, course_id: str | None = None) 
         professor=section.professor,
         class_times=section.class_times,
     )
+
+
