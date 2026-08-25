@@ -17,11 +17,7 @@ from .course_discovery import (
     derive_course_code,
     normalize_course_search_text,
 )
-from .course_load import (
-    CourseLoadCalculationResult,
-    CourseLoadTarget,
-    CourseLoadWarning,
-)
+from .course_load import CourseLoadTarget
 from .general_course_pool import (
     ExcludedCourseDiagnostic,
     GeneralCoursePoolResult,
@@ -103,9 +99,7 @@ __all__ = [
     "CourseSection",
     "CourseSectionsResult",
     "CourseLoadSatisfaction",
-    "CourseLoadCalculationResult",
     "CourseLoadTarget",
-    "CourseLoadWarning",
     "Day",
     "DiscoveryResolution",
     "DiscoveryToolError",

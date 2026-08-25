@@ -115,7 +115,6 @@ department_alias.json
 → backend/data/course_catalog.json 로딩
 → schedules가 있는 과목을 Course 객체로 변환
 → campus_rules.json 로딩
-→ departments.json 또는 학과 목록 JSON 로딩
 → 메모리에 저장
 → API 요청 대기
 ```
@@ -123,13 +122,17 @@ department_alias.json
 담당 파일:
 
 ```text
-- 서버 시작 시 전체 초기화 흐름 담당
+main.py
+- FastAPI lifespan에서 컨테이너 생성
+
+container.py
+- repository, service, agent, tool 구성 및 기본 데이터 로딩
 
 course_parser.py
 - 사용자 업로드 수강편람처럼 런타임에 엑셀 파싱이 필요한 경우 사용
 
 course_loader.py
-- backend/data/course_catalog.json과 data/rules의 JSON 파일을 메모리에 로딩
+- 기본 수강편람 데이터 로딩
 ```
 
 ---
@@ -234,8 +237,9 @@ API 응답에서는 `"09:00"` 형식을 사용한다. 서버 내부 비교에서
 담당 파일:
 
 ```text
+models/course.py
+- time_to_minutes()를 통해 "HH:MM" 값을 분 단위 정수로 변환
 ```
-
 ---
 
 ## 6. 사용자 업로드 파일 처리
@@ -343,7 +347,7 @@ POST /recommend
 
 ## 9. API 흐름
 
-### 9.1. ???? ??
+### 9.1. 수강편람 파싱
 
 ```text
 POST /catalog/parse
@@ -588,15 +592,6 @@ rules JSON
 
 `course_catalog.json`은 원본 보존용 필드를 포함한 전체 카탈로그이다. 시간표 추천 엔진에는 `schedules`가 있는 항목만 기존 `Course` 모델로 변환해 전달한다.
 
-
-학과 자동완성과 검증을 담당한다.
-
-```text
-- departments.json 또는 문자열 배열 학과 목록 로딩
-- keyword 기반 학과 검색
-- 선택된 학과가 유효한지 검증
-```
-
 ### 10.4. `session_store.py`
 
 MVP용 메모리 세션을 관리한다.
@@ -626,16 +621,6 @@ LLM은 시간표를 직접 만들지 않는다. LLM은 전공 과목을 선택�
 2. Pydantic 모델 검증
 3. 도메인 검증
 4. 실패 시 빈 PreferenceRules로 fallback
-```
-
-
-교양 후보를 1차 필터링한다.
-
-```text
-- 학과별 수강 제한 적용
-- LLM hard filter 적용
-- 전공 시간표와 충돌하는 교양 제거
-- 교양 필수/교양 선택 구분
 ```
 
 ### 10.6. `campus_rule_engine.py`

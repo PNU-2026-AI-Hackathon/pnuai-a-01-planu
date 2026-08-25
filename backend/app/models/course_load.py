@@ -1,8 +1,8 @@
-"""Models for recommendation course-load target interpretation.
+"""Models for recommendation course-load targets.
 
-These models describe the credit goals and constraints that the future
-backtracking engine should use. They do not represent a concrete timetable or
-an already-selected set of general courses.
+The active timetable generation path uses ``CourseLoadTarget`` to carry optional
+credit and elective-count goals from API requests into the session store and
+timetable generator.
 """
 
 from __future__ import annotations
@@ -19,12 +19,10 @@ class _Model(BaseModel):
 
 
 class CourseLoadTarget(_Model):
-    """Optional user targets for backtracking-based recommendation.
+    """Optional user targets for timetable generation.
 
-    ``target_total_credits`` is the total-credit upper bound that generated
-    candidates must not exceed. Among candidates within that limit, generation
-    metadata lets later stages compare how close each candidate gets to the
-    target credit count.
+    ``target_total_credits`` is the desired total-credit upper bound used by
+    the timetable generator when building and comparing candidates.
 
     ``additional_elective_count`` is the desired number of elective general
     courses to add after required general courses are accounted for.
@@ -43,32 +41,3 @@ class CourseLoadTarget(_Model):
         """
 
         return cls()
-
-
-class CourseLoadWarning(_Model):
-    """Structured warning emitted when interpreted load goals conflict."""
-
-    code: str = Field(min_length=1)
-    message: str = Field(min_length=1)
-    requested_elective_count: int | None = None
-    actual_elective_count: int | None = None
-    reason: str | None = None
-
-
-class CourseLoadCalculationResult(_Model):
-    """Credit-capacity summary for the backtracking engine.
-
-    The result intentionally contains no selected ``Course`` objects. Actual
-    general-course combination generation, required-general section selection,
-    time-conflict checks, campus travel checks, and choosing one section among
-    duplicate course divisions belong to the backtracking engine.
-    """
-
-    target: CourseLoadTarget = Field(default_factory=CourseLoadTarget)
-    fixed_major_credits: float = Field(ge=0)
-    required_general_credits: float = Field(ge=0)
-    base_total_credits: float = Field(ge=0)
-    target_total_credits: float | None = None
-    remaining_elective_credit_capacity: float | None = Field(default=None, ge=0)
-    additional_elective_count: int | None = Field(default=None, ge=0)
-    warnings: list[CourseLoadWarning] = Field(default_factory=list)
