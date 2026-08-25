@@ -1,4 +1,4 @@
-﻿"""Deterministic preparation for agent timetable generation requests."""
+"""Deterministic preparation for agent timetable generation requests."""
 
 from __future__ import annotations
 
@@ -276,4 +276,3 @@ def _issue(
         field=field,
         values=values or [],
     )
-

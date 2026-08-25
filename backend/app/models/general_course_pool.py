@@ -33,4 +33,3 @@ class GeneralCoursePoolResult(_Model):
     pools: GeneralCoursePools = Field(default_factory=GeneralCoursePools)
     excluded_courses: list[ExcludedCourseDiagnostic] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
-

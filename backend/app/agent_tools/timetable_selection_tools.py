@@ -1,4 +1,4 @@
-﻿"""Agent-callable tools for selected timetables and revision preparation."""
+"""Agent-callable tools for selected timetables and revision preparation."""
 
 from __future__ import annotations
 
@@ -189,4 +189,3 @@ class TimetableSelectionTools:
                 errors=[str(exc)],
                 message=str(exc),
             )
-

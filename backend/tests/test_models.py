@@ -7,6 +7,7 @@ from backend.app.models import (
     Category,
     ClassTime,
     Course,
+    CourseLoadTarget,
     Day,
     InputTimetable,
     PreferenceRules,
@@ -189,6 +190,30 @@ def test_preference_rules_hard_course_names_win_over_soft_duplicates() -> None:
 
     assert rules.preferred_course_names == ["고전읽기와토론"]
     assert rules.avoided_course_names == ["열린사고와표현"]
+
+
+def test_course_load_target_accepts_both_fields() -> None:
+    target = CourseLoadTarget(
+        target_total_credits=18,
+        additional_elective_count=2,
+    )
+
+    assert target.target_total_credits == 18
+    assert target.additional_elective_count == 2
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"target_total_credits": 0},
+        {"target_total_credits": -1},
+        {"additional_elective_count": -1},
+        {"unknown": 1},
+    ],
+)
+def test_course_load_target_rejects_invalid_values(payload: dict[str, object]) -> None:
+    with pytest.raises(ValidationError):
+        CourseLoadTarget(**payload)
 
 
 def test_timetable_calculates_credit_and_sorts_schedule(

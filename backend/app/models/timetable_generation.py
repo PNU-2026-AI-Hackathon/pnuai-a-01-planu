@@ -1,4 +1,4 @@
-﻿"""Structured models for agent-callable timetable generation tools."""
+"""Structured models for agent-callable timetable generation tools."""
 
 from __future__ import annotations
 
@@ -351,6 +351,3 @@ class TimetableGenerationResult(_Model):
     search_diagnostics: list[GenerationFailureReason] = Field(default_factory=list)
     message: str
     error: TimetableGenerationError | None = None
-
-
-

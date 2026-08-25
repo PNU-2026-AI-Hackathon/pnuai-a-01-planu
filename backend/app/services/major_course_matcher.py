@@ -10,7 +10,6 @@ from ..models.course import Course
 from ..models.major_selection import (
     AmbiguousMajorCourse,
     MajorCourseMatchResult,
-    MajorCourseReference,
     MajorSelectionParseResult,
     MatchedMajorCourse,
     UnmatchedMajorCourse,

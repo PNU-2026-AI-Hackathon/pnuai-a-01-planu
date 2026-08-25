@@ -1,4 +1,4 @@
-﻿"""Input DTOs for free-text and LLM-produced timetable preferences.
+"""Input DTOs for free-text and LLM-produced timetable preferences.
 
 These models describe user intent before it has been committed to a session.
 They may contain course names, parser traces, warnings, raw LLM output, and
@@ -552,4 +552,3 @@ def merge_preference_rules(
             base[field_name] = getattr(selected, field_name)
 
     return PreferenceRules.model_validate(base)
-

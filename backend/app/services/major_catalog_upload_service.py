@@ -1,4 +1,4 @@
-﻿"""Upload, validate, parse, and store user-owned major catalog workbooks."""
+"""Upload, validate, parse, and store user-owned major catalog workbooks."""
 
 from __future__ import annotations
 

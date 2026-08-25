@@ -1,4 +1,4 @@
-﻿"""Agent tool adapters for timetable generation and validation."""
+"""Agent tool adapters for timetable generation and validation."""
 
 from __future__ import annotations
 
@@ -172,4 +172,3 @@ class TimetableGenerationTools:
                 checked_section_ids=[],
             )
         return self._validation_service.validate(request)
-

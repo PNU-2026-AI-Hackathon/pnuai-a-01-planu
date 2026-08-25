@@ -1,4 +1,4 @@
-﻿"""Single-agent execution loop for PlaNU session-state management."""
+"""Single-agent execution loop for PlaNU session-state management."""
 
 from __future__ import annotations
 
@@ -24,7 +24,6 @@ from ..agent_tools import (
     SectionDetailsInput,
     SessionIdInput,
     SessionStateSummary,
-    SessionToolError,
     SessionToolResult,
     TimeInput,
     ScoreTimetableCandidateRequest,
@@ -1786,4 +1785,3 @@ def load_session_state_agent_prompt() -> str:
 
 def result_to_pretty_json(result: SessionStateAgentResult) -> str:
     return json.dumps(result.model_dump(mode="json"), ensure_ascii=False, indent=2)
-

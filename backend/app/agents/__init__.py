@@ -1,4 +1,4 @@
-﻿"""Agent execution layers for PlaNU."""
+"""Agent execution layers for PlaNU."""
 
 from .supervisor_agent import (
     AgentDomain,
@@ -61,6 +61,3 @@ __all__ = [
     "SessionStateToolset",
     "UnresolvedSessionRequest",
 ]
-
-
-

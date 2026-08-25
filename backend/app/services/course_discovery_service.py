@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import defaultdict
 from difflib import SequenceMatcher
 
-from ..models.course import Day, time_to_minutes
+from ..models.course import time_to_minutes
 from ..models.course_discovery import (
     CourseCandidate,
     CourseDiscoveryRequest,

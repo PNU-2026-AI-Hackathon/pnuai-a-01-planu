@@ -1,4 +1,4 @@
-﻿"""Session lookup and PlaNU agent routes."""
+"""Session lookup and PlaNU agent routes."""
 
 from __future__ import annotations
 

@@ -31,12 +31,9 @@ MVP의 핵심 목표는 다음과 같다.
 backend/
  ├─ app/
  │   ├─ main.py
- │   ├─ startup.py
- │   ├─ config.py
  │   ├─ deps.py
  │   │
  │   ├─ routes/
- │   │   ├─ departments.py
  │   │   ├─ catalog.py
  │   │   ├─ major.py
  │   │   └─ recommend.py
@@ -56,9 +53,7 @@ backend/
  │   │   ├─ course_parser.py
  │   │   ├─ uploaded_catalog_parser.py
  │   │   ├─ course_loader.py
- │   │   ├─ department_service.py
  │   │   ├─ session_store.py
- │   │   ├─ course_filter.py
  │   │   ├─ llm_preference_parser.py
  │   │   ├─ campus_rule_engine.py
  │   │   ├─ timetable_validator.py
@@ -67,8 +62,6 @@ backend/
  │   │
  │   └─ core/
  │       ├─ errors.py
- │       ├─ timeutil.py
- │       └─ logging.py
  │
  ├─ data/
  │   ├─ course_catalog.json
@@ -96,8 +89,7 @@ course_catalog.json
 - schedules가 명확히 파싱된 과목만 시간표 추천 후보 Course로 변환
 ```
 
-프론트 학과 선택 UI는 같은 스킬이 생성한 `frontend/src/data/departments.json`을 사용한다.
-백엔드 학과 검증이 필요한 경우에도 이 grouped JSON을 읽어 학과명만 추출할 수 있다.
+프론트 학과 선택 UI는 `frontend/src/data/departments.json`을 사용한다.
 
 ### 3.2. `data/rules/`
 
@@ -123,7 +115,6 @@ department_alias.json
 → backend/data/course_catalog.json 로딩
 → schedules가 있는 과목을 Course 객체로 변환
 → campus_rules.json 로딩
-→ departments.json 또는 학과 목록 JSON 로딩
 → 메모리에 저장
 → API 요청 대기
 ```
@@ -131,14 +122,17 @@ department_alias.json
 담당 파일:
 
 ```text
-startup.py
-- 서버 시작 시 전체 초기화 흐름 담당
+main.py
+- FastAPI lifespan에서 컨테이너 생성
+
+container.py
+- repository, service, agent, tool 구성 및 기본 데이터 로딩
 
 course_parser.py
 - 사용자 업로드 수강편람처럼 런타임에 엑셀 파싱이 필요한 경우 사용
 
 course_loader.py
-- backend/data/course_catalog.json과 data/rules의 JSON 파일을 메모리에 로딩
+- 기본 수강편람 데이터 로딩
 ```
 
 ---
@@ -243,9 +237,9 @@ API 응답에서는 `"09:00"` 형식을 사용한다. 서버 내부 비교에서
 담당 파일:
 
 ```text
-core/timeutil.py
+models/course.py
+- time_to_minutes()를 통해 "HH:MM" 값을 분 단위 정수로 변환
 ```
-
 ---
 
 ## 6. 사용자 업로드 파일 처리
@@ -342,7 +336,6 @@ POST /recommend
 
 | Method | Path                    | 역할                           |
 | ------ | ----------------------- | ------------------------------ |
-| GET    | `/departments?keyword=` | 학과 자동완성 목록 조회        |
 | POST   | `/catalog/parse`        | 업로드 파일 파싱, 세션 생성    |
 | POST   | `/major/confirm`        | 사용자가 선택한 전공 과목 확정 |
 | POST   | `/recommend`            | 교양 시간표 추천               |
@@ -354,23 +347,7 @@ POST /recommend
 
 ## 9. API 흐름
 
-### 9.1. 학과 목록 조회
-
-```text
-GET /departments?keyword=컴퓨터
-```
-
-응답 예시:
-
-```json
-{
-  "departments": ["정보컴퓨터공학부", "컴퓨터공학전공", "전기컴퓨터공학부"]
-}
-```
-
-학과는 자유 입력이 아니라, 서버가 제공한 목록에서 선택해야 한다.
-
-### 9.2. 수강편람 파싱
+### 9.1. 수강편람 파싱
 
 ```text
 POST /catalog/parse
@@ -615,17 +592,7 @@ rules JSON
 
 `course_catalog.json`은 원본 보존용 필드를 포함한 전체 카탈로그이다. 시간표 추천 엔진에는 `schedules`가 있는 항목만 기존 `Course` 모델로 변환해 전달한다.
 
-### 10.4. `department_service.py`
-
-학과 자동완성과 검증을 담당한다.
-
-```text
-- departments.json 또는 문자열 배열 학과 목록 로딩
-- keyword 기반 학과 검색
-- 선택된 학과가 유효한지 검증
-```
-
-### 10.5. `session_store.py`
+### 10.4. `session_store.py`
 
 MVP용 메모리 세션을 관리한다.
 
@@ -636,7 +603,7 @@ MVP용 메모리 세션을 관리한다.
 - TTL 만료 세션 삭제
 ```
 
-### 10.6. `llm_preference_parser.py`
+### 10.5. `llm_preference_parser.py`
 
 교양 조건 프롬프트만 처리한다.
 
@@ -656,18 +623,7 @@ LLM은 시간표를 직접 만들지 않는다. LLM은 전공 과목을 선택�
 4. 실패 시 빈 PreferenceRules로 fallback
 ```
 
-### 10.7. `course_filter.py`
-
-교양 후보를 1차 필터링한다.
-
-```text
-- 학과별 수강 제한 적용
-- LLM hard filter 적용
-- 전공 시간표와 충돌하는 교양 제거
-- 교양 필수/교양 선택 구분
-```
-
-### 10.8. `campus_rule_engine.py`
+### 10.6. `campus_rule_engine.py`
 
 연강 이동 가능성을 판단한다.
 
@@ -677,7 +633,7 @@ LLM은 시간표를 직접 만들지 않는다. LLM은 전공 과목을 선택�
 - 두 수업 사이 이동 가능 여부 반환
 ```
 
-### 10.9. `timetable_validator.py`
+### 10.7. `timetable_validator.py`
 
 시간표 후보의 유효성을 검사한다.
 
@@ -782,11 +738,10 @@ gap이 짧으면 campus_rule_engine으로 이동 가능 여부를 판단한다.
 1. 서버 시작
    - backend/data/course_catalog.json에서 기본 교양 필수/선택 데이터 로딩
    - 제한 교과목 데이터 로딩
-   - 학과 목록 로딩
    - 캠퍼스 이동 규칙 로딩
 
 2. 사용자가 학과 선택
-   - /departments 사용
+   - frontend/src/data/departments.json 사용
 
 3. 사용자가 전공 수강편람 업로드
    - /catalog/parse

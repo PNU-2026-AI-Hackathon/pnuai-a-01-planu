@@ -1,4 +1,4 @@
-﻿"""Build general-required/elective candidate pools before timetable generation."""
+"""Build general-required/elective candidate pools before timetable generation."""
 
 from __future__ import annotations
 
@@ -586,4 +586,3 @@ def _response_from_session(session) -> GeneralPreparationResponse:
         elective_area=session.general_pool_elective_area,
         warnings=list(session.general_pool_warnings),
     )
-

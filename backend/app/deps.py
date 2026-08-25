@@ -13,7 +13,6 @@ from .agent_tools import (
     TimetableSelectionTools,
 )
 from .agents import SessionStateAgent, SessionStateToolset
-from . import container as container_module
 from .container import PlanuContainer, build_container
 from .services.course_restriction_loader import load_department_restriction_rules
 from .repositories import SessionRepository, SessionStoreCatalogRepository
@@ -194,9 +193,3 @@ def get_agent_runtime(request: Request = None):
 
 def get_condition_summary_service(request: Request = None):
     return get_container(request).condition_summary_service
-
-
-
-
-
-

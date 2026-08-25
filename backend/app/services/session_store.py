@@ -1,4 +1,4 @@
-﻿"""Thread-safe, in-memory session storage used by the MVP API."""
+"""Thread-safe, in-memory session storage used by the MVP API."""
 
 from __future__ import annotations
 
@@ -765,6 +765,3 @@ class SessionStore:
 
 # A single store is sufficient while the application runs in one process.
 session_store = SessionStore()
-
-
-

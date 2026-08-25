@@ -10,7 +10,6 @@ from ..models.timetable_generation import GeneratedTimetableCandidate, ResolvedS
 from ..models.timetable_scoring import (
     ScoredTimetableCandidate,
     TimetableRankingResult,
-    TimetableScoringError,
     TimetableScoringPolicy,
     TimetableScoringRequest,
 )

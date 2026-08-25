@@ -1,4 +1,4 @@
-﻿"""Framework-independent agent tool adapters for PlaNU."""
+"""Framework-independent agent tool adapters for PlaNU."""
 
 from .schemas import (
     BoolPreferenceInput,
@@ -75,4 +75,3 @@ __all__ = [
     "UpdateSessionProfileInput",
     "UpdateTimetablePreferencesInput",
 ]
-

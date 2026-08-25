@@ -1,10 +1,8 @@
-﻿"""Minimal session state shared by future agent tools and repositories."""
+"""Minimal session state shared by future agent tools and repositories."""
 
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated
-
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -97,5 +95,3 @@ class PlanuSessionState(BaseModel):
         if self.expires_at <= self.last_accessed_at:
             raise ValueError("expires_at must be later than last_accessed_at")
         return self
-
-

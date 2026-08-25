@@ -9,7 +9,6 @@ from ..models.course import Category, Course, time_to_minutes
 from ..models.course_discovery import CourseSection
 from ..models.timetable_generation import (
     ResolvedSection,
-    SectionSource,
     TimetableValidationResult,
     TimetableViolation,
     TimetableViolationCode,

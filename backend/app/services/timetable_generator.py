@@ -1,4 +1,4 @@
-﻿"""Generate valid timetable candidates from fixed majors and general courses."""
+"""Generate valid timetable candidates from fixed majors and general courses."""
 
 from __future__ import annotations
 
@@ -620,5 +620,3 @@ def generate_timetables(
         min_credit=min_credit,
         max_credit=max_credit,
     )
-
-
