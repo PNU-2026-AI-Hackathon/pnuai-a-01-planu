@@ -1,4 +1,4 @@
-﻿"""Session orchestration for timetable candidate generation."""
+"""Session orchestration for timetable candidate generation."""
 
 from __future__ import annotations
 
@@ -138,7 +138,7 @@ class TimetableGenerationService:
         )
         recent_candidates = _recent_candidates_from_legacy_result(
             session_id=session_id,
-            generation_revision=1,
+            generation_revision=data.generation_revision,
             result=result,
             fixed_major_course_ids=[course.course_id for course in data.fixed_courses],
         )
@@ -238,5 +238,3 @@ def _course_section_identity(course: object) -> str:
 
 def legacy_candidate_id_for_courses(course_ids: list[str]) -> str:
     return GeneratedTimetableCandidate.build_id(course_ids)
-
-

@@ -113,6 +113,15 @@ def test_full_http_recommendation_flow_with_real_upload_parser(
     assert selected.json()["selected_timetable"]["candidate_id"] == selected_candidate_id
     assert integration_app.store.get(session_id, touch=False).session_stage is SessionStage.RANKING_COMPLETED
 
+    before_soft_change = integration_app.session_service.get_session(session_id)
+    integration_app.session_service.set_compact_schedule_preference(session_id, False)
+    after_soft_change = integration_app.session_service.get_session(session_id)
+    assert after_soft_change.generation_revision == before_soft_change.generation_revision + 1
+
+    stale = client.post(f"/sessions/{session_id}/timetables/{selected_candidate_id}/select")
+    assert stale.status_code == 409, stale.text
+    assert "이전 조건" in stale.text
+
 
 def test_template_reranking_reuses_generated_candidates(
     integration_app,

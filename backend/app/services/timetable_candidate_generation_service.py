@@ -1,4 +1,4 @@
-﻿"""Agent-callable timetable candidate generation from prepared section ids."""
+"""Agent-callable timetable candidate generation from prepared section ids."""
 
 from __future__ import annotations
 
@@ -19,6 +19,7 @@ from ..models.timetable_generation import (
 )
 from ..repositories.catalog_repository import CatalogRepository
 from ..repositories.exceptions import CatalogNotFoundError, SectionNotFoundError
+from .course_id_normalizer import logical_course_id, normalize_requested_course_ids
 from .timetable_validation_service import TimetableValidationService
 
 
@@ -94,8 +95,19 @@ class TimetableCandidateGenerationService:
                 ),
             )
 
-        fixed_course_ids = {item.section.course_id for item in fixed_sections}
-        required_course_ids = set(request.required_course_ids)
+        fixed_course_ids = {
+            logical_course_id(item.section.course_id, item.section.division)
+            for item in fixed_sections
+        }
+        candidate_sections = [
+            item.section
+            for sections in candidates_by_course.values()
+            for item in sections
+        ]
+        required_course_ids = normalize_requested_course_ids(
+            request.required_course_ids,
+            [*[item.section for item in fixed_sections], *candidate_sections],
+        )
         unresolved_required = required_course_ids - fixed_course_ids
         available_course_ids = set(candidates_by_course)
         missing_required = unresolved_required - available_course_ids
@@ -118,10 +130,14 @@ class TimetableCandidateGenerationService:
                 ),
             )
 
+        excluded_course_ids = normalize_requested_course_ids(
+            request.excluded_course_ids,
+            candidate_sections,
+        )
         candidates_by_course = {
             course_id: sections
             for course_id, sections in candidates_by_course.items()
-            if course_id not in request.excluded_course_ids
+            if course_id not in excluded_course_ids
             and course_id not in fixed_course_ids
         }
         ordered_course_ids = [
@@ -594,5 +610,3 @@ def _unreachable_target_message(
         "남은 후보로 목표 과목 수를 만족할 수 없습니다.",
         "target_additional_course_count",
     )
-
-

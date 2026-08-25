@@ -1,4 +1,4 @@
-﻿from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 
 from backend.app.agent_tools.timetable_selection_tools import TimetableSelectionTools
 from backend.app.agents.simple_session_model import SimpleSessionStateModel
@@ -322,3 +322,152 @@ def test_session_unavailable_error_message_is_utf8() -> None:
 
 
 
+
+
+def test_validation_normalizes_required_and_excluded_course_ids_with_division_suffix() -> None:
+    from backend.app.services.timetable_validation_service import TimetableValidationService
+
+    service = TimetableValidationService()
+    section = _section("A100-001", "A100-001", "10:00", "11:00")
+
+    assert service.validate_sections([section], required_course_ids=["A100"]).valid
+    assert service.validate_sections([section], required_course_ids=["A100-001"]).valid
+
+    excluded_logical = service.validate_sections([section], excluded_course_ids=["A100"])
+    excluded_legacy = service.validate_sections([section], excluded_course_ids=["A100-001"])
+
+    assert not excluded_logical.valid
+    assert excluded_logical.violations[0].course_id == "A100"
+    assert not excluded_legacy.valid
+    assert excluded_legacy.violations[0].course_id == "A100"
+
+
+def test_course_id_normalization_preserves_hyphenated_course_codes() -> None:
+    from backend.app.services.timetable_validation_service import TimetableValidationService
+
+    service = TimetableValidationService()
+    section = _section("CS-A100-001", "CS-A100-001", "10:00", "11:00")
+
+    assert service.validate_sections([section], required_course_ids=["CS-A100"]).valid
+    assert service.validate_sections([section], required_course_ids=["CS-A100-001"]).valid
+
+    missing = service.validate_sections([section], required_course_ids=["CS"])
+    assert not missing.valid
+    assert missing.violations[0].course_id == "CS"
+
+
+def test_duplicate_course_violation_lists_both_section_ids_after_normalization() -> None:
+    from backend.app.models.timetable_generation import TimetableViolationCode
+    from backend.app.services.timetable_validation_service import TimetableValidationService
+
+    first = _section("A100-001", "A100-001", "10:00", "11:00")
+    second = _section("A100-002", "A100-002", "13:00", "14:00")
+
+    result = TimetableValidationService().validate_sections([first, second])
+    duplicate = next(
+        item for item in result.violations
+        if item.code is TimetableViolationCode.DUPLICATE_COURSE
+    )
+
+    assert duplicate.course_id == "A100"
+    assert duplicate.conflicting_section_ids == ["A100-001", "A100-002"]
+
+
+def test_agent_scoring_normalizes_legacy_course_ids_in_soft_preferences() -> None:
+    from backend.app.models.timetable_scoring import ScoreComponentCode
+
+    section = _section("A100-001", "A100-001", "10:00", "11:00")
+    scorer = TimetableScoringService()
+
+    preferred = scorer.score_candidate(
+        candidate=_candidate("preferred-legacy", ["A100-001"]),
+        sections=[ResolvedSection(catalog_id="catalog", section=section)],
+        soft_preferences=SoftPreferences(preferred_course_ids=["A100-001"]),
+    )
+    disliked = scorer.score_candidate(
+        candidate=_candidate("disliked-legacy", ["A100-001"]),
+        sections=[ResolvedSection(catalog_id="catalog", section=section)],
+        soft_preferences=SoftPreferences(disliked_course_ids=["A100"]),
+    )
+
+    preferred_component = next(
+        component for component in preferred.score_components
+        if component.code is ScoreComponentCode.PREFERRED_COURSES
+    )
+    disliked_component = next(
+        component for component in disliked.score_components
+        if component.code is ScoreComponentCode.DISLIKED_COURSES
+    )
+
+    assert preferred_component.details["included_course_ids"] == ["A100"]
+    assert disliked_component.details["included_course_ids"] == ["A100"]
+    assert disliked.total_score < 0
+
+
+def test_compact_schedule_false_avoids_short_gaps_without_rewarding_longer_gaps() -> None:
+    from backend.app.models.preference import PreferenceRules
+    from backend.app.models.timetable import Timetable
+    from backend.app.models.timetable_scoring import ScoreComponentCode
+    from backend.app.services.timetable_ranker import TimetableRanker
+
+    scorer = TimetableScoringService()
+    adjacent = [_section("A-001", "A", "09:00", "10:00"), _section("B-001", "B", "10:00", "11:00")]
+    gap_3h = [_section("C-001", "C", "09:00", "10:00"), _section("D-001", "D", "13:00", "14:00")]
+    gap_6h = [_section("E-001", "E", "09:00", "10:00"), _section("F-001", "F", "16:00", "17:00")]
+
+    adjacent_score = scorer.score_candidate(
+        candidate=_candidate("adjacent", ["A-001", "B-001"]),
+        sections=[ResolvedSection(catalog_id="catalog", section=item) for item in adjacent],
+        soft_preferences=SoftPreferences(compact_schedule=False),
+    )
+    gap_3h_score = scorer.score_candidate(
+        candidate=_candidate("gap-3h", ["C-001", "D-001"]),
+        sections=[ResolvedSection(catalog_id="catalog", section=item) for item in gap_3h],
+        soft_preferences=SoftPreferences(compact_schedule=False),
+    )
+    gap_6h_score = scorer.score_candidate(
+        candidate=_candidate("gap-6h", ["E-001", "F-001"]),
+        sections=[ResolvedSection(catalog_id="catalog", section=item) for item in gap_6h],
+        soft_preferences=SoftPreferences(compact_schedule=False),
+    )
+
+    adjacent_component = next(
+        component for component in adjacent_score.score_components
+        if component.code is ScoreComponentCode.COMPACT_SCHEDULE
+    )
+    assert gap_3h_score.total_score > adjacent_score.total_score
+    assert gap_6h_score.total_score == gap_3h_score.total_score
+    assert adjacent_component.satisfied is False
+    assert adjacent_component.details["short_gap_count"] == 1
+
+    ranker = TimetableRanker()
+    adjacent_timetable = Timetable(courses=[Course(course_id="RA-001", course_name="RA", category=Category.GENERAL_ELECTIVE, area=1, credit=3, division="001", professor="교수", class_times=[ClassTime(day=Day.MON, start="09:00", end="10:00", classroom="101", building_code="401")]), Course(course_id="RB-001", course_name="RB", category=Category.GENERAL_ELECTIVE, area=1, credit=3, division="001", professor="교수", class_times=[ClassTime(day=Day.MON, start="10:00", end="11:00", classroom="101", building_code="401")])])
+    gap_3h_timetable = Timetable(courses=[Course(course_id="RC-001", course_name="RC", category=Category.GENERAL_ELECTIVE, area=1, credit=3, division="001", professor="교수", class_times=[ClassTime(day=Day.MON, start="09:00", end="10:00", classroom="101", building_code="401")]), Course(course_id="RD-001", course_name="RD", category=Category.GENERAL_ELECTIVE, area=1, credit=3, division="001", professor="교수", class_times=[ClassTime(day=Day.MON, start="13:00", end="14:00", classroom="101", building_code="401")])])
+    gap_6h_timetable = Timetable(courses=[Course(course_id="RE-001", course_name="RE", category=Category.GENERAL_ELECTIVE, area=1, credit=3, division="001", professor="교수", class_times=[ClassTime(day=Day.MON, start="09:00", end="10:00", classroom="101", building_code="401")]), Course(course_id="RF-001", course_name="RF", category=Category.GENERAL_ELECTIVE, area=1, credit=3, division="001", professor="교수", class_times=[ClassTime(day=Day.MON, start="16:00", end="17:00", classroom="101", building_code="401")])])
+    context = ranker.build_context(None, PreferenceRules(compact_schedule=False))
+
+    adjacent_legacy = ranker._compact_schedule_component(adjacent_timetable, context, compact_preference=False)
+    gap_3h_legacy = ranker._compact_schedule_component(gap_3h_timetable, context, compact_preference=False)
+    gap_6h_legacy = ranker._compact_schedule_component(gap_6h_timetable, context, compact_preference=False)
+
+    assert gap_3h_legacy.value > adjacent_legacy.value
+    assert gap_6h_legacy.value == gap_3h_legacy.value
+    assert "짧은 수업 간격" in adjacent_legacy.reason
+    assert "깁니다" not in adjacent_legacy.reason
+
+
+def test_morning_boundary_uses_shared_constant_for_parser_and_ranker() -> None:
+    from backend.app.models.course import time_to_minutes
+    from backend.app.services.preference_constants import MORNING_END_MINUTES, MORNING_END_TIME
+    from backend.app.services.timetable_ranker import TimetableRanker
+
+    assert time_to_minutes(MORNING_END_TIME) == MORNING_END_MINUTES
+
+    ranker = TimetableRanker()
+    before_boundary = Course(course_id="MORNING-001", course_name="MORNING", category=Category.GENERAL_ELECTIVE, area=1, credit=3, division="001", professor="교수", class_times=[ClassTime(day=Day.MON, start="09:59", end="10:30", classroom="101", building_code="401")])
+    at_boundary = Course(course_id="TEN-001", course_name="TEN", category=Category.GENERAL_ELECTIVE, area=1, credit=3, division="001", professor="교수", class_times=[ClassTime(day=Day.MON, start="10:00", end="11:00", classroom="101", building_code="401")])
+    after_boundary = Course(course_id="ELEVEN-001", course_name="ELEVEN", category=Category.GENERAL_ELECTIVE, area=1, credit=3, division="001", professor="교수", class_times=[ClassTime(day=Day.MON, start="11:00", end="12:00", classroom="101", building_code="401")])
+
+    assert ranker._morning_class_count([before_boundary]) == 1
+    assert ranker._morning_class_count([at_boundary]) == 0
+    assert ranker._morning_class_count([after_boundary]) == 0

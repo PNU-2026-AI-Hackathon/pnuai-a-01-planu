@@ -128,10 +128,10 @@ def _to_state(data: SessionData) -> PlanuSessionState:
         selected_timetable_status=data.selected_timetable_status,
         generation_preferences_confirmed_at=data.generation_preferences_confirmed_at,
         generation_preferences_confirmed_version=data.generation_preferences_confirmed_version,
+        generation_revision=data.generation_revision,
         created_at=data.created_at,
         updated_at=data.updated_at,
         last_accessed_at=data.last_accessed_at,
         expires_at=data.expires_at or data.updated_at,
         version=data.version,
     )
-

@@ -1,4 +1,4 @@
-﻿"""Service boundary for future PlaNU agent session state tools."""
+"""Service boundary for future PlaNU agent session state tools."""
 
 from __future__ import annotations
 
@@ -1231,6 +1231,8 @@ class SessionService:
         )
         if "hard_constraints" in update and update["hard_constraints"] != state.hard_constraints:
             should_stale = True
+        if "soft_preferences" in update and update["soft_preferences"] != state.soft_preferences:
+            should_stale = True
         if should_stale:
             update["selected_timetable_status"] = SelectedTimetableStatus.STALE
         return update
@@ -1605,7 +1607,3 @@ class SessionService:
                 raise SessionValidationError(field_name, str(area), "elective areas must be between 1 and 9")
             values.append(area)
         return list(dict.fromkeys(values))
-
-
-
-

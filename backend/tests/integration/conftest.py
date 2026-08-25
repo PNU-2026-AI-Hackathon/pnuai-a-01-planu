@@ -44,6 +44,7 @@ from backend.app.services.general_course_pool_service import (
 from backend.app.services.major_catalog_upload_service import MajorCatalogUploadService
 from backend.app.services.major_confirm_service import MajorConfirmService
 from backend.app.services.major_preview_service import MajorPreviewService
+from backend.app.services.session_service import SessionService
 from backend.app.services.session_store import SessionStore
 from backend.app.services.timetable_generation_service import TimetableGenerationService
 from backend.app.services.timetable_ranking_service import TimetableRankingService
@@ -118,6 +119,7 @@ class FakeGeneralPreferenceParser:
 class IntegrationApp:
     client: TestClient
     store: SessionStore
+    session_service: SessionService
     preference_parser: FakeGeneralPreferenceParser
     clock: MutableClock
 
@@ -194,6 +196,7 @@ def integration_app() -> Iterator[IntegrationApp]:
         yield IntegrationApp(
             client=client,
             store=store,
+            session_service=runtime_container.session_service,
             preference_parser=preference_parser,
             clock=clock,
         )

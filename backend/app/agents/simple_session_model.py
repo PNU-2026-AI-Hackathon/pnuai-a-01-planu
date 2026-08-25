@@ -1,4 +1,4 @@
-﻿"""Deterministic local-development model for the session-state agent."""
+"""Deterministic local-development model for the session-state agent."""
 
 from __future__ import annotations
 
@@ -164,9 +164,9 @@ def _extract_non_course_preferences(
         soft["preferred_free_days"] = _append_unique(soft.get("preferred_free_days", []), "MON")
 
     if "10시 이전" in text and any(marker in text for marker in ("가능하면", "피하고 싶")):
-        soft["preferred_earliest_start_time"] = "10:00"
+        soft["preferred_earliest_start_time"] = DEFAULT_MORNING_END_TIME
     elif "10시 이전" in text or "10시 전" in text:
-        hard["earliest_start_time"] = "10:00"
+        hard["earliest_start_time"] = DEFAULT_MORNING_END_TIME
     if "9시부터" in text or "9시 부터" in text:
         hard["earliest_start_time"] = "09:00"
     if ("5시 30분 이후" in text or "17시 30분 이후" in text) and any(
@@ -717,4 +717,3 @@ def _user_content(messages: list[Any]) -> dict[str, Any]:
                 return {"user_message": content}
             return parsed if isinstance(parsed, dict) else {"user_message": content}
     return {}
-

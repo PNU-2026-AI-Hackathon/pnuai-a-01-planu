@@ -1,4 +1,4 @@
-﻿"""Deterministic scoring for generated timetable candidates.
+"""Deterministic scoring for generated timetable candidates.
 
 The service evaluates only Soft preferences against a complete timetable
 candidate, including both fixed and added sections. It does not read sessions,
@@ -19,7 +19,7 @@ from ..models.timetable_generation import (
     ResolvedSection,
     SectionSource,
 )
-from .course_id_normalizer import logical_course_id
+from .course_id_normalizer import logical_course_id, normalize_requested_course_ids
 from ..models.timetable_scoring import (
     PreferenceEvidence,
     PreferenceEvidenceCode,
@@ -123,9 +123,13 @@ class TimetableScoringService:
 
         total_score = round(sum(component.score for component in components), 6)
         gap = self._gap_summary(candidate_sections)
+        normalized_disliked_course_ids = normalize_requested_course_ids(
+            soft_preferences.disliked_course_ids,
+            candidate_sections,
+        )
         included_disliked = sorted(
             {logical_course_id(section.course_id, section.division) for section in candidate_sections}
-            & set(soft_preferences.disliked_course_ids)
+            & normalized_disliked_course_ids
         )
         latest_end = max(
             (meeting.end_minutes for section in candidate_sections for meeting in section.class_times),
@@ -365,8 +369,12 @@ class TimetableScoringService:
     ) -> None:
         course_ids = {logical_course_id(section.course_id, section.division) for section in sections}
         if preferences.preferred_course_ids:
-            included = sorted(course_ids & set(preferences.preferred_course_ids))
-            missing = [cid for cid in preferences.preferred_course_ids if cid not in course_ids]
+            preferred_course_ids = normalize_requested_course_ids(
+                preferences.preferred_course_ids,
+                sections,
+            )
+            included = sorted(course_ids & preferred_course_ids)
+            missing = sorted(preferred_course_ids - course_ids)
             for course_id in included:
                 satisfied.append(self._evidence(
                     PreferenceEvidenceCode.PREFERRED_COURSE_INCLUDED,
@@ -395,7 +403,11 @@ class TimetableScoringService:
                 },
             ))
         if preferences.disliked_course_ids:
-            disliked = sorted(course_ids & set(preferences.disliked_course_ids))
+            disliked_course_ids = normalize_requested_course_ids(
+                preferences.disliked_course_ids,
+                sections,
+            )
+            disliked = sorted(course_ids & disliked_course_ids)
             for course_id in disliked:
                 unsatisfied.append(self._evidence(
                     PreferenceEvidenceCode.DISLIKED_COURSE_INCLUDED,
@@ -437,12 +449,12 @@ class TimetableScoringService:
             )
             is_satisfied = summary["total_gap_minutes"] <= policy.long_gap_threshold_minutes
         else:
-            score = (
-                policy.gap_penalty_per_minute * summary["total_gap_minutes"]
-                + policy.long_gap_penalty * summary["long_gap_count"]
-                - policy.compact_schedule_weight
-            )
-            is_satisfied = summary["total_gap_minutes"] >= policy.long_gap_threshold_minutes
+            short_gap_count = int(summary["short_gap_count"])
+            if short_gap_count == 0:
+                score = policy.compact_schedule_weight
+            else:
+                score = -(policy.long_gap_penalty * short_gap_count)
+            is_satisfied = short_gap_count == 0
         evidence = self._evidence(
             trade_code,
             ScoreComponentCode.COMPACT_SCHEDULE,
@@ -541,4 +553,3 @@ def scoring_error_from_exception(
     else:
         code = ScoringErrorCode.INVALID_SCORING_REQUEST
     return TimetableScoringError(code=code, message=str(exc), candidate_id=candidate_id)
-

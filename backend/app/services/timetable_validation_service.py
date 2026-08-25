@@ -1,4 +1,4 @@
-﻿"""Deterministic validation for concrete timetable section selections."""
+"""Deterministic validation for concrete timetable section selections."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from ..models.timetable_generation import (
     TimetableViolationCode,
 )
 from .campus_rule_engine import CampusRuleEngine
-from .course_id_normalizer import logical_course_id
+from .course_id_normalizer import logical_course_id, normalize_requested_course_ids
 from .general_course_pool_service import CourseRestrictionPolicy
 from .timetable_validator import TimetableValidator
 
@@ -63,8 +63,9 @@ class TimetableValidationService:
             key=lambda item: (item.section.course_id, item.catalog_id, item.section.section_id),
         )
         violations: list[TimetableViolation] = []
-        required = set(required_course_ids)
-        excluded = set(excluded_course_ids)
+        section_values = [item.section for item in values]
+        required = normalize_requested_course_ids(required_course_ids, section_values)
+        excluded = normalize_requested_course_ids(excluded_course_ids, section_values)
         excluded_areas = set(excluded_elective_areas)
         selected_course_ids = [logical_course_id(item.section.course_id, item.section.division) for item in values]
         selected_course_id_set = set(selected_course_ids)
@@ -80,7 +81,7 @@ class TimetableValidationService:
                 conflicting_section_ids=[
                     item.section.section_id
                     for item in values
-                    if item.section.course_id == course_id
+                    if logical_course_id(item.section.course_id, item.section.division) == course_id
                 ],
             ))
 
@@ -250,5 +251,3 @@ def _section_to_course(section: CourseSection, *, course_id: str | None = None) 
         professor=section.professor,
         class_times=section.class_times,
     )
-
-
