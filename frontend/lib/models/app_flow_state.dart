@@ -19,6 +19,7 @@ class AppFlowState {
   Uint8List? electiveCatalogBytes;
   Map<String, dynamic>? generatedCandidates;
   Map<String, dynamic>? rankedCandidates;
+  Map<String, dynamic>? selectedTimetable;
 
   void reset() {
     department = '';
@@ -37,5 +38,6 @@ class AppFlowState {
     electiveCatalogBytes = null;
     generatedCandidates = null;
     rankedCandidates = null;
+    selectedTimetable = null;
   }
 }

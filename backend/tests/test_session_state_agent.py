@@ -1443,6 +1443,53 @@ def test_preparation_service_builds_generation_request_from_discovery_candidates
     )
 
 
+def test_preparation_service_carries_session_credit_bounds_to_validation_request() -> None:
+    agent, service, tools, _catalogs = _agent_with_discovery(
+        ScriptedModel({"message": "확인했습니다.", "tool_calls": []})
+    )
+    session_id = _create_session(service)
+    SessionAgentTools(service).update_session_profile(
+        {
+            "session_id": session_id,
+            "department": "정보컴퓨터공학부",
+            "major_catalog_id": "major-1",
+            "elective_catalog_id": "elective-1",
+        }
+    )
+    SessionAgentTools(service).update_timetable_preferences(
+        {
+            "session_id": session_id,
+            "hard": {"min_credit": 12, "max_credit": 22},
+        }
+    )
+    service.replace_selected_major_courses(session_id, ["MAJ101-001"])
+
+    result = _run(agent, session_id, "현재 조건을 보여줘")
+    assert result.state_summary is not None
+    discovery = tools.run(
+        "discover_courses",
+        {
+            "catalog_id": "elective-1",
+            "category": "GENERAL_ELECTIVE",
+            "limit": 2,
+        },
+    )
+    prepared = TimetablePreparationService().prepare(
+        result.state_summary,
+        TimetablePreparationOptions(
+            candidate_catalog_id="elective-1",
+            discovered_candidates=discovery.candidates,
+            target_additional_credits=3,
+        ),
+    )
+
+    assert prepared.ready is True
+    assert prepared.request is not None
+    assert prepared.request.min_credit == 12
+    assert prepared.request.max_credit == 22
+    assert prepared.request.target_additional_credits == 3
+
+
 def test_preparation_service_requires_major_section_when_only_course_id_is_selected() -> None:
     agent, service, _tools, _catalogs = _agent_with_discovery(
         ScriptedModel({"message": "확인했습니다.", "tool_calls": []})

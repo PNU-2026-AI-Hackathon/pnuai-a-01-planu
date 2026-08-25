@@ -134,6 +134,7 @@ class SessionAgentTools:
                 "hard_constraints.latest_end_time",
                 "hard_constraints.required_course_ids",
                 "hard_constraints.excluded_course_ids",
+                "hard_constraints.excluded_elective_areas",
                 "hard_constraints.min_credit",
                 "hard_constraints.max_credit",
                 "soft_preferences.preferred_free_days",

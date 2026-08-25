@@ -173,6 +173,21 @@ def test_score_components_sum_matches_raw_score() -> None:
         component.value for component in ranked[0].score_components
     )
     assert ranked[0].score_components[0].key == "valid_candidate"
+    assert ranked[0].score_components[0].reason == "필수조건을 모두 통과한 시간표입니다."
+
+
+def test_template_only_components_do_not_become_recommendation_reasons() -> None:
+    candidate = Timetable(courses=[_course("GEN-A", day=Day.MON)])
+
+    ranked = rank_timetables(
+        [candidate],
+        preferences=PreferenceRules(),
+        template="balanced",
+        top_n=1,
+    )
+
+    assert ranked[0].timetable.reasons == ["필수조건을 모두 통과한 시간표입니다."]
+    assert all("요일별 첫 수업" not in reason for reason in ranked[0].timetable.reasons)
 
 
 def test_required_and_excluded_course_names_are_hard_filters() -> None:

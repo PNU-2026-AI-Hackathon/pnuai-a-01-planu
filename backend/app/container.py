@@ -255,7 +255,10 @@ def build_container(
             parser=MajorSelectionParser(),
         ),
         major_confirm_service=MajorConfirmService(store=store),
-        legacy_timetable_generation_service=TimetableGenerationService(store=store),
+        legacy_timetable_generation_service=TimetableGenerationService(
+            store=store,
+            recent_candidate_repository=recent_candidates,
+        ),
         legacy_timetable_ranking_service=TimetableRankingService(
             store=store,
             template_service=template_service,

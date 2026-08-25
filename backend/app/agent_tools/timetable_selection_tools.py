@@ -1,4 +1,4 @@
-"""Agent-callable tools for selected timetables and revision preparation."""
+﻿"""Agent-callable tools for selected timetables and revision preparation."""
 
 from __future__ import annotations
 
@@ -55,6 +55,14 @@ class TimetableSelectionTools:
                 request.session_id,
                 request.candidate_id,
             )
+            if candidate.generation_revision is not None and candidate.generation_revision != before.generation_revision:
+                return error_result(
+                    message="이전 조건으로 생성된 시간표 후보는 선택할 수 없습니다. 다시 생성해 주세요.",
+                    code=SessionToolErrorCode.INVALID_VALUE,
+                    session_id=request.session_id,
+                    field="candidate_id",
+                    value=request.candidate_id,
+                )
             after = self._session_service.select_timetable_candidate(
                 request.session_id,
                 candidate,
@@ -181,3 +189,4 @@ class TimetableSelectionTools:
                 errors=[str(exc)],
                 message=str(exc),
             )
+

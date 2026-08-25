@@ -17,9 +17,9 @@ def hard_constraints_to_rules(hard: HardConstraints) -> PreferenceRules:
     if hard.latest_end_time is not None:
         data["latest_end_time"] = hard.latest_end_time
     if hard.required_course_ids:
-        data["required_course_names"] = list(hard.required_course_ids)
+        data["required_course_ids"] = list(hard.required_course_ids)
     if hard.excluded_course_ids:
-        data["excluded_course_names"] = list(hard.excluded_course_ids)
+        data["excluded_course_ids"] = list(hard.excluded_course_ids)
     return PreferenceRules(**data)
 
 
@@ -32,14 +32,11 @@ def soft_preferences_to_rules(soft: SoftPreferences) -> PreferenceRules:
     if soft.preferred_earliest_start_time is not None:
         data["preferred_first_class_time"] = soft.preferred_earliest_start_time
     if soft.preferred_latest_end_time is not None:
-        # PreferenceRules currently exposes only preferred_first_class_time for
-        # soft time-of-day ranking. Keep this field until a latest-end soft
-        # ranking field exists.
-        pass
+        data["preferred_latest_end_time"] = soft.preferred_latest_end_time
     if soft.preferred_course_ids:
-        data["preferred_course_names"] = list(soft.preferred_course_ids)
+        data["preferred_course_ids"] = list(soft.preferred_course_ids)
     if soft.disliked_course_ids:
-        data["avoided_course_names"] = list(soft.disliked_course_ids)
+        data["disliked_course_ids"] = list(soft.disliked_course_ids)
     if soft.compact_schedule is not None:
         data["compact_schedule"] = soft.compact_schedule
     return PreferenceRules(**data)

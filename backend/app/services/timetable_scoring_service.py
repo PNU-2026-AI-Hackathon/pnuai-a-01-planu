@@ -19,6 +19,7 @@ from ..models.timetable_generation import (
     ResolvedSection,
     SectionSource,
 )
+from .course_id_normalizer import logical_course_id, normalize_requested_course_ids
 from ..models.timetable_scoring import (
     PreferenceEvidence,
     PreferenceEvidenceCode,
@@ -122,9 +123,13 @@ class TimetableScoringService:
 
         total_score = round(sum(component.score for component in components), 6)
         gap = self._gap_summary(candidate_sections)
+        normalized_disliked_course_ids = normalize_requested_course_ids(
+            soft_preferences.disliked_course_ids,
+            candidate_sections,
+        )
         included_disliked = sorted(
-            set(section.course_id for section in candidate_sections)
-            & set(soft_preferences.disliked_course_ids)
+            {logical_course_id(section.course_id, section.division) for section in candidate_sections}
+            & normalized_disliked_course_ids
         )
         latest_end = max(
             (meeting.end_minutes for section in candidate_sections for meeting in section.class_times),
@@ -148,7 +153,7 @@ class TimetableScoringService:
                 ),
                 "total_gap_minutes": (
                     gap["total_gap_minutes"]
-                    if soft_preferences.compact_schedule is True
+                    if soft_preferences.compact_schedule is not None
                     else 0
                 ),
                 "latest_end_minutes": (
@@ -167,20 +172,20 @@ class TimetableScoringService:
     ) -> list[CourseSection]:
         sections: list[CourseSection] = []
         missing: list[str] = []
-        keys = candidate.section_sources or [
-            SectionSource(catalog_id="", section_id=section_id)
-            for section_id in candidate.section_ids
-        ]
-        for source in keys:
-            section = (
-                section_id_map.get(source.section_id)
-                if source.catalog_id == ""
-                else section_map.get(source.key)
-            )
-            if section is None:
-                missing.append(source.section_id)
-            else:
-                sections.append(section)
+        if candidate.section_sources:
+            for source in candidate.section_sources:
+                section = section_map.get(source.key)
+                if section is None:
+                    missing.append(source.section_id)
+                else:
+                    sections.append(section)
+        else:
+            for section_id in candidate.section_ids:
+                section = section_id_map.get(section_id)
+                if section is None:
+                    missing.append(section_id)
+                else:
+                    sections.append(section)
         if missing:
             raise LookupError("missing section details: " + ", ".join(sorted(set(missing))))
         return sections
@@ -362,10 +367,14 @@ class TimetableScoringService:
         satisfied: list[PreferenceEvidence],
         unsatisfied: list[PreferenceEvidence],
     ) -> None:
-        course_ids = {section.course_id for section in sections}
+        course_ids = {logical_course_id(section.course_id, section.division) for section in sections}
         if preferences.preferred_course_ids:
-            included = sorted(course_ids & set(preferences.preferred_course_ids))
-            missing = [cid for cid in preferences.preferred_course_ids if cid not in course_ids]
+            preferred_course_ids = normalize_requested_course_ids(
+                preferences.preferred_course_ids,
+                sections,
+            )
+            included = sorted(course_ids & preferred_course_ids)
+            missing = sorted(preferred_course_ids - course_ids)
             for course_id in included:
                 satisfied.append(self._evidence(
                     PreferenceEvidenceCode.PREFERRED_COURSE_INCLUDED,
@@ -394,7 +403,11 @@ class TimetableScoringService:
                 },
             ))
         if preferences.disliked_course_ids:
-            disliked = sorted(course_ids & set(preferences.disliked_course_ids))
+            disliked_course_ids = normalize_requested_course_ids(
+                preferences.disliked_course_ids,
+                sections,
+            )
+            disliked = sorted(course_ids & disliked_course_ids)
             for course_id in disliked:
                 unsatisfied.append(self._evidence(
                     PreferenceEvidenceCode.DISLIKED_COURSE_INCLUDED,
@@ -426,19 +439,28 @@ class TimetableScoringService:
         summary = self._gap_summary(sections, policy)
         trade_code = self._compact_code(summary["total_gap_minutes"])
         trade_offs.append(ScoringTradeOff(code=trade_code, values=summary))
-        if preferences.compact_schedule is not True:
+        if preferences.compact_schedule is None:
             return
-        score = (
-            policy.compact_schedule_weight
-            - policy.gap_penalty_per_minute * summary["total_gap_minutes"]
-            - policy.long_gap_penalty * summary["long_gap_count"]
-        )
-        is_satisfied = summary["total_gap_minutes"] <= policy.long_gap_threshold_minutes
+        if preferences.compact_schedule is True:
+            score = (
+                policy.compact_schedule_weight
+                - policy.gap_penalty_per_minute * summary["total_gap_minutes"]
+                - policy.long_gap_penalty * summary["long_gap_count"]
+            )
+            is_satisfied = summary["total_gap_minutes"] <= policy.long_gap_threshold_minutes
+        else:
+            short_gap_count = int(summary["short_gap_count"])
+            if short_gap_count == 0:
+                score = policy.compact_schedule_weight
+            else:
+                score = -(policy.long_gap_penalty * short_gap_count)
+            is_satisfied = short_gap_count == 0
         evidence = self._evidence(
             trade_code,
             ScoreComponentCode.COMPACT_SCHEDULE,
             total_gap_minutes=summary["total_gap_minutes"],
             long_gap_count=summary["long_gap_count"],
+            short_gap_count=summary["short_gap_count"],
         )
         (satisfied if is_satisfied else unsatisfied).append(evidence)
         components.append(ScoreComponent(
@@ -475,6 +497,7 @@ class TimetableScoringService:
         active_policy = policy or self.policy
         total = 0
         long_count = 0
+        short_count = 0
         gaps_by_day: dict[str, list[int]] = {}
         for day, meetings in self._meetings_by_day(sections).items():
             gaps: list[int] = []
@@ -484,11 +507,14 @@ class TimetableScoringService:
                 gaps.append(gap)
                 if gap >= active_policy.long_gap_threshold_minutes and gap > 0:
                     long_count += 1
+                if gap <= 30:
+                    short_count += 1
             if gaps:
                 gaps_by_day[day.value] = gaps
         return {
             "total_gap_minutes": total,
             "long_gap_count": long_count,
+            "short_gap_count": short_count,
             "gaps_by_day": gaps_by_day,
         }
 

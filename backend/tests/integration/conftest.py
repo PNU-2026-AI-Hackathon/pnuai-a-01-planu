@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 from openpyxl import Workbook
 
 from backend.app.deps import (
+    get_agent_runtime,
     get_general_course_preparation_service,
     get_major_catalog_upload_service,
     get_major_confirm_service,
@@ -20,6 +21,7 @@ from backend.app.deps import (
     get_timetable_generation_service,
     get_timetable_ranking_service,
 )
+from backend.app.container import build_container
 from backend.app.main import app
 from backend.app.models import (
     Category,
@@ -42,6 +44,7 @@ from backend.app.services.general_course_pool_service import (
 from backend.app.services.major_catalog_upload_service import MajorCatalogUploadService
 from backend.app.services.major_confirm_service import MajorConfirmService
 from backend.app.services.major_preview_service import MajorPreviewService
+from backend.app.services.session_service import SessionService
 from backend.app.services.session_store import SessionStore
 from backend.app.services.timetable_generation_service import TimetableGenerationService
 from backend.app.services.timetable_ranking_service import TimetableRankingService
@@ -116,6 +119,7 @@ class FakeGeneralPreferenceParser:
 class IntegrationApp:
     client: TestClient
     store: SessionStore
+    session_service: SessionService
     preference_parser: FakeGeneralPreferenceParser
     clock: MutableClock
 
@@ -148,6 +152,7 @@ def integration_app() -> Iterator[IntegrationApp]:
         )
     )
     template_service = None
+    runtime_container = build_container(session_store=store)
 
     app.dependency_overrides.update(
         {
@@ -169,10 +174,20 @@ def integration_app() -> Iterator[IntegrationApp]:
             get_timetable_generation_service: lambda: TimetableGenerationService(
                 store=store,
                 preference_parser=preference_parser,
+                recent_candidate_repository=runtime_container.recent_timetable_candidate_repository,
             ),
             get_timetable_ranking_service: lambda: TimetableRankingService(
                 store=store,
                 template_service=template_service,
+            ),
+            get_agent_runtime: lambda: __import__(
+                "backend.app.runtime",
+                fromlist=["AgentRuntime"],
+            ).AgentRuntime(
+                session_service=runtime_container.session_service,
+                agent=runtime_container.supervisor_agent,
+                selection_tools=runtime_container.timetable_selection_tools,
+                condition_summary_service=runtime_container.condition_summary_service,
             ),
         }
     )
@@ -181,6 +196,7 @@ def integration_app() -> Iterator[IntegrationApp]:
         yield IntegrationApp(
             client=client,
             store=store,
+            session_service=runtime_container.session_service,
             preference_parser=preference_parser,
             clock=clock,
         )

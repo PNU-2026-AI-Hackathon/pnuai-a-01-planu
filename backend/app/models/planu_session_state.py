@@ -1,4 +1,4 @@
-"""Minimal session state shared by future agent tools and repositories."""
+﻿"""Minimal session state shared by future agent tools and repositories."""
 
 from __future__ import annotations
 
@@ -46,6 +46,7 @@ class PlanuSessionState(BaseModel):
     selected_timetable_status: SelectedTimetableStatus | None = None
     generation_preferences_confirmed_at: datetime | None = None
     generation_preferences_confirmed_version: int | None = Field(default=None, ge=1)
+    generation_revision: int = Field(default=1, ge=1)
     created_at: datetime
     updated_at: datetime
     last_accessed_at: datetime
@@ -96,4 +97,5 @@ class PlanuSessionState(BaseModel):
         if self.expires_at <= self.last_accessed_at:
             raise ValueError("expires_at must be later than last_accessed_at")
         return self
+
 

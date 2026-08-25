@@ -1,4 +1,4 @@
-"""Tests for the in-memory PlaNU session repository."""
+﻿"""Tests for the in-memory PlaNU session repository."""
 
 from __future__ import annotations
 
@@ -104,7 +104,8 @@ def test_save_existing_session_replaces_state() -> None:
     saved = repository.save(updated, now=_now())
 
     assert saved.department == "전자공학과"
-    assert repository.get(state.session_id, now=_now()) == updated
+    stored = repository.get(state.session_id, now=_now())
+    assert stored == updated.model_copy(update={"version": state.version + 1})
 
 
 def test_save_rejects_already_expired_replacement_state() -> None:
@@ -423,3 +424,4 @@ def test_session_copies_do_not_share_nested_lists() -> None:
     stored = repository.get(state.session_id, now=_now())
     assert stored is not None
     assert stored.selected_major_course_ids == ["MAJ001-001"]
+

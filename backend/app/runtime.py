@@ -1,8 +1,6 @@
-"""Application-level wrapper around the PlaNU agent."""
+﻿"""Application-level wrapper around the PlaNU agent."""
 
 from __future__ import annotations
-
-import re
 
 from .agent_tools.timetable_selection_tools import SelectTimetableCandidateInput
 from .agent_tools import TimetableSelectionTools
@@ -12,7 +10,6 @@ from .core.errors import AppError
 from .services.condition_summary_service import ConditionSummaryService
 from .services.exceptions import SessionNotAvailableError
 from .services.session_service import SessionService
-from .services.session_update_models import HardConstraintsUpdate
 from .schemas.agent_schema import (
     ConfirmationDto,
     ConfirmationOption,
@@ -52,7 +49,7 @@ class AgentRuntime:
         result = self._run_agent(session_id=session_id, message=message, request_id=request_id)
         if result.error is not None and result.error.code.value == "SESSION_NOT_AVAILABLE":
             raise _session_unavailable_error()
-        state = self._ensure_explicit_credit_bounds(session_id, message)
+        state = self._session_service.get_session(session_id)
         return chat_response_from_agent_result(
             result,
             condition_summary=self._condition_summary_service.summarize(state),
@@ -116,11 +113,19 @@ class AgentRuntime:
                 result.message,
                 status_code=404 if result.error is not None and result.error.code.value == "SESSION_NOT_AVAILABLE" else 409,
             )
+        state = self._session_service.get_session(session_id)
+        if state.selected_timetable is None:
+            raise AppError(
+                "TIMETABLE_SELECTION_EMPTY",
+                "선택된 시간표 정보를 저장하지 못했습니다.",
+                status_code=409,
+            )
+        status = None if state.selected_timetable_status is None else state.selected_timetable_status.value
         return SelectedTimetableResponse(
             session_id=session_id,
             selected_timetable=selected_timetable_from_domain(
-                result.selected_timetable,
-                status=result.selected_timetable_status,
+                state.selected_timetable,
+                status=status,
             ),
         )
 
@@ -152,58 +157,10 @@ class AgentRuntime:
         except SessionNotAvailableError as exc:
             raise _session_unavailable_error() from exc
 
-    def _ensure_explicit_credit_bounds(self, session_id: str, message: str):
-        min_credit, max_credit = _credit_bounds_from_message(message)
-        state = self._session_service.get_session(session_id)
-        if min_credit is None and max_credit is None:
-            return state
-        if min_credit is not None and max_credit is not None and min_credit > max_credit:
-            return state
-        if (
-            (min_credit is None or state.hard_constraints.min_credit == min_credit)
-            and (max_credit is None or state.hard_constraints.max_credit == max_credit)
-        ):
-            return state
-        return self._session_service.update_preferences(
-            session_id,
-            hard_patch=HardConstraintsUpdate(
-                min_credit=min_credit,
-                max_credit=max_credit,
-            ),
-        )
-
-
 class CandidateSelectionRequest(SelectTimetableCandidateInput):
     pass
 
 
-def _credit_bounds_from_message(message: str) -> tuple[float | None, float | None]:
-    number = r"(\d+(?:\.\d+)?)"
-    exact_patterns = (
-        rf"총\s*{number}\s*학점",
-        rf"{number}\s*학점(?:으로|에)\s*(?:맞춰|맞추|채워|구성|만들)",
-        rf"{number}\s*학점을\s*(?:듣|채우|맞추)",
-    )
-    minimum_patterns = (
-        rf"최소\s*(?:학점(?:은|을|이)?\s*)?{number}",
-        rf"{number}\s*학점\s*(?:이상|넘게|보다\s*많게)",
-    )
-    maximum_patterns = (
-        rf"최대\s*(?:학점(?:은|을|이)?\s*)?{number}",
-        rf"{number}\s*학점\s*(?:이하|까지|넘지\s*않게)",
-    )
-
-    def first(patterns: tuple[str, ...]) -> float | None:
-        for pattern in patterns:
-            match = re.search(pattern, message)
-            if match is not None:
-                return float(match.group(1))
-        return None
-
-    exact = first(exact_patterns)
-    if exact is not None:
-        return exact, exact
-    return first(minimum_patterns), first(maximum_patterns)
 
 
 def chat_response_from_agent_result(
@@ -307,6 +264,7 @@ def _session_unavailable_error() -> AppError:
         "세션을 찾을 수 없거나 만료되었습니다.",
         status_code=404,
     )
+
 
 
 

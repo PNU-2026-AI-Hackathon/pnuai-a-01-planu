@@ -317,6 +317,27 @@ def test_same_section_id_from_different_catalogs_remains_distinct_in_validation(
     ]
 
 
+def test_excluded_elective_area_is_rejected_by_candidate_validation() -> None:
+    repo = _repo()
+    tools = TimetableGenerationTools(
+        generation_service=TimetableCandidateGenerationService(catalog_repository=repo),
+        validation_service=TimetableCandidateValidationService(catalog_repository=repo),
+    )
+
+    result = tools.validate_timetable_candidate(
+        {
+            "section_sources": [{"catalog_id": "general", "section_id": "G101-001"}],
+            "excluded_elective_areas": [1],
+        }
+    )
+
+    assert result.valid is False
+    assert [violation.code for violation in result.violations] == [
+        TimetableViolationCode.EXCLUDED_ELECTIVE_AREA_INCLUDED
+    ]
+    assert result.violations[0].constraint == "excluded_elective_areas"
+
+
 def test_same_section_id_from_different_catalogs_builds_distinct_candidate_ids() -> None:
     repo = InMemoryCatalogRepository()
     for catalog_id, course_name in (("catalog-a", "중복A"), ("catalog-b", "중복B")):
@@ -798,3 +819,34 @@ def test_validation_request_rejects_inverted_credit_range() -> None:
             min_credit=4,
             max_credit=3,
         )
+
+
+def test_required_legacy_course_id_with_multiple_candidate_courses_does_not_report_unavailable() -> None:
+    repo = InMemoryCatalogRepository()
+    repo.register(
+        "general-multi",
+        kind=CatalogKind.ELECTIVE,
+        courses=[
+            _course("A100-001", "대상교양", day=Day.MON, start="09:00", end="10:00"),
+            _course("B200-002", "다른교양", day=Day.TUE, start="09:00", end="10:00"),
+        ],
+    )
+    request = TimetableGenerationRequest(
+        candidate_course_ids=["A100", "B200"],
+        candidate_section_sources_by_course={
+            "A100": [_source("general-multi", "A100-001")],
+            "B200": [_source("general-multi", "B200-002")],
+        },
+        required_course_ids=["A100-001"],
+        target_additional_course_count=1,
+        max_results=3,
+    )
+
+    result = _service(repo).generate(request)
+
+    assert result.error is None
+    assert not any(
+        failure.code is GenerationFailureCode.REQUIRED_COURSE_UNAVAILABLE
+        for failure in result.failure_reasons
+    )
+    assert any("A100-001" in candidate.section_ids for candidate in result.candidates)

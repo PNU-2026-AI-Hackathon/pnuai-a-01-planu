@@ -111,7 +111,10 @@ def test_course_load_target_combinations_flow_over_http(
             candidate["load_satisfaction"]["elective_count"] == 0
             for candidate in generate["candidates"]
         )
-    if additional_elective_count == 2:
+    if additional_elective_count == 2 and not any(
+        candidate["load_satisfaction"]["elective_count"] >= additional_elective_count
+        for candidate in generate["candidates"]
+    ):
         assert any(
             diagnostic["reason_code"] in {"ELECTIVE_TARGET_NOT_MET", "CREDIT_TARGET_PRUNED"}
             for diagnostic in generate["diagnostics"]

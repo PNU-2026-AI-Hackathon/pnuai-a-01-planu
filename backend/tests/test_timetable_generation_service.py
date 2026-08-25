@@ -18,8 +18,14 @@ from backend.app.models import (
     SoftPreferences,
 )
 from backend.app.services.session_store import SessionStage, SessionStore
-from backend.app.services.timetable_generation_service import TimetableGenerationService
+from backend.app.services.timetable_generation_service import (
+    TimetableGenerationService,
+    legacy_candidate_id_for_courses,
+)
 from backend.app.services.timetable_generator import TimetableGenerator
+from backend.app.repositories.recent_timetable_candidate_repository import (
+    RecentTimetableCandidateRepository,
+)
 
 
 class FakePreferenceParser:
@@ -391,6 +397,159 @@ def test_generation_service_applies_session_credit_range_without_ui_load_target(
         candidate.load_satisfaction.final_total_credits
         for candidate in result.candidates
     } == {18}
+
+
+def test_generation_keeps_distinct_sections_with_same_course_id() -> None:
+    store = SessionStore()
+    session = store.create("computer science")
+    store.update(
+        session.session_id,
+        fixed_courses=[_major(credit=9)],
+        confirmed_major_credits=9,
+        session_stage=SessionStage.GENERAL_READY,
+        hard_constraints=HardConstraints(min_credit=12),
+    )
+    store.update_general_course_pool(
+        session.session_id,
+        GeneralCoursePoolResult(
+            pools=GeneralCoursePools(
+                elective_courses=[
+                    _course(
+                        "ELE-101",
+                        "Elective Seminar",
+                        Category.GENERAL_ELECTIVE,
+                        day=Day.MON,
+                        start="10:00",
+                        end="11:00",
+                        credit=3,
+                        area=1,
+                        division="001",
+                    ),
+                    _course(
+                        "ELE-101",
+                        "Elective Seminar",
+                        Category.GENERAL_ELECTIVE,
+                        day=Day.TUE,
+                        start="10:00",
+                        end="11:00",
+                        credit=3,
+                        area=1,
+                        division="002",
+                    ),
+                    _course(
+                        "ELE-101",
+                        "Elective Seminar",
+                        Category.GENERAL_ELECTIVE,
+                        day=Day.WED,
+                        start="10:00",
+                        end="11:00",
+                        credit=3,
+                        area=1,
+                        division="003",
+                    ),
+                ],
+            )
+        ),
+    )
+
+    recent_repository = RecentTimetableCandidateRepository()
+    result = TimetableGenerationService(
+        store=store,
+        recent_candidate_repository=recent_repository,
+    ).generate_for_session(
+        session_id=session.session_id,
+        max_candidates=10,
+    )
+
+    generated_section_keys = {
+        tuple(sorted((course.course_id, course.division) for course in candidate.timetable.courses))
+        for candidate in result.candidates
+    }
+    saved_section_keys = [
+        tuple(sorted((course.course_id, course.division) for course in candidate.courses))
+        for candidate in store.get(session.session_id, touch=False).generated_candidates
+    ]
+    response_candidate_ids = [
+        recent_repository.get_candidate(
+            session.session_id,
+            legacy_candidate_id_for_courses(
+                [f"{course.course_id}:{course.division}" for course in candidate.timetable.courses]
+            ),
+        ).candidate_id
+        for candidate in result.candidates
+    ]
+
+    assert len(result.candidates) == 3
+    assert len(generated_section_keys) == 3
+    assert len(saved_section_keys) == 3
+    assert len(set(response_candidate_ids)) == 3
+
+
+def test_generation_groups_required_sections_before_combining() -> None:
+    fixed = [_major(credit=3)]
+    required = [
+        _course(
+            "REQ-A",
+            "Required A",
+            Category.GENERAL_REQUIRED,
+            day=Day.MON,
+            start="10:00",
+            end="11:00",
+            credit=2,
+            division="001",
+        ),
+        _course(
+            "REQ-A",
+            "Required A",
+            Category.GENERAL_REQUIRED,
+            day=Day.TUE,
+            start="10:00",
+            end="11:00",
+            credit=2,
+            division="002",
+        ),
+        _course(
+            "REQ-B",
+            "Required B",
+            Category.GENERAL_REQUIRED,
+            day=Day.WED,
+            start="10:00",
+            end="11:00",
+            credit=2,
+            division="001",
+        ),
+        _course(
+            "REQ-B",
+            "Required B",
+            Category.GENERAL_REQUIRED,
+            day=Day.THU,
+            start="10:00",
+            end="11:00",
+            credit=2,
+            division="002",
+        ),
+    ]
+
+    result = TimetableGenerator().generate_detailed(
+        fixed_major_courses=fixed,
+        required_general_candidates=required,
+        course_load_target=CourseLoadTarget(target_total_credits=7),
+        max_candidates=3,
+    )
+
+    keys = {
+        tuple(sorted((course.course_id, course.division) for course in candidate.timetable.courses))
+        for candidate in result.candidates
+    }
+    evaluated = [
+        diagnostic.count
+        for diagnostic in result.diagnostics
+        if diagnostic.reason_code == "COMBINATIONS_EVALUATED"
+    ][0]
+
+    assert len(result.candidates) == 3
+    assert len(keys) == 3
+    assert evaluated == 3
 
 
 def test_generation_service_returns_session_soft_conditions_and_saves_ranking_preferences() -> None:

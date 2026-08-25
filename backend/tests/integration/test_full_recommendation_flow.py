@@ -82,18 +82,45 @@ def test_full_http_recommendation_flow_with_real_upload_parser(
     assert rank["session_stage"] == "ranking_completed"
     assert rank["template"] == "balanced"
     assert rank["template_name"]
-    assert 1 <= rank["returned_count"] <= 3
+    assert len(generate["candidates"]) >= 3
+    assert rank["returned_count"] == 3
     assert [item["rank"] for item in rank["ranked_candidates"]] == list(
         range(1, rank["returned_count"] + 1)
     )
+    candidate_course_sets = [
+        tuple(sorted(course["course_id"] for course in item["timetable"]["courses"]))
+        for item in rank["ranked_candidates"]
+    ]
+    assert len(candidate_course_sets) == len(set(candidate_course_sets))
     for item in rank["ranked_candidates"]:
+        assert item["candidate_id"]
+        assert all(
+            component["reason"] != "하드 조건을 모두 통과한 유효한 시간표 후보입니다."
+            for component in item["score_components"]
+        )
         component_sum = sum(component["value"] for component in item["score_components"])
         assert item["raw_score"] == component_sum
         assert item["timetable"]["score"] == component_sum
         assert item["load_satisfaction"]["final_total_credits"] <= 14
         names = {course["course_name"] for course in item["timetable"]["courses"]}
         assert {"자료구조", "컴퓨터구조"}.issubset(names)
+    selected_candidate_id = rank["ranked_candidates"][0]["candidate_id"]
+    select = client.post(f"/sessions/{session_id}/timetables/{selected_candidate_id}/select")
+    assert select.status_code == 200, select.text
+    assert select.json()["selected_timetable"]["candidate_id"] == selected_candidate_id
+    selected = client.get(f"/sessions/{session_id}/timetable")
+    assert selected.status_code == 200, selected.text
+    assert selected.json()["selected_timetable"]["candidate_id"] == selected_candidate_id
     assert integration_app.store.get(session_id, touch=False).session_stage is SessionStage.RANKING_COMPLETED
+
+    before_soft_change = integration_app.session_service.get_session(session_id)
+    integration_app.session_service.set_compact_schedule_preference(session_id, False)
+    after_soft_change = integration_app.session_service.get_session(session_id)
+    assert after_soft_change.generation_revision == before_soft_change.generation_revision + 1
+
+    stale = client.post(f"/sessions/{session_id}/timetables/{selected_candidate_id}/select")
+    assert stale.status_code == 409, stale.text
+    assert "이전 조건" in stale.text
 
 
 def test_template_reranking_reuses_generated_candidates(

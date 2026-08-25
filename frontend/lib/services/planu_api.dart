@@ -74,6 +74,7 @@ class PlanuApi {
     required String prompt,
     double? targetCredits,
     int? electiveCount,
+    int? maxCandidates,
   }) {
     final body = <String, dynamic>{
       'session_id': sessionId,
@@ -84,6 +85,9 @@ class PlanuApi {
     }
     if (electiveCount != null) {
       body['additional_elective_count'] = electiveCount;
+    }
+    if (maxCandidates != null) {
+      body['max_candidates'] = maxCandidates;
     }
     return _post('/recommend/generate', body);
   }
@@ -130,6 +134,24 @@ class PlanuApi {
     return ConditionSummary.fromJson(response);
   }
 
+  Future<ConditionSummary> deleteTimetableCondition({
+    required String sessionId,
+    required String scope,
+    required String key,
+    Object? value,
+  }) async {
+    final body = <String, dynamic>{
+      'scope': scope,
+      'key': key,
+    };
+    if (value != null) body['value'] = value;
+    final response = await _patch(
+      '/sessions/${Uri.encodeComponent(sessionId)}/conditions',
+      body,
+    );
+    return ConditionSummary.fromJson(response);
+  }
+
   Future<Map<String, dynamic>> _post(
     String path,
     Map<String, dynamic> body,
@@ -150,6 +172,29 @@ class PlanuApi {
       rethrow;
     } on Object {
       throw const ApiError('NETWORK_ERROR', '서버에 연결할 수 없습니다. 잠시 후 다시 시도해 주세요.');
+    }
+  }
+
+  Future<Map<String, dynamic>> _patch(
+    String path,
+    Map<String, dynamic> body,
+  ) async {
+    try {
+      final response = await _client.patch(
+        Uri.parse('$baseUrl$path'),
+        headers: const {'content-type': 'application/json'},
+        body: jsonEncode(body),
+      ).timeout(_requestTimeout);
+      return _decode(response);
+    } on TimeoutException {
+      throw const ApiError(
+        'REQUEST_TIMEOUT',
+        '조건 삭제 요청 시간이 초과되었습니다. 다시 시도해 주세요.',
+      );
+    } on ApiError {
+      rethrow;
+    } on Object {
+      throw const ApiError('NETWORK_ERROR', '서버 연결 실패. 잠시 후 다시 시도해 주세요.');
     }
   }
 

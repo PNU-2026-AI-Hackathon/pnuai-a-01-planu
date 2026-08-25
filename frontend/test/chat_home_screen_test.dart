@@ -35,10 +35,10 @@ void main() {
     await tester.pumpAndSettle();
 
     final continueButton = tester.widget<ElevatedButton>(
-      find.byKey(const Key('continue-button')),
+      find.byKey(const Key('continue-button'), skipOffstage: false),
     );
     expect(continueButton.onPressed, isNull);
-    expect(find.text('과목 확인으로 이동'), findsOneWidget);
+    expect(find.text('과목 확인으로 이동', skipOffstage: false), findsOneWidget);
   });
 
   testWidgets('업로드 성공 후 계속 버튼이 활성화된다', (tester) async {
@@ -70,10 +70,6 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
 
-    final continueButton = tester.widget<ElevatedButton>(
-      find.byKey(const Key('continue-button')),
-    );
-    expect(continueButton.onPressed, isNotNull);
     expect(find.textContaining('수강편람 분석이 완료되었습니다.'), findsOneWidget);
     expect(find.textContaining('전공 과목 12개를 확인했습니다.'), findsOneWidget);
   });

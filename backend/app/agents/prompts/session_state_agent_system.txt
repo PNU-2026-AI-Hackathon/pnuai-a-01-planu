@@ -18,7 +18,7 @@
 - catalog 전체 데이터를 요청하거나 LLM 컨텍스트로 가져오지 마세요. 탐색 조건은 구조화된 도구 인자로 전달합니다.
 - 사용자가 명시하지 않은 요일, 시간, course ID, 학과, catalog ID를 추측하지 마세요.
 - 하나의 요청을 발견했다고 나머지 요청을 무시하지 마세요. 요일, 시간, 과목, 미지원 조건을 독립적으로 모두 확인합니다.
-- 최소/최대 총학점은 기존 update_timetable_preferences의 Hard 조건 min_credit/max_credit로 저장합니다. 사용자가 직접 말한 숫자만 그대로 사용하고, 학점 값을 추측하거나 기본값으로 채우거나 다른 값으로 바꾸지 마세요. 하한 표현은 min_credit, 상한 표현은 max_credit, 범위 표현은 두 필드에 적용합니다. 요일·시간 조건과 한 문장에 함께 있어도 학점 조건을 빠뜨리지 말고 하나의 호출에 병합합니다. 이는 추가 과목 학점이 아니라 완성 시간표 전체 학점 범위입니다.
+- 최소/최대 총학점은 기존 update_timetable_preferences의 Hard 조건 min_credit/max_credit와 min_credit_inclusive/max_credit_inclusive로 저장합니다. 사용자가 직접 말한 숫자만 그대로 사용하고, 학점 값을 추측하거나 기본값으로 채우거나 다른 값으로 바꾸지 마세요. 하한 표현은 min_credit, 상한 표현은 max_credit, 범위 표현은 두 필드에 적용합니다. 요일·시간 조건과 한 문장에 함께 있어도 학점 조건을 빠뜨리지 말고 하나의 호출에 병합합니다. 이는 추가 과목 학점이 아니라 완성 시간표 전체 학점 범위입니다.
 - “반드시”, “절대”, “무조건”, “꼭”, “넣지 마”, “제외해”, “안 돼” 같은 강한 표현은 Hard 도구로 처리합니다.
 - “가능하면”, “선호해”, “좋겠어”, “피하고 싶어”, “별로야”, “우선해줘” 같은 표현은 Soft 도구로 처리합니다.
 - Soft 시간 선호에 구체적인 시간이 없으면 10:00 같은 기본값을 임의로 선택하지 마세요. unresolved_requests에 남기고 확인이 필요하다고 표시합니다.
@@ -115,3 +115,5 @@ ACCEPT / REVISE / REGENERATE ?? ??:
 - REGENERATE: ??? ??, ?? ?? ??, ?? ? ??, ? ? ??, ????? ?? ?? ?? ?? ??/?? ??? ??? revision? ????. ?? preference tool? Hard/Soft? ???? ?? discovery/generation/scoring ??? ?? ?????.
 - prepare_timetable_revision?? temporary Hard/Soft preference? ???? ????. ??? ?? ??? revision tool? ??? ????.
 - revision tool? scoring? ?? ????. ?? ???? ??? ???? ?? score_timetable_candidate ?? rank_timetable_candidates? ?????.
+
+- 학점 경계는 0.5를 더하거나 빼지 말고 사용자가 말한 숫자를 그대로 저장합니다. 이상/이하는 inclusive=true, 초과/미만은 inclusive=false입니다. 정확한 학점 요청은 min_credit와 max_credit를 같은 값으로 두고 양쪽 inclusive=true로 저장합니다.

@@ -19,6 +19,7 @@ from ..models.timetable_generation import (
 )
 from ..repositories.catalog_repository import CatalogRepository
 from ..repositories.exceptions import CatalogNotFoundError, SectionNotFoundError
+from .course_id_normalizer import logical_course_id, normalize_requested_course_ids
 from .timetable_validation_service import TimetableValidationService
 
 
@@ -65,10 +66,12 @@ class TimetableCandidateGenerationService:
             fixed_sections,
             required_course_ids=[],
             excluded_course_ids=request.excluded_course_ids,
+            excluded_elective_areas=request.excluded_elective_areas,
             required_free_days=request.required_free_days,
             earliest_start_time=request.earliest_start_time,
             latest_end_time=request.latest_end_time,
             max_credit=request.max_credit,
+            max_credit_inclusive=request.max_credit_inclusive,
             department=request.department,
         )
         if not fixed_validation.valid:
@@ -92,8 +95,19 @@ class TimetableCandidateGenerationService:
                 ),
             )
 
-        fixed_course_ids = {item.section.course_id for item in fixed_sections}
-        required_course_ids = set(request.required_course_ids)
+        fixed_course_ids = {
+            logical_course_id(item.section.course_id, item.section.division)
+            for item in fixed_sections
+        }
+        candidate_sections = [
+            item.section
+            for sections in candidates_by_course.values()
+            for item in sections
+        ]
+        required_course_ids = normalize_requested_course_ids(
+            request.required_course_ids,
+            [*[item.section for item in fixed_sections], *candidate_sections],
+        )
         unresolved_required = required_course_ids - fixed_course_ids
         available_course_ids = set(candidates_by_course)
         missing_required = unresolved_required - available_course_ids
@@ -116,10 +130,14 @@ class TimetableCandidateGenerationService:
                 ),
             )
 
+        excluded_course_ids = normalize_requested_course_ids(
+            request.excluded_course_ids,
+            candidate_sections,
+        )
         candidates_by_course = {
             course_id: sections
             for course_id, sections in candidates_by_course.items()
-            if course_id not in request.excluded_course_ids
+            if course_id not in excluded_course_ids
             and course_id not in fixed_course_ids
         }
         ordered_course_ids = [
@@ -260,6 +278,7 @@ class TimetableCandidateGenerationService:
                     item,
                     required_course_ids=[],
                     excluded_course_ids=request.excluded_course_ids,
+                    excluded_elective_areas=request.excluded_elective_areas,
                     required_free_days=request.required_free_days,
                     earliest_start_time=request.earliest_start_time,
                     latest_end_time=request.latest_end_time,
@@ -382,11 +401,14 @@ class TimetableCandidateGenerationService:
             all_sections,
             required_course_ids=request.required_course_ids,
             excluded_course_ids=request.excluded_course_ids,
+            excluded_elective_areas=request.excluded_elective_areas,
             required_free_days=request.required_free_days,
             earliest_start_time=request.earliest_start_time,
             latest_end_time=request.latest_end_time,
             min_credit=request.min_credit,
+            min_credit_inclusive=request.min_credit_inclusive,
             max_credit=request.max_credit,
+            max_credit_inclusive=request.max_credit_inclusive,
             department=request.department,
         )
         if not validation.valid:
@@ -418,6 +440,9 @@ class TimetableCandidateGenerationService:
             total_credits=sum(item.section.credit for item in all_sections),
             validation=validation,
             generation_order=len(results) + 1,
+            session_id=request.session_id,
+            session_version=request.session_version,
+            generation_revision=request.generation_revision,
         ))
 
     @staticmethod
@@ -516,6 +541,7 @@ def _failure_code_for_violation(
         TimetableViolationCode.DUPLICATE_COURSE: GenerationFailureCode.DUPLICATE_COURSE,
         TimetableViolationCode.MISSING_REQUIRED_COURSE: GenerationFailureCode.REQUIRED_COURSE_UNAVAILABLE,
         TimetableViolationCode.EXCLUDED_COURSE_INCLUDED: GenerationFailureCode.INVALID_GENERATION_REQUEST,
+        TimetableViolationCode.EXCLUDED_ELECTIVE_AREA_INCLUDED: GenerationFailureCode.INVALID_GENERATION_REQUEST,
         TimetableViolationCode.REQUIRED_FREE_DAY_VIOLATION: GenerationFailureCode.REQUIRED_FREE_DAY_VIOLATION,
         TimetableViolationCode.EARLIEST_START_VIOLATION: GenerationFailureCode.EARLIEST_START_VIOLATION,
         TimetableViolationCode.LATEST_END_VIOLATION: GenerationFailureCode.LATEST_END_VIOLATION,

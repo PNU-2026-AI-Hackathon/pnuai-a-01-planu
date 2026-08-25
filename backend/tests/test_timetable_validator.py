@@ -102,3 +102,36 @@ def test_total_credit_inside_range_has_no_credit_issue() -> None:
     course = _course("A-001", "수업", start="09:00", end="10:00", classroom="401-101", building_code="401")
     result = TimetableValidator().validate([course], min_credit=3, max_credit=3)
     assert result.valid is True
+
+
+def test_omitted_credit_bound_does_not_apply_that_direction() -> None:
+    course = _course("A-001", "수업", start="09:00", end="10:00", classroom="401-101", building_code="401")
+
+    no_upper = TimetableValidator().validate([course], min_credit=3)
+    no_lower = TimetableValidator().validate([course], max_credit=3)
+
+    assert no_upper.valid is True
+    assert no_lower.valid is True
+
+
+def test_validator_credit_bounds_reject_negative_and_inverted_values() -> None:
+    try:
+        TimetableValidator(min_credit=-1)
+    except ValueError as exc:
+        assert str(exc) == "min_credit must not be negative"
+    else:
+        raise AssertionError("negative min_credit should be rejected")
+
+    try:
+        TimetableValidator(max_credit=-1)
+    except ValueError as exc:
+        assert str(exc) == "max_credit must not be negative"
+    else:
+        raise AssertionError("negative max_credit should be rejected")
+
+    try:
+        TimetableValidator(min_credit=4, max_credit=3)
+    except ValueError as exc:
+        assert str(exc) == "min_credit must not exceed max_credit"
+    else:
+        raise AssertionError("inverted credit range should be rejected")

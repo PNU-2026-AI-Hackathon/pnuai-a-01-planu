@@ -175,7 +175,7 @@ def test_select_timetable_candidate_rejects_invalid_candidate() -> None:
     assert result.error.field == "candidate_id"
 
 
-def test_hard_change_marks_selected_timetable_stale_but_soft_change_does_not() -> None:
+def test_hard_and_soft_changes_mark_selected_timetable_stale() -> None:
     service = _service()
     state = service.create_session()
     service.select_timetable_candidate(state.session_id, _candidate())
@@ -183,7 +183,7 @@ def test_hard_change_marks_selected_timetable_stale_but_soft_change_does_not() -
     after_soft = service.add_preferred_course(state.session_id, "GEN202")
     after_hard = service.add_required_free_day(state.session_id, Day.FRI)
 
-    assert after_soft.selected_timetable_status == SelectedTimetableStatus.CURRENT
+    assert after_soft.selected_timetable_status == SelectedTimetableStatus.STALE
     assert after_hard.selected_timetable_status == SelectedTimetableStatus.STALE
 
 

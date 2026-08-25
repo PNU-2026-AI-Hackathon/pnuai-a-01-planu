@@ -79,11 +79,23 @@ class TimetableRankingService:
                     details={"removed_count": duplicate_count},
                 )
             )
+        visible_candidates = self.ranker.dedupe_display_equivalent_candidates(
+            deduped_candidates
+        )
+        visible_duplicate_count = len(deduped_candidates) - len(visible_candidates)
+        if visible_duplicate_count:
+            diagnostics.append(
+                RankingDiagnostic(
+                    code="DUPLICATE_VISIBLE_TIMETABLE_REMOVED",
+                    message="User-facing duplicate timetable candidates were removed.",
+                    details={"removed_count": visible_duplicate_count},
+                )
+            )
         hard_filtered = self.ranker.apply_hard_filters(
-            deduped_candidates,
+            visible_candidates,
             preferences=session.ranking_preferences,
         )
-        hard_removed_count = len(deduped_candidates) - len(hard_filtered)
+        hard_removed_count = len(visible_candidates) - len(hard_filtered)
         if hard_removed_count:
             diagnostics.append(
                 RankingDiagnostic(

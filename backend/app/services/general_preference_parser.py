@@ -1,4 +1,4 @@
-"""Parse general-education preference prompts into supported rule groups."""
+﻿"""Parse general-education preference prompts into supported rule groups."""
 
 from __future__ import annotations
 
@@ -25,6 +25,7 @@ from .llm_preference_parser import (
     DEFAULT_OPENAI_MODEL,
     load_proxy_env,
 )
+from .preference_constants import MORNING_END_TIME
 from .openai_client import (
     DEFAULT_OPENAI_BASE_URL,
     has_openai_api_key,
@@ -33,7 +34,6 @@ from .openai_client import (
 )
 
 
-MORNING_END_TIME = "10:00"
 MAX_PROMPT_LENGTH = 2000
 
 GENERAL_PREFERENCE_SYSTEM_PROMPT = f"""당신은 PlaNU의 교양 시간표 선호 파서입니다.
@@ -677,3 +677,4 @@ def supported_general_preference_fields() -> dict[str, list[str]]:
         "soft_conditions": sorted(SOFT_FIELDS),
         "day_values": [day.value for day in Day],
     }
+

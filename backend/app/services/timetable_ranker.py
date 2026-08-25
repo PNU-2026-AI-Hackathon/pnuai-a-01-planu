@@ -16,6 +16,7 @@ from ..models.timetable import (
     Timetable,
     TimetableCandidate,
 )
+from .preference_constants import MORNING_END_MINUTES, MORNING_END_TIME
 from .ranking_template_service import (
     LEGACY_TEMPLATE_WEIGHT_PROFILES,
     RankingTemplateService,
@@ -24,6 +25,7 @@ from .ranking_template_service import (
     weights_for_template as ranking_template_weights_for_template,
 )
 from .course_name_matcher import course_name_matches
+from .course_id_normalizer import logical_course_id, normalize_requested_course_ids
 
 
 TEMPLATE_WEIGHT_PROFILES: dict[PreferenceTemplate, RankingWeights] = (
@@ -224,6 +226,20 @@ class TimetableRanker:
         ):
             return True
 
+        course_ids = {logical_course_id(course.course_id, course.division) for _, course in meetings}
+        required_course_ids = normalize_requested_course_ids(
+            preferences.required_course_ids,
+            candidate.courses,
+        )
+        excluded_course_ids = normalize_requested_course_ids(
+            preferences.excluded_course_ids,
+            candidate.courses,
+        )
+        if required_course_ids and not required_course_ids.issubset(course_ids):
+            return True
+        if excluded_course_ids and course_ids & excluded_course_ids:
+            return True
+
         excluded_professors = {
             professor.casefold() for professor in preferences.excluded_professors
         }
@@ -260,6 +276,9 @@ class TimetableRanker:
         )
         if component is not None:
             components.append(component)
+        component = self._preferred_latest_end_component(candidate, preferences, context)
+        if component is not None:
+            components.append(component)
         components.extend(
             self._preferred_free_time_range_components(candidate, preferences, context)
         )
@@ -274,12 +293,14 @@ class TimetableRanker:
         if context.explicit_template or preferences.minimize_consecutive_classes:
             components.append(self._consecutive_classes_component(candidate, context))
 
-        if context.explicit_template or preferences.compact_schedule:
-            components.append(self._compact_schedule_component(candidate, context))
+        if context.explicit_template or preferences.compact_schedule is not None:
+            components.append(self._compact_schedule_component(candidate, context, compact_preference=preferences.compact_schedule))
         if context.explicit_template:
             components.append(self._daily_first_start_component(candidate, context))
 
         for component in components[1:]:
+            if not self._should_explain_component(component, preferences):
+                continue
             if component.value > 0:
                 reasons.append(component.reason)
             elif component.value < 0:
@@ -303,8 +324,29 @@ class TimetableRanker:
             key="valid_candidate",
             label="유효한 시간표 후보",
             value=context.weights.valid_candidate,
-            reason="하드 조건을 모두 통과한 유효한 시간표 후보입니다.",
+            reason="필수조건을 모두 통과한 시간표입니다.",
         )
+
+    @staticmethod
+    def _should_explain_component(
+        component: ScoreComponent,
+        preferences: PreferenceRules,
+    ) -> bool:
+        if component.key in {
+            "attendance_days",
+            "consecutive_classes",
+            "compact_schedule",
+            "daily_first_start",
+        }:
+            return (
+                (component.key == "attendance_days" and preferences.minimize_attendance_days)
+                or (
+                    component.key == "consecutive_classes"
+                    and preferences.minimize_consecutive_classes
+                )
+                or (component.key == "compact_schedule" and preferences.compact_schedule is not None)
+            )
+        return True
 
     def _preferred_free_day_components(
         self,
@@ -366,6 +408,35 @@ class TimetableRanker:
             reason=reason,
         )
 
+    def _preferred_latest_end_component(
+        self,
+        candidate: TimetableCandidate,
+        preferences: PreferenceRules,
+        context: RankingContext,
+    ) -> ScoreComponent | None:
+        if preferences.preferred_latest_end_time is None:
+            return None
+
+        latest_end = self._latest_meeting_end_minutes(candidate.courses)
+        preferred = time_to_minutes(preferences.preferred_latest_end_time)
+        value = self._preferred_latest_end_value(latest_end, preferred, context)
+        if latest_end <= preferred:
+            reason = f"마지막 수업이 {preferences.preferred_latest_end_time} 이전에 끝납니다."
+        else:
+            reason = (
+                f"마지막 수업이 선호 시간({preferences.preferred_latest_end_time})보다 "
+                "늦게 끝납니다."
+            )
+        return ScoreComponent(
+            key="preferred_latest_end_time",
+            label=(
+                f"마지막 수업 종료 {self._minutes_to_clock(latest_end)} "
+                f"(선호 {preferences.preferred_latest_end_time} 이전)"
+            ),
+            value=value,
+            reason=reason,
+        )
+
     def _preferred_free_time_range_components(
         self,
         candidate: TimetableCandidate,
@@ -405,9 +476,23 @@ class TimetableRanker:
         preferences: PreferenceRules,
         context: RankingContext,
     ) -> list[ScoreComponent]:
+        course_ids = {logical_course_id(course.course_id, course.division) for course in candidate.courses}
+        id_components: list[ScoreComponent] = []
+        if preferences.preferred_course_ids:
+            preferred_course_ids = normalize_requested_course_ids(
+                preferences.preferred_course_ids,
+                candidate.courses,
+            )
+            included_ids = sorted(course_ids & preferred_course_ids)
+            missing_ids = sorted(preferred_course_ids - course_ids)
+            if included_ids:
+                id_components.append(ScoreComponent(key="preferred_course", label=f"선호 과목 {len(included_ids)}개 포함", value=context.weights.preferred_course * len(included_ids), reason=f"선호 과목이 포함되었습니다: {', '.join(included_ids)}."))
+            if missing_ids:
+                id_components.append(ScoreComponent(key="preferred_course_missing", label=f"선호 과목 {len(missing_ids)}개 미포함", value=context.weights.preferred_course_missing * len(missing_ids), reason=f"선호 과목이 포함되지 않아 감점되었습니다: {', '.join(missing_ids)}."))
         if not preferences.preferred_course_names:
-            return []
+            return id_components
 
+        components = id_components
         course_names = [course.course_name for course in candidate.courses]
         preferred_courses = [
             name
@@ -419,7 +504,6 @@ class TimetableRanker:
             for name in preferences.preferred_course_names
             if not self._has_matching_course(name, course_names)
         ]
-        components: list[ScoreComponent] = []
         if preferred_courses:
             components.append(ScoreComponent(
                 key="preferred_course",
@@ -445,8 +529,31 @@ class TimetableRanker:
         preferences: PreferenceRules,
         context: RankingContext,
     ) -> list[ScoreComponent]:
+        components: list[ScoreComponent] = []
+        course_ids = {logical_course_id(course.course_id, course.division) for course in candidate.courses}
+        if preferences.disliked_course_ids:
+            disliked_course_ids = normalize_requested_course_ids(
+                preferences.disliked_course_ids,
+                candidate.courses,
+            )
+            disliked_ids = sorted(course_ids & disliked_course_ids)
+            absent_ids = sorted(disliked_course_ids - course_ids)
+            if disliked_ids:
+                components.append(ScoreComponent(
+                    key="avoided_course",
+                    label=f"회피 선호 과목 {len(disliked_ids)}개 포함",
+                    value=context.weights.avoided_course * len(disliked_ids),
+                    reason=f"가능하면 피하고 싶은 과목이 포함되었습니다: {', '.join(disliked_ids)}.",
+                ))
+            if absent_ids:
+                components.append(ScoreComponent(
+                    key="avoided_course_absent",
+                    label=f"회피 선호 과목 {len(absent_ids)}개 미포함",
+                    value=context.weights.avoided_course_absent * len(absent_ids),
+                    reason=f"회피 선호 과목이 포함되지 않았습니다: {', '.join(absent_ids)}.",
+                ))
         if not preferences.avoided_course_names:
-            return []
+            return components
 
         course_names = [course.course_name for course in candidate.courses]
         avoided_courses = [
@@ -459,7 +566,6 @@ class TimetableRanker:
             for name in preferences.avoided_course_names
             if not self._has_matching_course(name, course_names)
         ]
-        components: list[ScoreComponent] = []
         if avoided_courses:
             components.append(ScoreComponent(
                 key="avoided_course",
@@ -581,10 +687,26 @@ class TimetableRanker:
         self,
         candidate: TimetableCandidate,
         context: RankingContext,
+        *,
+        compact_preference: bool | None = True,
     ) -> ScoreComponent:
         idle_minutes = self._idle_minutes(candidate.courses)
         multi_class_day_count = self._multi_class_day_count(candidate.courses)
         attendance_days = len(self._meetings_by_day(candidate.courses))
+        if compact_preference is False:
+            short_gap_count = self._short_gap_count(candidate.courses)
+            value = self._avoid_short_gap_value(short_gap_count, context)
+            if short_gap_count == 0:
+                reason = "연강이나 30분 이하의 짧은 수업 간격이 없습니다."
+            else:
+                reason = f"연강 또는 30분 이하의 짧은 수업 간격이 {short_gap_count}개 있습니다."
+            return ScoreComponent(
+                key="compact_schedule",
+                label=f"짧은 수업 간격 {short_gap_count}개",
+                value=value,
+                reason=reason,
+            )
+
         value = self._compact_schedule_value(
             idle_minutes,
             multi_class_day_count=multi_class_day_count,
@@ -629,7 +751,7 @@ class TimetableRanker:
             value = sum(daily_values)
         else:
             value = sum(daily_values) / len(daily_values)
-        late_days = sum(1 for start in first_starts if start >= time_to_minutes("10:00"))
+        late_days = sum(1 for start in first_starts if start >= MORNING_END_MINUTES)
         very_late_days = sum(1 for start in first_starts if start >= time_to_minutes("11:00"))
         early_days = sum(1 for start in first_starts if start < time_to_minutes("09:00"))
         attendance_days = len(first_starts)
@@ -731,13 +853,21 @@ class TimetableRanker:
             if len(meetings) >= 2
         )
 
+
+    def _short_gap_count(self, courses: Iterable[Course], *, threshold_minutes: int = 30) -> int:
+        count = 0
+        for meetings in self._meetings_by_day(courses).values():
+            for previous, following in zip(meetings, meetings[1:]):
+                gap = max(0, following.start_minutes - previous.end_minutes)
+                if gap <= threshold_minutes:
+                    count += 1
+        return count
     def _morning_class_count(self, courses: Iterable[Course]) -> int:
-        morning_end = time_to_minutes("12:00")
         return sum(
             1
             for course in courses
             for meeting in course.class_times
-            if meeting.start_minutes < morning_end
+            if meeting.start_minutes < MORNING_END_MINUTES
         )
 
     def _compact_schedule_value(
@@ -755,6 +885,12 @@ class TimetableRanker:
             return context.weights.compact_idle_medium
         return context.weights.compact_idle_long
 
+    @staticmethod
+    def _avoid_short_gap_value(short_gap_count: int, context: RankingContext) -> float:
+        if short_gap_count <= 0:
+            return context.weights.compact_idle_short
+        return context.weights.compact_idle_long * short_gap_count
+
     def _attendance_days_value(
         self,
         attendance_days: int,
@@ -769,7 +905,7 @@ class TimetableRanker:
     def _late_start_value(self, first_start: int, context: RankingContext) -> float:
         if first_start >= time_to_minutes("11:00"):
             return context.weights.late_start_11_or_later
-        if first_start >= time_to_minutes("10:00"):
+        if first_start >= time_to_minutes(MORNING_END_TIME):
             return context.weights.late_start_10_or_later
         if first_start < time_to_minutes("09:00"):
             return context.weights.early_start_before_9
@@ -787,6 +923,21 @@ class TimetableRanker:
             preferred,
             context,
         )
+
+    def _preferred_latest_end_value(
+        self,
+        latest_end: int,
+        preferred: int,
+        context: RankingContext,
+    ) -> float:
+        if latest_end <= preferred:
+            return context.weights.compact_idle_short
+        late_minutes = latest_end - preferred
+        if late_minutes <= 60:
+            return 0
+        if late_minutes <= 180:
+            return context.weights.compact_idle_long
+        return context.weights.compact_idle_long * 2
 
     @staticmethod
     def _candidate_overlaps_time_range(
@@ -811,6 +962,15 @@ class TimetableRanker:
             for meeting in course.class_times
         ]
         return min(starts) if starts else 24 * 60
+
+    @staticmethod
+    def _latest_meeting_end_minutes(courses: Iterable[Course]) -> int:
+        ends = [
+            meeting.end_minutes
+            for course in courses
+            for meeting in course.class_times
+        ]
+        return max(ends) if ends else 0
 
     def _daily_first_start_minutes(self, courses: Iterable[Course]) -> list[int]:
         return [
@@ -837,6 +997,33 @@ class TimetableRanker:
     def _course_id_key(candidate: Timetable) -> tuple[tuple[str, str], ...]:
         return tuple(sorted((course.course_id, course.division) for course in candidate.courses))
 
+    @staticmethod
+    def _display_timetable_key(
+        candidate: Timetable,
+    ) -> tuple[tuple[str, str, tuple[tuple[str, str, str, str], ...]], ...]:
+        """Canonical key for candidates that render as the same user-facing timetable."""
+
+        return tuple(
+            sorted(
+                (
+                    " ".join(course.course_name.casefold().split()),
+                    course.division,
+                    tuple(
+                        sorted(
+                            (
+                                meeting.day.value,
+                                meeting.start,
+                                meeting.end,
+                                meeting.classroom,
+                            )
+                            for meeting in course.class_times
+                        )
+                    ),
+                )
+                for course in candidate.courses
+            )
+        )
+
     @classmethod
     def dedupe_candidates(
         cls,
@@ -846,6 +1033,23 @@ class TimetableRanker:
         seen: set[tuple[tuple[str, str], ...]] = set()
         for candidate in candidates:
             key = cls._course_id_key(candidate)
+            if key in seen:
+                continue
+            deduped.append(candidate)
+            seen.add(key)
+        return deduped
+
+    @classmethod
+    def dedupe_display_equivalent_candidates(
+        cls,
+        candidates: Iterable[TimetableCandidate],
+    ) -> list[TimetableCandidate]:
+        deduped: list[TimetableCandidate] = []
+        seen: set[
+            tuple[tuple[str, str, tuple[tuple[str, str, str, str], ...]], ...]
+        ] = set()
+        for candidate in candidates:
+            key = cls._display_timetable_key(candidate)
             if key in seen:
                 continue
             deduped.append(candidate)

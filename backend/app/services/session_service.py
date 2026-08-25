@@ -1197,6 +1197,7 @@ class SessionService:
         now = self._now()
         update = self._mark_selected_timetable_stale_if_needed(state, dict(update))
         update = self._invalidate_generation_confirmation_if_needed(state, update)
+        update = self._bump_generation_revision_if_needed(state, update)
         changed = self._build_validated_state(
             state,
             {
@@ -1230,10 +1231,33 @@ class SessionService:
         )
         if "hard_constraints" in update and update["hard_constraints"] != state.hard_constraints:
             should_stale = True
+        if "soft_preferences" in update and update["soft_preferences"] != state.soft_preferences:
+            should_stale = True
         if should_stale:
             update["selected_timetable_status"] = SelectedTimetableStatus.STALE
         return update
 
+
+    @staticmethod
+    def _bump_generation_revision_if_needed(
+        state: PlanuSessionState,
+        update: dict[str, object],
+    ) -> dict[str, object]:
+        generation_input_fields = {
+            "department",
+            "major_catalog_id",
+            "elective_catalog_id",
+            "selected_major_course_ids",
+            "hard_constraints",
+            "soft_preferences",
+        }
+        should_bump = any(
+            field_name in update and update[field_name] != getattr(state, field_name)
+            for field_name in generation_input_fields
+        )
+        if should_bump and "generation_revision" not in update:
+            update["generation_revision"] = state.generation_revision + 1
+        return update
     @staticmethod
     def _invalidate_generation_confirmation_if_needed(
         state: PlanuSessionState,
@@ -1381,10 +1405,26 @@ class SessionService:
                 patch.excluded_course_ids,
                 field_name="excluded_course_ids",
             )
-        if patch.min_credit is not None:
-            update["min_credit"] = patch.min_credit
-        if patch.max_credit is not None:
-            update["max_credit"] = patch.max_credit
+        excluded_elective_areas = getattr(patch, "excluded_elective_areas", None)
+        if excluded_elective_areas is not None:
+            update["excluded_elective_areas"] = self._normalize_elective_areas(
+                "excluded_elective_areas",
+                excluded_elective_areas,
+            )
+        min_credit = getattr(patch, "min_credit", None)
+        min_credit_inclusive = getattr(patch, "min_credit_inclusive", None)
+        max_credit = getattr(patch, "max_credit", None)
+        max_credit_inclusive = getattr(patch, "max_credit_inclusive", None)
+        if min_credit is not None:
+            update["min_credit"] = min_credit
+            update["min_credit_inclusive"] = True if min_credit_inclusive is None else min_credit_inclusive
+        elif min_credit_inclusive is not None and hard_constraints.min_credit is not None:
+            update["min_credit_inclusive"] = min_credit_inclusive
+        if max_credit is not None:
+            update["max_credit"] = max_credit
+            update["max_credit_inclusive"] = True if max_credit_inclusive is None else max_credit_inclusive
+        elif max_credit_inclusive is not None and hard_constraints.max_credit is not None:
+            update["max_credit_inclusive"] = max_credit_inclusive
         if "required_course_ids" in update and "excluded_course_ids" not in update:
             required = set(update["required_course_ids"])
             update["excluded_course_ids"] = [
@@ -1468,8 +1508,10 @@ class SessionService:
 
     @staticmethod
     def _cleared_preference_value(field_name: str) -> object:
-        if field_name.endswith("_ids") or field_name.endswith("_days"):
+        if field_name.endswith("_ids") or field_name.endswith("_days") or field_name.endswith("_areas"):
             return []
+        if field_name.endswith("_inclusive"):
+            return True
         return None
 
     def _refresh_unchanged_state(
@@ -1555,5 +1597,13 @@ class SessionService:
     def _normalize_time(field_name: str, time_value: str) -> str:
         return SessionInputNormalizer.time(field_name, time_value)
 
-
-
+    @staticmethod
+    def _normalize_elective_areas(field_name: str, areas: Iterable[int]) -> list[int]:
+        values: list[int] = []
+        for area in areas:
+            if not isinstance(area, int):
+                raise SessionValidationError(field_name, area, "elective area must be an integer")
+            if not 1 <= area <= 9:
+                raise SessionValidationError(field_name, str(area), "elective areas must be between 1 and 9")
+            values.append(area)
+        return list(dict.fromkeys(values))

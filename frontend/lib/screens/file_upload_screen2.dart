@@ -24,7 +24,7 @@ class FileUploadScreen2 extends StatefulWidget {
     super.key,
     required this.onPickMajorCatalog,
     this.onContinue,
-    this.maxFileSizeInBytes = 10 * 1024 * 1024,
+    this.maxFileSizeInBytes = 5 * 1024 * 1024,
   });
 
   final CatalogFilePicker onPickMajorCatalog;

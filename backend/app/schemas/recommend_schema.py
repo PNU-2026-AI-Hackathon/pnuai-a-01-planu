@@ -116,6 +116,7 @@ class RankedTimetableResponse(BaseModel):
         validate_assignment=True,
     )
 
+    candidate_id: str = Field(min_length=1)
     rank: int = Field(ge=1)
     timetable: Timetable
     raw_score: float

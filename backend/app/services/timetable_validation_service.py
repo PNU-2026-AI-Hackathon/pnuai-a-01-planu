@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from itertools import combinations
 
-from ..models.course import Course, time_to_minutes
+from ..models.course import Category, Course, time_to_minutes
 from ..models.course_discovery import CourseSection
 from ..models.timetable_generation import (
     ResolvedSection,
@@ -15,6 +15,7 @@ from ..models.timetable_generation import (
     TimetableViolationCode,
 )
 from .campus_rule_engine import CampusRuleEngine
+from .course_id_normalizer import logical_course_id, normalize_requested_course_ids
 from .general_course_pool_service import CourseRestrictionPolicy
 from .timetable_validator import TimetableValidator
 
@@ -47,11 +48,14 @@ class TimetableValidationService:
         *,
         required_course_ids: Iterable[str] = (),
         excluded_course_ids: Iterable[str] = (),
+        excluded_elective_areas: Iterable[int] = (),
         required_free_days: Iterable[object] = (),
         earliest_start_time: str | None = None,
         latest_end_time: str | None = None,
         min_credit: float | None = None,
+        min_credit_inclusive: bool = True,
         max_credit: float | None = None,
+        max_credit_inclusive: bool = True,
         department: str | None = None,
     ) -> TimetableValidationResult:
         values = sorted(
@@ -59,9 +63,11 @@ class TimetableValidationService:
             key=lambda item: (item.section.course_id, item.catalog_id, item.section.section_id),
         )
         violations: list[TimetableViolation] = []
-        required = set(required_course_ids)
-        excluded = set(excluded_course_ids)
-        selected_course_ids = [item.section.course_id for item in values]
+        section_values = [item.section for item in values]
+        required = normalize_requested_course_ids(required_course_ids, section_values)
+        excluded = normalize_requested_course_ids(excluded_course_ids, section_values)
+        excluded_areas = set(excluded_elective_areas)
+        selected_course_ids = [logical_course_id(item.section.course_id, item.section.division) for item in values]
         selected_course_id_set = set(selected_course_ids)
 
         duplicate_course_ids = sorted(
@@ -75,7 +81,7 @@ class TimetableValidationService:
                 conflicting_section_ids=[
                     item.section.section_id
                     for item in values
-                    if item.section.course_id == course_id
+                    if logical_course_id(item.section.course_id, item.section.division) == course_id
                 ],
             ))
 
@@ -89,13 +95,25 @@ class TimetableValidationService:
 
         for item in values:
             section = item.section
-            if section.course_id in excluded:
+            section_course_id = logical_course_id(section.course_id, section.division)
+            if section_course_id in excluded:
                 violations.append(TimetableViolation(
                     code=TimetableViolationCode.EXCLUDED_COURSE_INCLUDED,
                     message="제외 과목이 시간표에 포함되어 있습니다.",
-                    course_id=section.course_id,
+                    course_id=section_course_id,
                     section_id=section.section_id,
                     constraint="excluded_course_ids",
+                ))
+            if (
+                section.category is Category.GENERAL_ELECTIVE
+                and section.area in excluded_areas
+            ):
+                violations.append(TimetableViolation(
+                    code=TimetableViolationCode.EXCLUDED_ELECTIVE_AREA_INCLUDED,
+                    message="제외한 교양 영역의 수업이 시간표에 포함되어 있습니다.",
+                    course_id=section_course_id,
+                    section_id=section.section_id,
+                    constraint="excluded_elective_areas",
                 ))
             violations.extend(self._single_section_violations(
                 item,
@@ -123,7 +141,13 @@ class TimetableValidationService:
                     conflicting_section_ids=[first.source_key],
                 ))
 
-        validator_result = self._validator.validate(courses_by_source_key.values(), min_credit=min_credit, max_credit=max_credit)
+        validator_result = self._validator.validate(
+            courses_by_source_key.values(),
+            min_credit=min_credit,
+            min_credit_inclusive=min_credit_inclusive,
+            max_credit=max_credit,
+            max_credit_inclusive=max_credit_inclusive,
+        )
         for issue in validator_result.issues:
             code = {
                 "TRAVEL_NOT_POSSIBLE": TimetableViolationCode.CAMPUS_MOVEMENT_VIOLATION,
@@ -164,6 +188,7 @@ class TimetableValidationService:
     ) -> list[TimetableViolation]:
         violations: list[TimetableViolation] = []
         section = item.section
+        section_course_id = logical_course_id(section.course_id, section.division)
         free_days = set(required_free_days)
         if free_days and any(meeting.day in free_days for meeting in section.class_times):
             violations.append(TimetableViolation(
@@ -179,7 +204,7 @@ class TimetableValidationService:
                 violations.append(TimetableViolation(
                     code=TimetableViolationCode.EARLIEST_START_VIOLATION,
                     message="가장 이른 시작 시간 조건보다 먼저 시작하는 수업이 있습니다.",
-                    course_id=section.course_id,
+                    course_id=section_course_id,
                     section_id=section.section_id,
                     constraint="earliest_start_time",
                 ))
@@ -189,7 +214,7 @@ class TimetableValidationService:
                 violations.append(TimetableViolation(
                     code=TimetableViolationCode.LATEST_END_VIOLATION,
                     message="가장 늦은 종료 시간 조건보다 늦게 끝나는 수업이 있습니다.",
-                    course_id=section.course_id,
+                    course_id=section_course_id,
                     section_id=section.section_id,
                     constraint="latest_end_time",
                 ))
@@ -202,7 +227,7 @@ class TimetableValidationService:
                 violations.append(TimetableViolation(
                     code=TimetableViolationCode.DEPARTMENT_INELIGIBLE,
                     message=decision.reason,
-                    course_id=section.course_id,
+                    course_id=section_course_id,
                     section_id=section.section_id,
                     constraint="department",
                 ))
