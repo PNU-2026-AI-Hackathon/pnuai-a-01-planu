@@ -1,4 +1,4 @@
-﻿"""Application composition root for the PlaNU backend."""
+"""Application composition root for the PlaNU backend."""
 
 from __future__ import annotations
 
@@ -376,12 +376,3 @@ def _load_default_general_courses() -> tuple[list, list]:
             status_code=500,
         ) from exc
     return general_required_courses, fallback_elective_courses
-
-
-
-
-
-
-
-
-

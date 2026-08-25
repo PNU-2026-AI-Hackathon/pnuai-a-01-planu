@@ -17,7 +17,6 @@ from ..models.session_preferences import SoftPreferences
 from ..models.timetable_generation import (
     GeneratedTimetableCandidate,
     ResolvedSection,
-    SectionSource,
 )
 from .course_id_normalizer import logical_course_id, normalize_requested_course_ids
 from ..models.timetable_scoring import (

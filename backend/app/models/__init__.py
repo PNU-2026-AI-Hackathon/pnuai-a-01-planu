@@ -1,4 +1,4 @@
-﻿"""Public domain models for the PlaNU backend."""
+"""Public domain models for the PlaNU backend."""
 
 from .course import Category, ClassTime, Course, Day, normalize_course_category, time_to_minutes
 from .course_discovery import (
@@ -167,5 +167,3 @@ __all__ = [
     "normalize_course_search_text",
     "time_to_minutes",
 ]
-
-

@@ -1,4 +1,4 @@
-﻿"""Parse general-education preference prompts into supported rule groups."""
+"""Parse general-education preference prompts into supported rule groups."""
 
 from __future__ import annotations
 
@@ -15,7 +15,6 @@ from ..models.preference import (
     GeneralPreferenceLLMOutput,
     GeneralPreferenceParseResult,
     HardPreferenceConditions,
-    PreferenceRules,
     PreferenceWarning,
     SoftPreferenceConditions,
     UnsupportedCondition,
@@ -677,4 +676,3 @@ def supported_general_preference_fields() -> dict[str, list[str]]:
         "soft_conditions": sorted(SOFT_FIELDS),
         "day_values": [day.value for day in Day],
     }
-

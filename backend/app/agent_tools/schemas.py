@@ -380,4 +380,3 @@ class ResetSessionPreferencesInput(SessionIdInput):
     target: ResetPreferenceTarget = Field(
         description="hard clears only constraints, soft clears only preferences, all clears both.",
     )
-

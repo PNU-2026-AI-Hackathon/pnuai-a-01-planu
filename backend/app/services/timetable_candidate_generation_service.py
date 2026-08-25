@@ -14,7 +14,6 @@ from ..models.timetable_generation import (
     TimetableGenerationError,
     TimetableGenerationRequest,
     TimetableGenerationResult,
-    TimetableValidationResult,
     TimetableViolationCode,
 )
 from ..repositories.catalog_repository import CatalogRepository

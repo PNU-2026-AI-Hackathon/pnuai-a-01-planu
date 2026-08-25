@@ -1,4 +1,4 @@
-﻿"""Validation of generated timetable candidates."""
+"""Validation of generated timetable candidates."""
 
 from __future__ import annotations
 
@@ -189,5 +189,3 @@ def validate_timetable(
         max_credit=max_credit,
         max_credit_inclusive=max_credit_inclusive,
     ).validate(courses, fixed_courses=fixed_courses)
-
-

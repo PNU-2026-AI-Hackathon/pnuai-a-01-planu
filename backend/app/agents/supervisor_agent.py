@@ -1,4 +1,4 @@
-﻿"""Supervisor and restricted domain agents for PlaNU chat routing."""
+"""Supervisor and restricted domain agents for PlaNU chat routing."""
 
 from __future__ import annotations
 
@@ -251,9 +251,3 @@ def _looks_like_timetable_revision(text: str) -> bool:
 
 def _normalize(text: str) -> str:
     return text.strip().casefold()
-
-
-
-
-
-

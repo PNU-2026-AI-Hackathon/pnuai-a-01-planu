@@ -1,4 +1,4 @@
-﻿"""Public API DTOs for PlaNU agent runtime responses."""
+"""Public API DTOs for PlaNU agent runtime responses."""
 
 from __future__ import annotations
 

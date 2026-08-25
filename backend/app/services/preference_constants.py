@@ -1,4 +1,4 @@
-﻿"""Shared timetable preference constants."""
+"""Shared timetable preference constants."""
 
 from __future__ import annotations
 
