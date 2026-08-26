@@ -622,18 +622,18 @@ python -m pytest backend\tests\live_llm\test_live_llm_smoke.py -m live_llm -v -s
 
 ### 6. 팀 소개
 
-|                                                                   MEMBER1                                                                    |                                                                   MEMBER2                                                                    |                                                                   MEMBER3                                                                    |
+|                                                                   이학영                                                                    |                                                                   MEMBER2                                                                    |                                                                   MEMBER3                                                                    |
 | :------------------------------------------------------------------------------------------------------------------------------------------: | :------------------------------------------------------------------------------------------------------------------------------------------: | :------------------------------------------------------------------------------------------------------------------------------------------: |
 | <img width="100px" alt="MEMBER1" src="https://github.com/pnuswedu/SW-Hackathon-2024/assets/34933690/f5b5df2a-e174-437d-86b2-a5a23d9ee75d" /> | <img width="100px" alt="MEMBER2" src="https://github.com/pnuswedu/SW-Hackathon-2024/assets/34933690/fe4e8910-4565-4f3f-9bd1-f135e74cb39d" /> | <img width="100px" alt="MEMBER3" src="https://github.com/pnuswedu/SW-Hackathon-2024/assets/34933690/675d8471-19b9-4abc-bf8a-be426989b318" /> |
-|                                                             member1@pusan.ac.kr                                                              |                                                              member2@gmail.com                                                               |                                                              member3@naver.com                                                               |
-|                                                               프론트앤드 개발                                                                |                                                        인프라 구축 <br/> 백앤드 개발                                                         |                                                          DB 설계 <br/> 백앤드 개발                                                           |
+|                                                             lhy1170@pusan.ac.kr                                                              |                                                              member2@gmail.com                                                               |                                                              member3@naver.com                                                               |
+|                                                               백엔드 개발, 시스템 프롬프트 수정을 위한 스킬 작성                                                                |                                                        인프라 구축 <br/> 백앤드 개발                                                         |                                                          DB 설계 <br/> 백앤드 개발                                                           |
 
 <br/>
 
 ### 7. 해커톤 참여 후기
 
-- MEMBER1
-  > 추후 작성한다.
+- 이학영
+  > LLM을 활용해야 할 문제, 활용할 필요 없는 문제에 대해 고민해볼 수 있는 기회가 되었고, 그러기 위해선 유저 페르소나 설정이 매우 중요하다는 것을 느끼게 되었다.
 - MEMBER2
   > 추후 작성한다.
 - 김예솔
