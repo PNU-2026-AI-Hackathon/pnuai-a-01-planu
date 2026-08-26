@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'models/app_flow_state.dart';
 import 'screens/chat_home_screen.dart';
+import 'screens/guide_screen.dart';
 import 'screens/second_screen.dart';
 import 'services/planu_api.dart';
 
@@ -29,11 +30,24 @@ class _PlaNUAppState extends State<PlaNUApp> {
     _navigatorKey.currentState?.popUntil((route) => route.isFirst);
   }
 
+  void _openChatHomeScreen(BuildContext context) {
+    Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        settings: const RouteSettings(name: '/chat-home'),
+        builder: (chatContext) => ChatHomeScreen(
+          api: _api,
+          onContinue: (data) => _openSecondScreen(chatContext, data),
+        ),
+      ),
+    );
+  }
+
   void _openSecondScreen(BuildContext context, Map<String, dynamic> data) {
     _flow.department = data['selectedDepartment']?.toString() ?? '';
     _flow.sessionId = data['sessionId']?.toString();
-    _flow.majorCatalogName =
-        data['parsedCourseCount'] != null ? 'uploaded' : null;
+    _flow.majorCatalogName = data['parsedCourseCount'] != null
+        ? 'uploaded'
+        : null;
 
     final sessionId = _flow.sessionId;
     if (sessionId == null || sessionId.isEmpty) return;
@@ -63,10 +77,8 @@ class _PlaNUAppState extends State<PlaNUApp> {
       debugShowCheckedModeBanner: false,
       title: 'PlaNU',
       home: Builder(
-        builder: (context) => ChatHomeScreen(
-          api: _api,
-          onContinue: (data) => _openSecondScreen(context, data),
-        ),
+        builder: (context) =>
+            GuideScreen(onNext: () => _openChatHomeScreen(context)),
       ),
     );
   }

@@ -9,6 +9,7 @@ import '../services/major_api.dart';
 import '../services/planu_api.dart';
 import '../services/session_error_handler.dart';
 import '../widgets/flow_step_badge.dart';
+import '../widgets/timetable_grid.dart';
 import 'file_upload_screen2.dart' show CatalogFile;
 import 'timetable_loading_screen.dart';
 
@@ -461,12 +462,6 @@ class _SecondScreenState extends State<SecondScreen> {
                               deletingConditionId: _deletingConditionId,
                               onDelete: _deleteCondition,
                             ),
-                            const SizedBox(height: 14),
-                            OutlinedButton(
-                              key: const Key('addMoreConditionButton'),
-                              onPressed: _focusConditionInput,
-                              child: const Text('조건 더 추가하기'),
-                            ),
                           ],
                         ),
                 ),
@@ -766,19 +761,6 @@ class _SecondScreenState extends State<SecondScreen> {
     }
     if (file.bytes == null) return '선택한 파일을 읽을 수 없습니다.';
     return null;
-  }
-
-  void _focusConditionInput() {
-    _conditionFocusNode.requestFocus();
-    final inputContext = _conditionFocusNode.context;
-    if (inputContext != null) {
-      Scrollable.ensureVisible(
-        inputContext,
-        duration: const Duration(milliseconds: 250),
-        curve: Curves.easeOut,
-        alignment: 0.25,
-      );
-    }
   }
 
   Widget _buildMajorSelectionSection(ThemeData theme) {
@@ -1426,7 +1408,7 @@ class _CourseGroupCard extends StatelessWidget {
                 final timeText = course.classTimes
                     .map(
                       (time) =>
-                          '${_dayLabel(time.day)} ${time.start}-${time.end}',
+                          '${_previewDayLabel(time.day)} ${time.start}-${time.end}',
                     )
                     .join(' · ');
 
@@ -1481,19 +1463,6 @@ class _CourseGroupCard extends StatelessWidget {
         ),
       ),
     );
-  }
-
-  String _dayLabel(String day) {
-    return switch (day) {
-      'MON' => '월',
-      'TUE' => '화',
-      'WED' => '수',
-      'THU' => '목',
-      'FRI' => '금',
-      'SAT' => '토',
-      'SUN' => '일',
-      _ => day,
-    };
   }
 }
 
@@ -1578,35 +1547,53 @@ class _SelectionPreviewCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final warning = preview.hasTimeConflict || !preview.canConfirm;
+    final schedule = _previewScheduleItems(preview);
+    final courses = preview.courses;
 
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: warning ? const Color(0xFFFEF2F2) : const Color(0xFFF5F5F5),
+        color: warning ? const Color(0xFFFEF2F2) : const Color(0xFFF8F9FA),
         borderRadius: BorderRadius.circular(8),
         border: Border.all(
           color: warning ? const Color(0xFFEF4444) : const Color(0xFFE5E7EB),
         ),
       ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text(
-            '선택 미리보기',
-            style: Theme.of(
-              context,
-            ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  '선택 미리보기',
+                  style: Theme.of(
+                    context,
+                  ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+                ),
+              ),
+              Text(
+                '전공 ${preview.courses.length}개 · ${_formatCredit(preview.totalCredits)}학점',
+                style: const TextStyle(color: Color(0xFF6B7280)),
+              ),
+            ],
           ),
-          const SizedBox(height: 10),
-          Text('전공 과목 ${preview.courses.length}개를 선택했습니다.'),
-          const SizedBox(height: 8),
+          const SizedBox(height: 12),
+          TimetableGrid(items: schedule),
+          const SizedBox(height: 16),
+          Column(
+            children: courses
+                .map((course) => _PreviewCourseRow(course: course))
+                .toList(),
+          ),
+          const SizedBox(height: 12),
           Text('시간 충돌: ${preview.hasTimeConflict ? '있음' : '없음'}'),
           if (preview.conflicts.isNotEmpty) ...[
             const SizedBox(height: 10),
             ...preview.conflicts.map(
               (conflict) => Text(
-                '${conflict.firstCourseId} / ${conflict.secondCourseId} · ${_dayLabel(conflict.day)} ${conflict.start}-${conflict.end}',
+                '${conflict.firstCourseId} / ${conflict.secondCourseId} · ${_previewDayLabel(conflict.day)} ${conflict.start}-${conflict.end}',
                 style: const TextStyle(color: Color(0xFF991B1B)),
               ),
             ),
@@ -1615,19 +1602,106 @@ class _SelectionPreviewCard extends StatelessWidget {
       ),
     );
   }
+}
 
-  String _dayLabel(String day) {
-    return switch (day) {
-      'MON' => '월',
-      'TUE' => '화',
-      'WED' => '수',
-      'THU' => '목',
-      'FRI' => '금',
-      'SAT' => '토',
-      'SUN' => '일',
-      _ => day,
-    };
+class _PreviewCourseRow extends StatelessWidget {
+  const _PreviewCourseRow({required this.course});
+
+  final MajorCourse course;
+
+  @override
+  Widget build(BuildContext context) {
+    final timeText = course.classTimes
+        .map(
+          (time) => '${_previewDayLabel(time.day)} ${time.start}-${time.end}',
+        )
+        .join(' · ');
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      decoration: const BoxDecoration(
+        border: Border(bottom: BorderSide(color: Color(0xFFE5E7EB))),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+            decoration: BoxDecoration(
+              color: const Color(0xFFDDE5FF),
+              borderRadius: BorderRadius.circular(999),
+            ),
+            child: Text(
+              course.category.isEmpty ? '전공' : course.category,
+              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '${course.name} ${course.division}'.trim(),
+                  style: const TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  [
+                    course.professor,
+                    if (timeText.isNotEmpty) timeText,
+                    '${_formatCredit(course.credit)}학점',
+                  ].where((value) => value.trim().isNotEmpty).join(' · '),
+                  style: const TextStyle(color: Color(0xFF6B7280)),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
+}
+
+String _previewDayLabel(String day) {
+  return switch (day) {
+    'MON' => '월',
+    'TUE' => '화',
+    'WED' => '수',
+    'THU' => '목',
+    'FRI' => '금',
+    'SAT' => '토',
+    'SUN' => '일',
+    _ => day,
+  };
+}
+
+String _formatCredit(double value) {
+  return value == value.roundToDouble()
+      ? value.round().toString()
+      : value.toStringAsFixed(1);
+}
+
+List<Map<String, dynamic>> _previewScheduleItems(MajorPreviewResponse preview) {
+  final source = preview.timetableEntries.isNotEmpty
+      ? preview.timetableEntries
+      : preview.courses;
+  return [
+    for (final course in source)
+      for (final time in course.classTimes)
+        {
+          'course_name': course.name,
+          'division': course.division,
+          'category': course.category,
+          'day': time.day,
+          'start': time.start,
+          'end': time.end,
+          'classroom': time.classroom,
+          'building_code': time.buildingCode,
+        },
+  ];
 }
 
 class _InfoPill extends StatelessWidget {

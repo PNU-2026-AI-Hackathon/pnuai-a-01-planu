@@ -5,6 +5,7 @@ import '../models/major_models.dart';
 import '../services/planu_api.dart';
 import '../services/session_error_handler.dart';
 import '../widgets/flow_step_badge.dart';
+import '../widgets/timetable_grid.dart';
 import 'last_screen.dart';
 
 class TimetableResultScreen extends StatefulWidget {
@@ -67,8 +68,8 @@ class _TimetableResultScreenState extends State<TimetableResultScreen> {
         sessionId: sessionId,
         candidateId: candidateId,
       );
-      final selected =
-          (response['selected_timetable'] as Map?)?.cast<String, dynamic>();
+      final selected = (response['selected_timetable'] as Map?)
+          ?.cast<String, dynamic>();
       if (selected == null) {
         throw const ApiError(
           'TIMETABLE_SELECTION_EMPTY',
@@ -121,15 +122,13 @@ class _TimetableResultScreenState extends State<TimetableResultScreen> {
 
   void _editConditions() {
     var foundSecondScreen = false;
-    Navigator.of(context).popUntil(
-      (route) {
-        if (route.settings.name == '/second') {
-          foundSecondScreen = true;
-          return true;
-        }
-        return route.isFirst;
-      },
-    );
+    Navigator.of(context).popUntil((route) {
+      if (route.settings.name == '/second') {
+        foundSecondScreen = true;
+        return true;
+      }
+      return route.isFirst;
+    });
     if (!foundSecondScreen && Navigator.of(context).canPop()) {
       Navigator.of(context).pop();
     }
@@ -185,13 +184,14 @@ class _TimetableResultScreenState extends State<TimetableResultScreen> {
                   if (_candidates.length < 3) ...[
                     const SizedBox(height: 12),
                     _InfoBanner(
-                      message:
-                          '현재 조건을 모두 만족하는 시간표는 ${_candidates.length}개입니다.',
+                      message: '현재 조건을 모두 만족하는 시간표는 ${_candidates.length}개입니다.',
                     ),
                   ],
                   const SizedBox(height: 22),
                   _CandidateView(
-                    key: ValueKey(_candidateId(selected) ?? _candidateSignature(selected)),
+                    key: ValueKey(
+                      _candidateId(selected) ?? _candidateSignature(selected),
+                    ),
                     candidate: selected,
                   ),
                   const SizedBox(height: 24),
@@ -354,7 +354,7 @@ class _CandidateView extends StatelessWidget {
         const SizedBox(height: 20),
         _Section(
           title: '주간 시간표',
-          child: _TimetableGrid(items: schedule),
+          child: TimetableGrid(items: schedule),
         ),
         const SizedBox(height: 20),
         _Section(
@@ -467,10 +467,30 @@ class _MetricGrid extends StatelessWidget {
         spacing: 12,
         runSpacing: 12,
         children: [
-          _Metric(width: width, icon: Icons.school_outlined, label: '총 학점', value: totalCredits),
-          _Metric(width: width, icon: Icons.event_available_outlined, label: '공강', value: freeDays),
-          _Metric(width: width, icon: Icons.wb_sunny_outlined, label: '첫 수업', value: firstClassTime),
-          _Metric(width: width, icon: Icons.nights_stay_outlined, label: '마지막 수업', value: lastClassTime),
+          _Metric(
+            width: width,
+            icon: Icons.school_outlined,
+            label: '총 학점',
+            value: totalCredits,
+          ),
+          _Metric(
+            width: width,
+            icon: Icons.event_available_outlined,
+            label: '공강',
+            value: freeDays,
+          ),
+          _Metric(
+            width: width,
+            icon: Icons.wb_sunny_outlined,
+            label: '첫 수업',
+            value: firstClassTime,
+          ),
+          _Metric(
+            width: width,
+            icon: Icons.nights_stay_outlined,
+            label: '마지막 수업',
+            value: lastClassTime,
+          ),
         ],
       );
     },
@@ -509,7 +529,12 @@ class _Metric extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Text(label, style: const TextStyle(color: _TimetableResultScreenState._muted)),
+                Text(
+                  label,
+                  style: const TextStyle(
+                    color: _TimetableResultScreenState._muted,
+                  ),
+                ),
                 const SizedBox(height: 2),
                 Text(
                   value,
@@ -544,132 +569,13 @@ class _Section extends StatelessWidget {
       children: [
         Text(
           title,
-          style: Theme.of(context).textTheme.titleLarge?.copyWith(
-            fontWeight: FontWeight.w700,
-          ),
+          style: Theme.of(
+            context,
+          ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
         ),
         const SizedBox(height: 16),
         child,
       ],
-    ),
-  );
-}
-
-class _TimetableGrid extends StatelessWidget {
-  const _TimetableGrid({required this.items});
-
-  final List<Map<String, dynamic>> items;
-
-  static const _days = ['MON', 'TUE', 'WED', 'THU', 'FRI'];
-  static const _dayLabels = ['월', '화', '수', '목', '금'];
-  static const _timeColumnWidth = 52.0;
-  static const _dayColumnWidth = 140.0;
-  static const _hourHeight = 52.0;
-  static const _startHour = 9;
-  static const _endHour = 22;
-  static const _gridHeight = (_endHour - _startHour) * _hourHeight;
-
-  @override
-  Widget build(BuildContext context) {
-    if (items.isEmpty) {
-      return const Text('표시할 시간표 정보가 없습니다.');
-    }
-
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: SizedBox(
-        width: _timeColumnWidth + _dayColumnWidth * _days.length,
-        child: Column(
-          children: [
-            Row(
-              children: [
-                const SizedBox(width: _timeColumnWidth),
-                for (final day in _dayLabels)
-                  SizedBox(
-                    width: _dayColumnWidth,
-                    height: 32,
-                    child: Center(
-                      child: Text(
-                        day,
-                        style: const TextStyle(fontWeight: FontWeight.w700),
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-            const Divider(height: 1),
-            SizedBox(
-              height: _gridHeight,
-              child: Stack(
-                children: [
-                  for (var hour = _startHour; hour <= _endHour; hour++) ...[
-                    Positioned(
-                      top: (hour - _startHour) * _hourHeight,
-                      left: 0,
-                      width: _timeColumnWidth,
-                      child: Text(
-                        '${hour.toString().padLeft(2, '0')}:00',
-                        style: const TextStyle(
-                          color: _TimetableResultScreenState._muted,
-                          fontSize: 12,
-                        ),
-                      ),
-                    ),
-                    Positioned(
-                      top: (hour - _startHour) * _hourHeight,
-                      left: _timeColumnWidth,
-                      right: 0,
-                      child: const Divider(height: 1),
-                    ),
-                  ],
-                  for (final item in items)
-                    if (_days.contains('${item['day']}'))
-                      Positioned(
-                        left: _timeColumnWidth +
-                            _days.indexOf('${item['day']}') * _dayColumnWidth +
-                            4,
-                        top: ((_minutes('${item['start']}') - _startHour * 60) /
-                                60 *
-                                _hourHeight)
-                            .clamp(0, _gridHeight - 32)
-                            .toDouble(),
-                        width: _dayColumnWidth - 8,
-                        height: ((_minutes('${item['end']}') -
-                                    _minutes('${item['start']}')) /
-                                60 *
-                                _hourHeight)
-                            .clamp(34, 260)
-                            .toDouble(),
-                        child: _ScheduleBlock(item: item),
-                      ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _ScheduleBlock extends StatelessWidget {
-  const _ScheduleBlock({required this.item});
-
-  final Map<String, dynamic> item;
-
-  @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.all(7),
-    decoration: BoxDecoration(
-      color: _categoryColor('${item['category']}'),
-      borderRadius: BorderRadius.circular(7),
-      border: Border.all(color: Colors.white, width: 1.5),
-    ),
-    child: Text(
-      '${item['course_name'] ?? ''}\n${item['division'] ?? ''} · ${item['classroom'] ?? ''}',
-      maxLines: 3,
-      overflow: TextOverflow.fade,
-      style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
     ),
   );
 }
@@ -689,13 +595,18 @@ class _CourseRow extends StatelessWidget {
           '${item['course_name']}' == name && '${item['division']}' == division,
     );
     final timeText = meetings
-        .map((item) => '${_dayLabel('${item['day']}')} ${item['start']}-${item['end']}')
+        .map(
+          (item) =>
+              '${_dayLabel('${item['day']}')} ${item['start']}-${item['end']}',
+        )
         .join(' · ');
 
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 14),
       decoration: const BoxDecoration(
-        border: Border(bottom: BorderSide(color: _TimetableResultScreenState._line)),
+        border: Border(
+          bottom: BorderSide(color: _TimetableResultScreenState._line),
+        ),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -708,7 +619,10 @@ class _CourseRow extends StatelessWidget {
               children: [
                 Text(
                   '$name $division'.trim(),
-                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
                 const SizedBox(height: 5),
                 Text(
@@ -717,7 +631,9 @@ class _CourseRow extends StatelessWidget {
                     if (timeText.isNotEmpty) timeText,
                     '${course['credit'] ?? course['credits'] ?? 0}학점',
                   ].where((value) => value.trim().isNotEmpty).join(' · '),
-                  style: const TextStyle(color: _TimetableResultScreenState._muted),
+                  style: const TextStyle(
+                    color: _TimetableResultScreenState._muted,
+                  ),
                 ),
               ],
             ),
@@ -747,7 +663,9 @@ class _ScoreComponentRow extends StatelessWidget {
             child: Text(
               value >= 0 ? '+${_score(value)}' : _score(value),
               style: TextStyle(
-                color: value >= 0 ? const Color(0xFF10B981) : const Color(0xFFEF4444),
+                color: value >= 0
+                    ? const Color(0xFF10B981)
+                    : const Color(0xFFEF4444),
                 fontWeight: FontWeight.w700,
               ),
             ),
@@ -812,14 +730,16 @@ class _ConditionStatusBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final hasWarnings = warnings.isNotEmpty;
-    final background =
-        hasWarnings ? const Color(0xFFFFFBEB) : const Color(0xFFECFDF5);
-    final border =
-        hasWarnings ? const Color(0xFFF59E0B) : const Color(0xFF10B981);
-    final foreground =
-        hasWarnings ? const Color(0xFF92400E) : const Color(0xFF047857);
-    final icon =
-        hasWarnings ? Icons.info_outline : Icons.check_circle_outline;
+    final background = hasWarnings
+        ? const Color(0xFFFFFBEB)
+        : const Color(0xFFECFDF5);
+    final border = hasWarnings
+        ? const Color(0xFFF59E0B)
+        : const Color(0xFF10B981);
+    final foreground = hasWarnings
+        ? const Color(0xFF92400E)
+        : const Color(0xFF047857);
+    final icon = hasWarnings ? Icons.info_outline : Icons.check_circle_outline;
     final messages = hasWarnings
         ? warnings.map(_formatConditionWarning).toList()
         : const ['모든 조건을 만족합니다'];
@@ -909,7 +829,11 @@ class _EmptyResult extends StatelessWidget {
     ),
     child: Column(
       children: [
-        const Icon(Icons.event_busy_outlined, size: 42, color: _TimetableResultScreenState._muted),
+        const Icon(
+          Icons.event_busy_outlined,
+          size: 42,
+          color: _TimetableResultScreenState._muted,
+        ),
         const SizedBox(height: 14),
         const Text('조건에 맞는 추천 후보가 없습니다.'),
         const SizedBox(height: 16),
@@ -1003,14 +927,13 @@ Map<String, dynamic> _candidateForFinalScreen({
 
 String _candidateSignature(Map<String, dynamic> candidate) {
   final timetable = (candidate['timetable'] as Map?)?.cast<String, dynamic>();
-  final courses = (timetable?['courses'] as List? ?? const [])
-      .whereType<Map>()
-      .map((course) {
+  final courses =
+      (timetable?['courses'] as List? ?? const []).whereType<Map>().map((
+        course,
+      ) {
         final value = course.cast<String, dynamic>();
         return '${value['course_id'] ?? value['course_name']}:${value['division'] ?? value['section'] ?? ''}';
-      })
-      .toList()
-    ..sort();
+      }).toList()..sort();
   return courses.join('|');
 }
 
@@ -1020,7 +943,9 @@ String _formatConditionWarning(String value) {
   if (normalized.contains('금요일') || normalized.contains('FRI')) {
     return '금요일 수업이 포함되어 있어 금요일 공강 조건을 만족하지 못했습니다.';
   }
-  if (normalized.contains('10') || normalized.contains('09:') || normalized.contains('9:')) {
+  if (normalized.contains('10') ||
+      normalized.contains('09:') ||
+      normalized.contains('9:')) {
     return '10시 이전 수업이 포함되어 있어 10시 이전 수업 제외 조건을 만족하지 못했습니다.';
   }
   if (normalized.endsWith('조건을 만족하지 못했습니다.')) {
@@ -1062,10 +987,13 @@ String _lastClassTime(List<Map<String, dynamic>> schedule) {
 
 List<String> _freeDayLabels(List<Map<String, dynamic>> schedule) {
   final occupied = schedule.map((item) => '${item['day']}').toSet();
-  return ['MON', 'TUE', 'WED', 'THU', 'FRI']
-      .where((day) => !occupied.contains(day))
-      .map(_dayLabel)
-      .toList();
+  return [
+    'MON',
+    'TUE',
+    'WED',
+    'THU',
+    'FRI',
+  ].where((day) => !occupied.contains(day)).map(_dayLabel).toList();
 }
 
 String _dayLabel(String value) => switch (value) {
