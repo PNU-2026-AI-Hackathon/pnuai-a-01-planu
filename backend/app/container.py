@@ -164,7 +164,7 @@ def build_container(
         recent_candidate_repository=recent_candidates,
     )
     major_toolset = _build_major_toolset(session_agent_tools, discovery_tools)
-    preference_toolset = _build_preference_toolset(session_agent_tools)
+    preference_toolset = _build_preference_toolset(session_agent_tools, discovery_tools)
     timetable_toolset = _build_timetable_toolset(
         session_agent_tools,
         discovery_tools,
@@ -296,10 +296,14 @@ def _build_major_toolset(
     )
 
 
-def _build_preference_toolset(session_tools: SessionAgentTools) -> SessionStateToolset:
+def _build_preference_toolset(
+    session_tools: SessionAgentTools,
+    discovery_tools: CourseDiscoveryTools,
+) -> SessionStateToolset:
     return SessionStateToolset(
         {
             "get_session_summary": session_tools.get_session_summary,
+            "search_courses_by_name": discovery_tools.search_courses_by_name,
             "update_timetable_preferences": session_tools.update_timetable_preferences,
             "reset_session_preferences": session_tools.reset_session_preferences,
         }

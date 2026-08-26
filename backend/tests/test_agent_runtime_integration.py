@@ -1,4 +1,4 @@
-﻿"""Integration tests for the PlaNU composition root and agent runtime API."""
+"""Integration tests for the PlaNU composition root and agent runtime API."""
 
 from __future__ import annotations
 
@@ -16,8 +16,9 @@ from backend.app.main import app
 from backend.app.runtime import AgentRuntime
 from backend.app.models import Category, ClassTime, Course, Day
 from backend.app.models.course_discovery import CatalogKind
+from backend.app.services.general_course_pool_service import GeneralCoursePreparationService
 from backend.app.services.general_preference_parser import GeneralPreferenceParser
-from backend.app.services.session_store import SessionStore
+from backend.app.services.session_store import SessionStage, SessionStore
 from backend.app.core.errors import AppError
 
 
@@ -33,11 +34,17 @@ class FakeModel:
         return {"message": "완료했습니다.", "tool_calls": []}
 
 
-def _course(course_id: str, name: str, *, day: Day = Day.MON) -> Course:
+def _course(
+    course_id: str,
+    name: str,
+    *,
+    day: Day = Day.MON,
+    category: Category = Category.GENERAL_ELECTIVE,
+) -> Course:
     return Course(
         course_id=course_id,
         course_name=name,
-        category=Category.GENERAL_ELECTIVE,
+        category=category,
         area=3,
         credit=3,
         division=course_id.rsplit("-", 1)[-1],
@@ -416,6 +423,128 @@ def test_public_chat_handles_consecutive_area_and_latest_end_variants() -> None:
     assert soft_items["preferred_latest_end_time"]["raw_value"] == "16:00"
     assert soft_items["compact_schedule"]["display_value"] == "연강 회피"
 
+
+def test_public_chat_handles_reported_preference_phrases() -> None:
+    container = build_container()
+    runtime = AgentRuntime(
+        session_service=container.session_service,
+        agent=container.supervisor_agent,
+        selection_tools=container.timetable_selection_tools,
+        condition_summary_service=container.condition_summary_service,
+    )
+    app.dependency_overrides[get_agent_runtime] = lambda: runtime
+    client = TestClient(app)
+
+    try:
+        state = container.session_service.create_session()
+        session_id = state.session_id
+        major_catalog_id = f"{session_id}:major"
+        elective_catalog_id = f"{session_id}:elective"
+        container.catalog_repository.register(
+            major_catalog_id,
+            kind=CatalogKind.MAJOR,
+            courses=[_course("M100-001", "자료구조")],
+            department="컴퓨터공학과",
+        )
+        container.catalog_repository.register(
+            elective_catalog_id,
+            kind=CatalogKind.ELECTIVE,
+            courses=[_course("E100-001", "대학영어")],
+            department="컴퓨터공학과",
+        )
+        container.session_service.register_major_catalog(session_id, major_catalog_id)
+        container.session_service.register_elective_catalog(session_id, elective_catalog_id)
+
+        compact = client.post(
+            f"/sessions/{session_id}/chat",
+            json={"message": "수업 사이 비는 시간이 적었으면 좋겠다"},
+        )
+        required_course = client.post(
+            f"/sessions/{session_id}/chat",
+            json={"message": "대학영어는 반드시 들을거다"},
+        )
+        after_end_ban = client.post(
+            f"/sessions/{session_id}/chat",
+            json={"message": "17시 이후에 끝나는 수업이 없으면 좋겠다"},
+        )
+        before_end_preference = client.post(
+            f"/sessions/{session_id}/chat",
+            json={"message": "끝나는 시간이 17시 이전이면 좋겠다"},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    for response in (compact, required_course, after_end_ban, before_end_preference):
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["success"] is True
+        assert body["error"] is None
+    for response in (compact, required_course, after_end_ban):
+        assert response.json()["changed"] is True
+
+    saved = container.session_service.get_session(session_id)
+    assert saved.soft_preferences.compact_schedule is True
+    assert saved.hard_constraints.required_course_ids == ["E100"]
+    assert saved.soft_preferences.preferred_latest_end_time == "17:00"
+
+    latest_summary = before_end_preference.json()["condition_summary"]
+    soft_items = {item["key"]: item for item in latest_summary["soft_preferences"]}
+    assert soft_items["preferred_latest_end_time"]["status"] == "SET"
+    assert soft_items["preferred_latest_end_time"]["raw_value"] == "17:00"
+
+def test_public_chat_auto_prepares_default_general_catalog_for_course_preferences() -> None:
+    container = build_container()
+    general_preparation = GeneralCoursePreparationService(
+        store=container.session_store,
+        pool_service=container.general_course_pool_service,
+        general_required_courses=[
+            _course("R100-001", "고전읽기", category=Category.GENERAL_REQUIRED),
+        ],
+        fallback_elective_courses=[_course("E100-001", "대학영어")],
+        session_service=container.session_service,
+    )
+    runtime = AgentRuntime(
+        session_service=container.session_service,
+        agent=container.supervisor_agent,
+        selection_tools=container.timetable_selection_tools,
+        condition_summary_service=container.condition_summary_service,
+        general_course_preparation_service=general_preparation,
+    )
+    app.dependency_overrides[get_agent_runtime] = lambda: runtime
+    client = TestClient(app)
+
+    try:
+        state = container.session_service.create_session()
+        session_id = state.session_id
+        container.catalog_repository.register(
+            f"{session_id}:elective",
+            kind=CatalogKind.ELECTIVE,
+            courses=[_course("E999-001", "OtherElective")],
+            department="컴퓨터공학과",
+        )
+        container.session_store.update(
+            session_id,
+            department="컴퓨터공학과",
+            session_stage=SessionStage.CATALOG_PARSED,
+            elective_catalog_id=f"{session_id}:elective",
+            elective_candidates=[_course("E999-001", "OtherElective")],
+        )
+
+        response = client.post(
+            f"/sessions/{session_id}/chat",
+            json={"message": "대학영어는 반드시 들을거야"},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["success"] is True
+    assert body["changed"] is True
+    assert body["error"] is None
+    saved = container.session_service.get_session(session_id)
+    assert saved.elective_catalog_id == f"{session_id}:general"
+    assert saved.hard_constraints.required_course_ids == ["E100"]
 
 def test_simple_session_model_routes_course_names_to_catalog_search() -> None:
     model = SimpleSessionStateModel()

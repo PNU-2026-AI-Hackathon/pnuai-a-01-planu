@@ -15,6 +15,11 @@ from ..schemas.condition_summary_schema import (
     GenerationReadinessDto,
     MissingGenerationRequirementDto,
 )
+from .special_course_policy import (
+    ENGLISH_PLACEMENT_NOTICE,
+    ENGLISH_PLACEMENT_NOTICE_CODE,
+    is_english_placement_ref,
+)
 
 
 _DAY_LABELS = {
@@ -265,6 +270,7 @@ class ConditionSummaryService:
             display_value=", ".join(ref.course_name or ref.course_id for ref in refs),
             course_refs=refs,
             raw_value=ids,
+            metadata=ConditionSummaryService._course_metadata(refs),
         )
 
     @staticmethod
@@ -353,3 +359,19 @@ class ConditionSummaryService:
         course_refs: dict[str, ConditionCourseRefDto],
     ) -> list[ConditionCourseRefDto]:
         return [course_refs.get(course_id, ConditionCourseRefDto(course_id=course_id)) for course_id in course_ids]
+
+    @staticmethod
+    def _course_metadata(refs: Iterable[ConditionCourseRefDto]) -> dict[str, object]:
+        if not any(
+            is_english_placement_ref(
+                course_id=ref.course_id,
+                course_name=ref.course_name,
+                course_code=ref.course_code,
+            )
+            for ref in refs
+        ):
+            return {}
+        return {
+            "notice_code": ENGLISH_PLACEMENT_NOTICE_CODE,
+            "notice": ENGLISH_PLACEMENT_NOTICE,
+        }

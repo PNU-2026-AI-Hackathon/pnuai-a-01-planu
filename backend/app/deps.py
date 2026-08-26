@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import Request
 
 from .agent_tools import (
@@ -41,17 +43,43 @@ from .services.timetable_validation_service import TimetableValidationService
 
 
 _DEFAULT_CONTAINER: PlanuContainer | None = None
+logger = logging.getLogger(__name__)
 
 
 def get_container(request: Request = None) -> PlanuContainer:
     """Return the process-lifetime PlaNU container for the running app."""
 
     if request is not None and hasattr(request.app.state, "container"):
-        return request.app.state.container
+        container = request.app.state.container
+        if _needs_container_rewire(container):
+            logger.warning(
+                "planu_container_rewire_required reason=missing_preference_course_search"
+            )
+            container = build_container(session_store=container.session_store)
+            request.app.state.container = container
+        return container
     global _DEFAULT_CONTAINER
-    if _DEFAULT_CONTAINER is None:
-        _DEFAULT_CONTAINER = build_container()
+    if _DEFAULT_CONTAINER is None or _needs_container_rewire(_DEFAULT_CONTAINER):
+        if _DEFAULT_CONTAINER is not None:
+            logger.warning(
+                "planu_default_container_rewire_required reason=missing_preference_course_search"
+            )
+        _DEFAULT_CONTAINER = build_container(
+            session_store=None if _DEFAULT_CONTAINER is None else _DEFAULT_CONTAINER.session_store
+        )
     return _DEFAULT_CONTAINER
+
+
+def _needs_container_rewire(container: PlanuContainer) -> bool:
+    try:
+        preference_tools = {spec.name for spec in container.preference_toolset.specs()}
+        preference_agent_tools = set(container.preference_agent.tool_names)
+    except Exception:
+        return True
+    return (
+        "search_courses_by_name" not in preference_tools
+        or "search_courses_by_name" not in preference_agent_tools
+    )
 
 
 def get_session_store(request: Request = None) -> SessionStore:
@@ -188,6 +216,7 @@ def get_agent_runtime(request: Request = None):
         agent=container.supervisor_agent,
         selection_tools=container.timetable_selection_tools,
         condition_summary_service=container.condition_summary_service,
+        general_course_preparation_service=container.general_course_preparation_service,
     )
 
 

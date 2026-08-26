@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from enum import Enum
 import os
@@ -25,6 +26,10 @@ from .major_catalog_upload_service import write_limited_upload_to_temp
 from .exceptions import SessionNotAvailableError
 from .session_service import SessionService
 from .session_store import SessionNotFoundError, SessionStage, SessionStore, session_store
+from .special_course_policy import (
+    ENGLISH_PLACEMENT_NOTICE,
+    is_english_placement_course,
+)
 from .uploaded_catalog_parser import (
     MAX_UPLOAD_SIZE,
     UploadedCatalogError,
@@ -33,6 +38,7 @@ from .uploaded_catalog_parser import (
 
 
 FALLBACK_WARNING = "교양선택 수강편람이 업로드되지 않아 서버 기본 데이터를 사용했습니다."
+logger = logging.getLogger(__name__)
 
 
 class EligibilityStatus(str, Enum):
@@ -94,6 +100,12 @@ class CourseRestrictionPolicy:
             return EligibilityDecision(
                 EligibilityStatus.UNKNOWN_DEPARTMENT,
                 "사용자 학과 정보가 없습니다.",
+            )
+
+        if is_english_placement_course(course):
+            return EligibilityDecision(
+                EligibilityStatus.NOT_RESTRICTED,
+                ENGLISH_PLACEMENT_NOTICE,
             )
 
         if self.known_departments and department_name not in self.known_departments:
@@ -276,6 +288,71 @@ class GeneralCoursePreparationService:
         self.elective_parser = elective_parser or UploadedCatalogParser()
         self.max_upload_size = max_upload_size
         self.session_service = session_service
+
+    def prepare_default_for_session(self, session_id: str) -> bool:
+        """Prepare the built-in general-course catalog for chat-time course search."""
+
+        session_id = session_id.strip()
+        if not session_id:
+            return False
+        try:
+            session = self.store.get(session_id)
+        except SessionNotFoundError:
+            return False
+        has_prepared_general_candidates = bool(
+            session.general_required_candidates or session.general_elective_candidates
+        )
+        if session.elective_catalog_id and has_prepared_general_candidates:
+            self._register_general_catalog_id(session.session_id)
+            return False
+        if session.session_stage not in {
+            SessionStage.CATALOG_PARSED,
+            SessionStage.MAJOR_PREVIEW_CREATED,
+            SessionStage.MAJOR_CONFIRMED,
+            SessionStage.GENERAL_READY,
+            SessionStage.CANDIDATES_GENERATED,
+            SessionStage.RANKING_COMPLETED,
+        }:
+            logger.warning("general_default_prepare_skipped session_id=%s reason=invalid_stage stage=%s", session.session_id, session.session_stage)
+            return False
+        if session.general_required_candidates or session.general_elective_candidates:
+            self._register_general_catalog_id(session.session_id)
+            return True
+
+        fallback_elective_courses = self.fallback_elective_courses
+        if fallback_elective_courses is None:
+            fallback_elective_courses = session.elective_candidates
+        if not fallback_elective_courses and not self.general_required_courses:
+            logger.warning("general_default_prepare_skipped session_id=%s reason=no_default_courses", session.session_id)
+            return False
+
+        department = session.department.strip() or "unknown"
+        result = self.pool_service.build_pools(
+            department=department,
+            general_required_courses=self.general_required_courses,
+            fallback_elective_courses=fallback_elective_courses,
+        )
+        _append_missing_chat_search_required_courses(
+            result,
+            self.general_required_courses,
+        )
+        logger.warning(
+            "general_default_prepare_pool session_id=%s department=%s required=%s elective=%s has_university_english=%s",
+            session.session_id,
+            department,
+            len(result.pools.required_courses),
+            len(result.pools.elective_courses),
+            any(course.course_name == "대학영어" for course in result.pools.required_courses),
+        )
+        result.warnings = [FALLBACK_WARNING, *result.warnings]
+        saved = self.store.update_general_course_pool(
+            session.session_id,
+            result,
+            data_source="fallback_catalog",
+            elective_area=None,
+        )
+        self._register_general_catalog_id(saved.session_id)
+        return True
 
     async def prepare_for_session(
         self,
@@ -572,6 +649,27 @@ def _elective_catalog_app_error(exc: UploadedCatalogError) -> AppError:
     return AppError("ELECTIVE_CATALOG_PARSE_FAILED", message, status_code=422)
 
 
+def _append_missing_chat_search_required_courses(
+    result: GeneralCoursePoolResult,
+    required_courses: Iterable[Course],
+) -> None:
+    """Keep chat-time search from losing English placement courses to local restriction data."""
+
+    seen = {_course_key(course) for course in result.pools.required_courses}
+    for course in required_courses:
+        if course.category is not Category.GENERAL_REQUIRED:
+            continue
+        if not is_english_placement_course(course):
+            continue
+        if not _is_jangjeon_course(course):
+            continue
+        key = _course_key(course)
+        if key in seen:
+            continue
+        result.pools.required_courses.append(course)
+        seen.add(key)
+
+
 def _response_from_session(session) -> GeneralPreparationResponse:
     data_source = session.general_pool_data_source or (
         "uploaded_catalog" if session.elective_candidates else "fallback_catalog"
@@ -586,3 +684,4 @@ def _response_from_session(session) -> GeneralPreparationResponse:
         elective_area=session.general_pool_elective_area,
         warnings=list(session.general_pool_warnings),
     )
+

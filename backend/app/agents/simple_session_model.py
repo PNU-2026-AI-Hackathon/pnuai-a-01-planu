@@ -360,7 +360,7 @@ def _apply_credit_preferences(text: str, hard: dict[str, Any]) -> None:
 
 
 def _apply_compact_schedule_preference(text: str, soft: dict[str, Any]) -> None:
-    if any(marker in text for marker in ("몰아듣기", "몰아서", "모아서", "붙여서")):
+    if any(marker in text for marker in ("몰아듣기", "몰아서", "모아서", "붙여서", "공강 없이 붙여")):
         soft["compact_schedule"] = True
         return
     if any(marker in text for marker in ("연강", "연속 수업")) and any(
@@ -369,7 +369,10 @@ def _apply_compact_schedule_preference(text: str, soft: dict[str, Any]) -> None:
         soft["compact_schedule"] = False
         return
     has_consecutive = "연강" in text or "연속" in text
-    wants_compact = any(marker in text for marker in ("몰아듣기", "몰아서", "공강 없이 붙여"))
+    mentions_gap = any(marker in text for marker in ("비는 시간", "빈 시간", "수업 사이", "공강 시간"))
+    wants_compact = any(marker in text for marker in ("몰아듣기", "몰아서", "공강 없이 붙여")) or (
+        mentions_gap and any(marker in text for marker in ("적", "짧", "줄", "없"))
+    )
     avoids_consecutive = has_consecutive and any(
         marker in text for marker in ("피하고", "싫", "없게", "줄여", "적게")
     )
@@ -388,6 +391,9 @@ def _extract_start_after_time(text: str) -> str | None:
 
 
 def _extract_end_before_time(text: str) -> str | None:
+    value = _end_time_from_after_end_ban(text) or _end_time_from_before_end_preference(text)
+    if value is not None:
+        return value
     if any(marker in text for marker in ("이전에 전부 끝", "이전에 모두 끝", "이전에는 끝", "이전 종료", "이전에 끝")):
         value = _first_time(text)
         if value is None:
@@ -414,6 +420,21 @@ def _extract_end_before_time(text: str) -> str | None:
         return f"{int(hour) + 12:02d}:{minute}"
     return value
 
+
+def _end_time_from_after_end_ban(text: str) -> str | None:
+    if not any(marker in text for marker in ("이후에 끝나는", "이후 끝나는", "이후 종료", "이후에 종료")):
+        return None
+    if not any(marker in text for marker in ("없", "싫", "피하고", "안")):
+        return None
+    return _first_time(text)
+
+
+def _end_time_from_before_end_preference(text: str) -> str | None:
+    if not any(marker in text for marker in ("끝나는 시간", "종료 시간", "마치는 시간")):
+        return None
+    if not any(marker in text for marker in ("이전", "전")):
+        return None
+    return _first_time(text)
 
 def _first_time(text: str) -> str | None:
     colon = re.search(r"(?<!\d)([01]?\d|2[0-3]):([0-5]\d)", text)
@@ -443,7 +464,7 @@ def _extract_course_mentions(text: str) -> list[CourseMention]:
         prefix = text[max(0, index - 8):index]
         source = _source_fragment(text, index)
         intent_text = source
-        catalog_hint = "major" if "전공" in prefix else "elective" if "교양" in prefix else None
+        catalog_hint = _catalog_hint_for_course_name(name, prefix)
         if any(marker in intent_text for marker in ("말고", "대신", "빼", "제외")):
             intent: CourseIntent = "excluded"
         elif any(marker in intent_text for marker in ("피하고 싶", "싫", "비선호")):
@@ -496,7 +517,7 @@ def _extract_korean_course_mentions(text: str) -> list[CourseMention]:
                     continue
                 source = match.group(0).strip()
                 prefix = text[max(0, text.find(clause) - 8):text.find(clause)]
-                catalog_hint = "major" if "전공" in prefix else "elective" if "교양" in prefix else None
+                catalog_hint = _catalog_hint_for_course_name(name, prefix)
                 mentions.append(
                     CourseMention(
                         name=name,
@@ -604,14 +625,35 @@ def _merge_course_ids(
         soft["disliked_course_ids"] = disliked
 
 
+def _catalog_hint_for_course_name(name: str, prefix: str) -> Literal["major", "elective"] | None:
+    if "전공" in prefix:
+        return "major"
+    if "교양" in prefix:
+        return "elective"
+    if name in {"대학영어", "고급영어"}:
+        return "elective"
+    if name in {"자료구조", "컴퓨터프로그래밍", "알고리즘"}:
+        return "major"
+    return None
+
 def _catalog_ids_for_mention(current: dict[str, Any], mention: CourseMention) -> list[str]:
     major = current.get("major_catalog_id")
     elective = current.get("elective_catalog_id")
+    session_id = current.get("session_id")
+    default_general = f"{session_id}:general" if session_id else None
     if mention.catalog_hint == "major":
-        return [major] if major else []
+        return _dedupe_catalog_ids([major, default_general])
     if mention.catalog_hint == "elective":
-        return [elective] if elective else []
-    return [catalog_id for catalog_id in (major, elective) if catalog_id]
+        return _dedupe_catalog_ids([elective, default_general, major])
+    return _dedupe_catalog_ids([major, elective, default_general])
+
+
+def _dedupe_catalog_ids(catalog_ids: list[Any]) -> list[str]:
+    deduped: list[str] = []
+    for catalog_id in catalog_ids:
+        if isinstance(catalog_id, str) and catalog_id and catalog_id not in deduped:
+            deduped.append(catalog_id)
+    return deduped
 
 
 def _search_results_by_key(transcript: list[dict[str, Any]]) -> dict[tuple[str, str], dict[str, Any]]:

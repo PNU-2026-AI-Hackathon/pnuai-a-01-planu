@@ -1014,18 +1014,37 @@ class SessionStateAgent:
                 error_value=None if error is None else getattr(error, "value", None),
             )
         )
-        logger.info(
-            "session_state_agent_tool_executed",
-            extra={
-                "session_id": session_id,
-                "request_id": request_id,
-                "tool_name": name,
-                "success": success,
-                "changed": changed,
-                "error_code": error_code,
-                "executed_tool_count": len(executed),
-            },
-        )
+        if name in {"search_courses_by_name", "discover_courses"}:
+            logger.warning(
+                "session_state_agent_discovery_tool_executed session_id=%s request_id=%s "
+                "tool_name=%s catalog_id=%s query=%s success=%s resolution=%s candidates=%s "
+                "matched=%s scanned=%s error_code=%s message=%s",
+                session_id,
+                request_id,
+                name,
+                getattr(result, "catalog_id", None),
+                getattr(getattr(result, "request", None), "query", None),
+                success,
+                getattr(getattr(result, "resolution", None), "value", getattr(result, "resolution", None)),
+                len(getattr(result, "candidates", []) or []),
+                getattr(result, "total_matched_courses", None),
+                getattr(result, "total_scanned_courses", None),
+                error_code,
+                message,
+            )
+        else:
+            logger.info(
+                "session_state_agent_tool_executed",
+                extra={
+                    "session_id": session_id,
+                    "request_id": request_id,
+                    "tool_name": name,
+                    "success": success,
+                    "changed": changed,
+                    "error_code": error_code,
+                    "executed_tool_count": len(executed),
+                },
+            )
         return _ToolExecution(result=result)
 
     @staticmethod
@@ -1303,6 +1322,14 @@ def _failed_tools(executed: list[ExecutedSessionTool]) -> list[ExecutedSessionTo
     return [tool for tool in executed if not tool.success]
 
 def _tool_execution_success(name: str, result: Any) -> bool:
+    if name in {"search_courses_by_name", "discover_courses"}:
+        try:
+            CourseDiscoveryResult.model_validate(
+                result.model_dump() if hasattr(result, "model_dump") else result
+            )
+        except ValidationError:
+            return False
+        return True
     if name == "generate_timetable_candidates":
         try:
             generation = TimetableGenerationResult.model_validate(

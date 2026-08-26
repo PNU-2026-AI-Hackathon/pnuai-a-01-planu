@@ -107,7 +107,17 @@ class PlanuSupervisorAgent:
         attempted: list[AgentDomain],
     ) -> SessionStateAgentResult:
         attempted.append(domain)
-        return self._agents[domain].run(request)
+        result = self._agents[domain].run(request)
+        logger.info(
+            "planu_domain_agent_result route=%s session_id=%s request_id=%s success=%s changed=%s error_code=%s",
+            domain.value,
+            request.session_id,
+            request.request_id,
+            result.success,
+            result.changed,
+            result.error.code.value if result.error is not None else None,
+        )
+        return result
 
     @staticmethod
     def _fallback_routes(route: AgentDomain, text: str) -> list[AgentDomain]:
@@ -217,19 +227,31 @@ def _looks_like_preference_crud(text: str) -> bool:
             "선호",
             "비선호",
             "필수",
+            "들을거",
+            "들을 거",
+            "듣고",
+            "넣어",
             "10시",
             "9시",
+            "17시",
+            "18시",
             "5시",
             "6시",
             "아침",
             "오후",
+            "이후",
             "이전",
             "이전에는",
             "모든 수업",
             "끝내",
+            "끝나는",
             "마쳐",
             "종료",
             "공강",
+            "비는 시간",
+            "빈 시간",
+            "수업 사이",
+            "공강 시간",
             "외국어",
             "학점",
             "연강",

@@ -77,7 +77,8 @@ class _SecondScreenState extends State<SecondScreen> {
     9: '인성과봉사',
   };
 
-  late final MajorRepository _majorRepository = widget.majorRepository ??
+  late final MajorRepository _majorRepository =
+      widget.majorRepository ??
       MajorRepository(HttpMajorApi(baseUrl: widget.api.baseUrl));
 
   @override
@@ -100,8 +101,9 @@ class _SecondScreenState extends State<SecondScreen> {
     });
 
     try {
-      final response =
-          await _majorRepository.listCourses(sessionId: widget.sessionId);
+      final response = await _majorRepository.listCourses(
+        sessionId: widget.sessionId,
+      );
       if (!mounted) return;
       setState(() => _majorCourses = response.courses);
     } on ApiError catch (error) {
@@ -303,9 +305,9 @@ class _SecondScreenState extends State<SecondScreen> {
       setState(() {
         _conditionError = error.message;
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(error.message)),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.message)));
     } finally {
       if (mounted) setState(() => _isContinuing = false);
     }
@@ -358,7 +360,8 @@ class _SecondScreenState extends State<SecondScreen> {
       _confirmation != null;
 
   bool get _hasUploadedElectiveCatalog =>
-      widget.flow.electiveCatalogBytes != null || widget.flow.electiveCatalogName != null;
+      widget.flow.electiveCatalogBytes != null ||
+      widget.flow.electiveCatalogName != null;
 
   bool get _canContinue =>
       _selectedCourseIdsByName.isNotEmpty &&
@@ -575,9 +578,7 @@ class _SecondScreenState extends State<SecondScreen> {
             filled: true,
             fillColor: const Color(0xFFF8F9FA),
             errorText: _conditionError,
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(8),
-            ),
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
           ),
         ),
         const SizedBox(height: 12),
@@ -611,10 +612,7 @@ class _SecondScreenState extends State<SecondScreen> {
         ],
         if (_actionHint != null && !_isSendingCondition) ...[
           const SizedBox(height: 12),
-          Text(
-            _actionHint!,
-            style: const TextStyle(color: Color(0xFF374151)),
-          ),
+          Text(_actionHint!, style: const TextStyle(color: Color(0xFF374151))),
         ],
       ],
     );
@@ -672,9 +670,7 @@ class _SecondScreenState extends State<SecondScreen> {
               border: OutlineInputBorder(),
             ),
             items: [
-              const DropdownMenuItem<int>(
-                child: Text('전체 영역 사용'),
-              ),
+              const DropdownMenuItem<int>(child: Text('전체 영역 사용')),
               ..._electiveAreas.entries.map(
                 (entry) => DropdownMenuItem<int>(
                   value: entry.key,
@@ -690,15 +686,18 @@ class _SecondScreenState extends State<SecondScreen> {
           if (fileName == null)
             OutlinedButton.icon(
               key: const Key('secondScreenElectiveUploadButton'),
-              onPressed:
-                  _isPickingElectiveCatalog ? null : _pickElectiveCatalog,
+              onPressed: _isPickingElectiveCatalog
+                  ? null
+                  : _pickElectiveCatalog,
               icon: _isPickingElectiveCatalog
                   ? const SizedBox.square(
                       dimension: 18,
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
                   : const Icon(Icons.upload_file_outlined),
-              label: Text(_isPickingElectiveCatalog ? '파일 선택 중' : '교양 수강편람 업로드'),
+              label: Text(
+                _isPickingElectiveCatalog ? '파일 선택 중' : '교양 수강편람 업로드',
+              ),
             )
           else
             _SelectedElectiveCatalog(
@@ -883,8 +882,8 @@ class _SecondScreenState extends State<SecondScreen> {
               child: FilledButton(
                 onPressed:
                     _selectionPreview?.isConfirmable == true && !_isConfirming
-                        ? _confirmSelection
-                        : null,
+                    ? _confirmSelection
+                    : null,
                 style: FilledButton.styleFrom(
                   backgroundColor: const Color(0xFF111111),
                   minimumSize: const Size.fromHeight(48),
@@ -957,39 +956,36 @@ class _ConditionHistoryPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          border: Border.all(color: const Color(0xFFE5E7EB)),
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              '최근 입력',
-              style: TextStyle(fontWeight: FontWeight.w700),
+    width: double.infinity,
+    padding: const EdgeInsets.all(14),
+    decoration: BoxDecoration(
+      color: Colors.white,
+      border: Border.all(color: const Color(0xFFE5E7EB)),
+      borderRadius: BorderRadius.circular(8),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('최근 입력', style: TextStyle(fontWeight: FontWeight.w700)),
+        const SizedBox(height: 8),
+        for (final entry in entries)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: Text(
+              entry,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: Color(0xFF374151)),
             ),
-            const SizedBox(height: 8),
-            for (final entry in entries)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 6),
-                child: Text(
-                  entry,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(color: Color(0xFF374151)),
-                ),
-              ),
-            if (hasMore)
-              TextButton(
-                onPressed: onToggle,
-                child: Text(showingAll ? '최근 입력만 보기' : '이전 입력 보기'),
-              ),
-          ],
-        ),
-      );
+          ),
+        if (hasMore)
+          TextButton(
+            onPressed: onToggle,
+            child: Text(showingAll ? '최근 입력만 보기' : '이전 입력 보기'),
+          ),
+      ],
+    ),
+  );
 }
 
 class ConditionSummaryCard extends StatelessWidget {
@@ -1006,7 +1002,8 @@ class ConditionSummaryCard extends StatelessWidget {
     ConditionSummaryItem item,
     String scope, {
     Object? value,
-  }) onDelete;
+  })
+  onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -1022,9 +1019,9 @@ class ConditionSummaryCard extends StatelessWidget {
         children: [
           Text(
             '현재 시간표 조건',
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w700,
-                ),
+            style: Theme.of(
+              context,
+            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 16),
           _ConditionSummarySection(
@@ -1043,10 +1040,7 @@ class ConditionSummaryCard extends StatelessWidget {
 }
 
 class _ConditionSummarySection extends StatelessWidget {
-  const _ConditionSummarySection({
-    required this.title,
-    required this.items,
-  });
+  const _ConditionSummarySection({required this.title, required this.items});
 
   final String title;
   final List<ConditionSummaryItem> items;
@@ -1062,9 +1056,9 @@ class _ConditionSummarySection extends StatelessWidget {
       children: [
         Text(
           title,
-          style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                fontWeight: FontWeight.w700,
-              ),
+          style: Theme.of(
+            context,
+          ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
         ),
         const SizedBox(height: 10),
         ...items.map(_ConditionSummaryRow.new),
@@ -1096,14 +1090,51 @@ class _ConditionSummaryRow extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 12),
-          Expanded(
-            flex: 7,
-            child: Text(
-              item.formattedValue(),
-              style: const TextStyle(color: Color(0xFF111111)),
-            ),
-          ),
+          Expanded(flex: 7, child: _ConditionValueText(item)),
         ],
+      ),
+    );
+  }
+}
+
+class _ConditionValueText extends StatelessWidget {
+  const _ConditionValueText(this.item);
+
+  final ConditionSummaryItem item;
+
+  @override
+  Widget build(BuildContext context) {
+    final notice = item.notice;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          item.formattedValue(),
+          style: const TextStyle(color: Color(0xFF111111)),
+        ),
+        if (notice != null) ...[
+          const SizedBox(height: 4),
+          _ConditionNoticeText(notice),
+        ],
+      ],
+    );
+  }
+}
+
+class _ConditionNoticeText extends StatelessWidget {
+  const _ConditionNoticeText(this.notice);
+
+  final String notice;
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      notice,
+      style: const TextStyle(
+        color: Color(0xFF8A5A00),
+        fontSize: 12,
+        height: 1.35,
       ),
     );
   }
@@ -1123,7 +1154,8 @@ class AppliedConditionSummaryCard extends StatelessWidget {
     ConditionSummaryItem item,
     String scope, {
     Object? value,
-  }) onDelete;
+  })
+  onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -1147,9 +1179,9 @@ class AppliedConditionSummaryCard extends StatelessWidget {
         children: [
           Text(
             '현재 시간표 조건',
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w700,
-                ),
+            style: Theme.of(
+              context,
+            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 16),
           if (!hasConditions)
@@ -1195,7 +1227,8 @@ class _AppliedConditionSection extends StatelessWidget {
     ConditionSummaryItem item,
     String scope, {
     Object? value,
-  }) onDelete;
+  })
+  onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -1205,9 +1238,9 @@ class _AppliedConditionSection extends StatelessWidget {
       children: [
         Text(
           title,
-          style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                fontWeight: FontWeight.w700,
-              ),
+          style: Theme.of(
+            context,
+          ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
         ),
         const SizedBox(height: 10),
         ...items.map(
@@ -1238,7 +1271,8 @@ class _AppliedConditionRow extends StatelessWidget {
     ConditionSummaryItem item,
     String scope, {
     Object? value,
-  }) onDelete;
+  })
+  onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -1267,7 +1301,8 @@ class _AppliedConditionRow extends StatelessWidget {
                       onDeleted: deletingConditionId == null
                           ? () => onDelete(item, scope, value: value.value)
                           : null,
-                      deleteIcon: deletingConditionId ==
+                      deleteIcon:
+                          deletingConditionId ==
                               '$scope:${item.key}:${value.value}'
                           ? const SizedBox.square(
                               dimension: 16,
@@ -1278,6 +1313,10 @@ class _AppliedConditionRow extends StatelessWidget {
                   )
                   .toList(),
             ),
+            if (item.notice != null) ...[
+              const SizedBox(height: 8),
+              _ConditionNoticeText(item.notice!),
+            ],
           ],
         ),
       );
@@ -1300,13 +1339,7 @@ class _AppliedConditionRow extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 12),
-          Expanded(
-            flex: 7,
-            child: Text(
-              item.formattedValue(),
-              style: const TextStyle(color: Color(0xFF111111)),
-            ),
-          ),
+          Expanded(flex: 7, child: _ConditionValueText(item)),
           IconButton(
             tooltip: '조건 삭제',
             onPressed: deletingConditionId == null
@@ -1335,7 +1368,8 @@ class _ConditionDeleteValue {
 List<_ConditionDeleteValue> _conditionDeleteValues(ConditionSummaryItem item) {
   final raw = item.rawValue;
   if (raw is! List || raw.length <= 1) return const [];
-  final labels = item.displayValue
+  final labels =
+      item.displayValue
           ?.split(',')
           .map((value) => value.trim())
           .where((value) => value.isNotEmpty)
@@ -1386,60 +1420,62 @@ class _CourseGroupCard extends StatelessWidget {
             ),
             const SizedBox(height: 10),
             Column(
-                children: courses.map((course) {
-                  final title =
-                      '${course.division}분반 · ${course.professor.isEmpty ? '담당 교수 미정' : course.professor}';
-                  final timeText = course.classTimes
-                      .map((time) =>
-                          '${_dayLabel(time.day)} ${time.start}-${time.end}')
-                      .join(' · ');
+              children: courses.map((course) {
+                final title =
+                    '${course.division}분반 · ${course.professor.isEmpty ? '담당 교수 미정' : course.professor}';
+                final timeText = course.classTimes
+                    .map(
+                      (time) =>
+                          '${_dayLabel(time.day)} ${time.start}-${time.end}',
+                    )
+                    .join(' · ');
 
-                  return Column(
-                    children: [
-                      InkWell(
-                        key: Key('majorCourse-${course.id}'),
-                        onTap: () => onChanged(
-                          course.id == selectedCourseId ? null : course.id,
-                        ),
-                        borderRadius: BorderRadius.circular(8),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 12),
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              _SelectionCircle(
-                                selected: course.id == selectedCourseId,
-                              ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      title,
-                                      style: const TextStyle(
-                                        fontWeight: FontWeight.w600,
-                                      ),
+                return Column(
+                  children: [
+                    InkWell(
+                      key: Key('majorCourse-${course.id}'),
+                      onTap: () => onChanged(
+                        course.id == selectedCourseId ? null : course.id,
+                      ),
+                      borderRadius: BorderRadius.circular(8),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _SelectionCircle(
+                              selected: course.id == selectedCourseId,
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    title,
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w600,
                                     ),
-                                    const SizedBox(height: 4),
-                                    Text(
-                                      '${course.name.isNotEmpty ? course.name : course.id}${timeText.isNotEmpty ? ' · $timeText' : ''}',
-                                      style: const TextStyle(
-                                        color: Color(0xFF6B7280),
-                                      ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    '${course.name.isNotEmpty ? course.name : course.id}${timeText.isNotEmpty ? ' · $timeText' : ''}',
+                                    style: const TextStyle(
+                                      color: Color(0xFF6B7280),
                                     ),
-                                  ],
-                                ),
+                                  ),
+                                ],
                               ),
-                            ],
-                          ),
+                            ),
+                          ],
                         ),
                       ),
-                      if (course != courses.last)
-                        const Divider(color: Color(0xFFE5E7EB), height: 1),
-                    ],
-                  );
-                }).toList(),
+                    ),
+                    if (course != courses.last)
+                      const Divider(color: Color(0xFFE5E7EB), height: 1),
+                  ],
+                );
+              }).toList(),
             ),
           ],
         ),
@@ -1468,25 +1504,25 @@ class _SelectionCircle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => AnimatedContainer(
-        duration: const Duration(milliseconds: 150),
-        width: 22,
-        height: 22,
-        padding: const EdgeInsets.all(4),
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          border: Border.all(
-            color: selected ? const Color(0xFF111111) : const Color(0xFF9CA3AF),
-            width: 2,
-          ),
-        ),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 150),
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: selected ? const Color(0xFF111111) : Colors.transparent,
-          ),
-        ),
-      );
+    duration: const Duration(milliseconds: 150),
+    width: 22,
+    height: 22,
+    padding: const EdgeInsets.all(4),
+    decoration: BoxDecoration(
+      shape: BoxShape.circle,
+      border: Border.all(
+        color: selected ? const Color(0xFF111111) : const Color(0xFF9CA3AF),
+        width: 2,
+      ),
+    ),
+    child: AnimatedContainer(
+      duration: const Duration(milliseconds: 150),
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: selected ? const Color(0xFF111111) : Colors.transparent,
+      ),
+    ),
+  );
 }
 
 class _SelectedElectiveCatalog extends StatelessWidget {
@@ -1502,32 +1538,32 @@ class _SelectedElectiveCatalog extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Container(
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          border: Border.all(color: const Color(0xFFE5E7EB)),
-          borderRadius: BorderRadius.circular(8),
+    padding: const EdgeInsets.all(12),
+    decoration: BoxDecoration(
+      color: Colors.white,
+      border: Border.all(color: const Color(0xFFE5E7EB)),
+      borderRadius: BorderRadius.circular(8),
+    ),
+    child: Row(
+      children: [
+        const Icon(Icons.description_outlined),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Text(
+            sizeInBytes == null
+                ? fileName
+                : '$fileName\n${_formatBytes(sizeInBytes!)}',
+          ),
         ),
-        child: Row(
-          children: [
-            const Icon(Icons.description_outlined),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                sizeInBytes == null
-                    ? fileName
-                    : '$fileName\n${_formatBytes(sizeInBytes!)}',
-              ),
-            ),
-            IconButton(
-              key: const Key('secondScreenElectiveRemoveButton'),
-              onPressed: onRemove,
-              tooltip: '선택한 파일 제거',
-              icon: const Icon(Icons.close),
-            ),
-          ],
+        IconButton(
+          key: const Key('secondScreenElectiveRemoveButton'),
+          onPressed: onRemove,
+          tooltip: '선택한 파일 제거',
+          icon: const Icon(Icons.close),
         ),
-      );
+      ],
+    ),
+  );
 
   static String _formatBytes(int bytes) => bytes >= 1024 * 1024
       ? '${(bytes / (1024 * 1024)).toStringAsFixed(1)}MB'
@@ -1558,9 +1594,9 @@ class _SelectionPreviewCard extends StatelessWidget {
         children: [
           Text(
             '선택 미리보기',
-            style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                  fontWeight: FontWeight.w700,
-                ),
+            style: Theme.of(
+              context,
+            ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 10),
           Text('전공 과목 ${preview.courses.length}개를 선택했습니다.'),
@@ -1619,9 +1655,9 @@ class _InfoPill extends StatelessWidget {
         children: [
           Text(
             '전공 정보',
-            style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                  fontWeight: FontWeight.w700,
-                ),
+            style: Theme.of(
+              context,
+            ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 8),
           Text('학과: $department'),
@@ -1660,9 +1696,9 @@ class _SectionCard extends StatelessWidget {
         children: [
           Text(
             title,
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w700,
-                ),
+            style: Theme.of(
+              context,
+            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 18),
           child,

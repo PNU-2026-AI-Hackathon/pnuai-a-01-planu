@@ -191,6 +191,33 @@ def test_condition_summary_separates_hard_and_soft_items() -> None:
     assert summary.selected_major_courses[0].course_id == "MAJ-001"
 
 
+def test_condition_summary_marks_english_placement_course_with_notice() -> None:
+    service = _service()
+    state = service.create_session()
+    service.update_preferences(
+        state.session_id,
+        hard_patch=type(
+            "HardPatch",
+            (),
+            {
+                "required_free_days": [],
+                "earliest_start_time": None,
+                "latest_end_time": None,
+                "required_course_ids": ["ZE1000113-001"],
+                "excluded_course_ids": [],
+                "clear_fields": (),
+            },
+        )(),
+    )
+
+    result = ConditionSummaryService().summarize(service.get_session(state.session_id))
+
+    required = next(item for item in result.hard_constraints if item.key == "required_course_ids")
+    assert required.status == "SET"
+    assert required.metadata["notice_code"] == "ENGLISH_PLACEMENT_ELIGIBILITY"
+    assert "수능 성적" in required.metadata["notice"]
+
+
 def test_confirm_tool_fails_when_generation_is_not_ready() -> None:
     service = _service()
     state = service.create_session()

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from .agent_tools.timetable_selection_tools import SelectTimetableCandidateInput
 from .agent_tools import TimetableSelectionTools
 from .agents import RunnableAgent, SessionStateAgentResult
@@ -9,6 +11,7 @@ from .agents.session_state_agent import AgentRankedTimetableCandidate, AgentTime
 from .core.errors import AppError
 from .services.condition_summary_service import ConditionSummaryService
 from .services.exceptions import SessionNotAvailableError
+from .services.general_course_pool_service import GeneralCoursePreparationService
 from .services.session_service import SessionService
 from .schemas.agent_schema import (
     ConfirmationDto,
@@ -22,6 +25,9 @@ from .schemas.agent_schema import (
 )
 
 
+logger = logging.getLogger(__name__)
+
+
 class AgentRuntime:
     """Keeps HTTP routers independent from the agent/tool execution details."""
 
@@ -32,11 +38,13 @@ class AgentRuntime:
         agent: RunnableAgent,
         selection_tools: TimetableSelectionTools,
         condition_summary_service: ConditionSummaryService | None = None,
+        general_course_preparation_service: GeneralCoursePreparationService | None = None,
     ) -> None:
         self._session_service = session_service
         self._agent = agent
         self._selection_tools = selection_tools
         self._condition_summary_service = condition_summary_service or ConditionSummaryService()
+        self._general_course_preparation_service = general_course_preparation_service
 
     def handle_message(
         self,
@@ -46,14 +54,30 @@ class AgentRuntime:
         request_id: str | None = None,
     ) -> PlanuChatResponse:
         self._ensure_session(session_id)
+        self._ensure_default_general_catalog(session_id)
         result = self._run_agent(session_id=session_id, message=message, request_id=request_id)
         if result.error is not None and result.error.code.value == "SESSION_NOT_AVAILABLE":
             raise _session_unavailable_error()
         state = self._session_service.get_session(session_id)
-        return chat_response_from_agent_result(
+        response = chat_response_from_agent_result(
             result,
             condition_summary=self._condition_summary_service.summarize(state),
         )
+        logger.warning(
+            "planu_chat_response session_id=%s request_id=%s success=%s changed=%s "
+            "unresolved_count=%s candidate_count=%s error_code=%s executed_tools=%s failed_tools=%s message=%s",
+            session_id,
+            request_id,
+            response.success,
+            response.changed,
+            len(response.unresolved_requests),
+            len(response.candidate_courses),
+            response.error.code if response.error is not None else None,
+            [tool.name for tool in result.executed_tools],
+            [tool.name for tool in result.failed_tools],
+            response.message,
+        )
+        return response
 
     def handle_legacy_message(
         self,
@@ -63,6 +87,7 @@ class AgentRuntime:
         request_id: str | None = None,
     ) -> LegacyAgentMessageResponse:
         self._ensure_session(session_id)
+        self._ensure_default_general_catalog(session_id)
         result = self._run_agent(session_id=session_id, message=message, request_id=request_id)
         if result.error is not None and result.error.code.value == "SESSION_NOT_AVAILABLE":
             raise _session_unavailable_error()
@@ -70,6 +95,20 @@ class AgentRuntime:
         public = chat_response_from_agent_result(
             result,
             condition_summary=self._condition_summary_service.summarize(state),
+        )
+        logger.warning(
+            "planu_legacy_chat_response session_id=%s request_id=%s success=%s changed=%s "
+            "unresolved_count=%s candidate_count=%s error_code=%s executed_tools=%s failed_tools=%s message=%s",
+            session_id,
+            request_id,
+            public.success,
+            public.changed,
+            len(public.unresolved_requests),
+            len(public.candidate_courses),
+            public.error.code if public.error is not None else None,
+            [tool.name for tool in result.executed_tools],
+            [tool.name for tool in result.failed_tools],
+            public.message,
         )
         return LegacyAgentMessageResponse(
             success=result.success,
@@ -150,6 +189,17 @@ class AgentRuntime:
                 "PlaNU Agent 실행 중 오류가 발생했습니다.",
                 status_code=502,
             ) from exc
+
+    def _ensure_default_general_catalog(self, session_id: str) -> None:
+        if self._general_course_preparation_service is None:
+            return
+        try:
+            prepared = self._general_course_preparation_service.prepare_default_for_session(session_id)
+        except Exception:
+            logger.exception("agent_runtime_default_general_prepare_failed session_id=%s", session_id)
+            return
+        if prepared:
+            logger.warning("agent_runtime_default_general_prepared session_id=%s", session_id)
 
     def _ensure_session(self, session_id: str):
         try:

@@ -40,6 +40,7 @@ class ConditionSummaryItem {
     this.displayValue,
     this.courseRefs = const [],
     this.rawValue,
+    this.metadata = const {},
   });
 
   final String key;
@@ -48,6 +49,7 @@ class ConditionSummaryItem {
   final String? displayValue;
   final List<ConditionCourseRef> courseRefs;
   final Object? rawValue;
+  final Map<String, dynamic> metadata;
 
   factory ConditionSummaryItem.fromJson(Map<String, dynamic> json) =>
       ConditionSummaryItem(
@@ -60,7 +62,16 @@ class ConditionSummaryItem {
             .map(ConditionCourseRef.fromJson)
             .toList(),
         rawValue: json['raw_value'],
+        metadata:
+            (json['metadata'] as Map?)?.cast<String, dynamic>() ?? const {},
       );
+
+  String? get notice {
+    final value = metadata['notice'];
+    if (value is! String) return null;
+    final trimmed = value.trim();
+    return trimmed.isEmpty ? null : trimmed;
+  }
 
   String formattedValue() {
     switch (status) {

@@ -1,4 +1,4 @@
-﻿"""Tests for Supervisor + domain-agent routing."""
+"""Tests for Supervisor + domain-agent routing."""
 
 from __future__ import annotations
 
@@ -94,7 +94,7 @@ def test_supervisor_handles_not_my_responsibility_with_confirmation() -> None:
     assert result.needs_confirmation is True
     assert supervisor.last_attempted_routes == [AgentDomain.PREFERENCE]
 
-def test_domain_agents_do_not_expose_other_domain_tools() -> None:
+def test_domain_agents_expose_only_needed_cross_domain_tools() -> None:
     container = build_container(model=FakeModel())
     major_tools = set(container.major_agent.tool_names)
     preference_tools = set(container.preference_agent.tool_names)
@@ -102,7 +102,7 @@ def test_domain_agents_do_not_expose_other_domain_tools() -> None:
 
     assert "update_timetable_preferences" not in major_tools
     assert "rank_timetable_candidates" not in major_tools
-    assert "search_courses_by_name" not in preference_tools
+    assert "search_courses_by_name" in preference_tools
     assert "generate_timetable_candidates" not in preference_tools
     assert "update_timetable_preferences" not in timetable_tools
     assert "rank_timetable_candidates" in timetable_tools

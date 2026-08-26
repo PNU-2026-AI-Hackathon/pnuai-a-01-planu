@@ -9,6 +9,7 @@ import pytest
 
 from backend.app.core.errors import AppError
 from backend.app.models import Category, ClassTime, Course, Day
+from backend.app.repositories import SessionStoreRepository
 from backend.app.services.general_course_pool_service import (
     CourseRestrictionPolicy,
     DepartmentRestrictionRule,
@@ -19,6 +20,7 @@ from backend.app.services.course_restriction_loader import (
     CourseRestrictionLoadError,
     load_department_restriction_rules,
 )
+from backend.app.services.session_service import SessionService
 from backend.app.services.session_store import SessionStage, SessionStore
 
 
@@ -176,7 +178,7 @@ def test_build_pools_excludes_miryang_and_yangsan_courses() -> None:
 
 def test_department_restrictions_exclude_only_matching_restricted_courses() -> None:
     allowed_required = _course("ZE100-001", "고전읽기와토론", Category.GENERAL_REQUIRED, "001")
-    blocked_required = _course("ZE101-001", "대학영어", Category.GENERAL_REQUIRED, "001")
+    blocked_required = _course("ZE101-001", "기초컴퓨팅", Category.GENERAL_REQUIRED, "001")
     unrestricted_upload = _course("ZE300-001", "현대사회와윤리", Category.GENERAL_ELECTIVE, "001", area=3)
     blocked_upload = _course("ZE400-001", "창의적사고", Category.GENERAL_ELECTIVE, "001", area=4)
     policy = CourseRestrictionPolicy(
@@ -231,6 +233,19 @@ def test_general_required_without_matching_restriction_rule_is_excluded() -> Non
 
     assert result.pools.required_courses == []
     assert result.excluded_courses[0].reason_code == "RESTRICTION_RULE_NOT_FOUND"
+
+
+def test_english_placement_course_ignores_department_restriction_rules() -> None:
+    course = _course("ZE1000113-001", "대학영어", Category.GENERAL_REQUIRED, "001")
+    policy = CourseRestrictionPolicy(rules=[_rule("ZE1000113", "001", blocked={"컴퓨터공학과"})])
+
+    result = GeneralCoursePoolService(restriction_policy=policy).build_pools(
+        department="컴퓨터공학과",
+        general_required_courses=[course],
+    )
+
+    assert result.pools.required_courses == [course]
+    assert result.excluded_courses == []
 
 
 def test_blocked_department_is_excluded() -> None:
@@ -581,3 +596,31 @@ def test_preparation_rejects_wrong_stage_without_partial_save() -> None:
     assert exc_info.value.code == "INVALID_SESSION_STAGE"
     assert saved.general_required_candidates == []
     assert saved.session_stage is SessionStage.CATALOG_PARSED
+
+def test_default_chat_preparation_keeps_restricted_required_courses_searchable() -> None:
+    store = SessionStore()
+    session_service = SessionService(SessionStoreRepository(store))
+    session = session_service.create_session()
+    store.update(
+        session.session_id,
+        department="컴퓨터공학과",
+        session_stage=SessionStage.CATALOG_PARSED,
+    )
+    blocked_required = _course("ZE1000113-001", "대학영어", Category.GENERAL_REQUIRED, "001")
+    policy = CourseRestrictionPolicy(
+        rules=[_rule("ZE1000113", "001", blocked={"컴퓨터공학과"})],
+    )
+    service = GeneralCoursePreparationService(
+        store=store,
+        pool_service=GeneralCoursePoolService(restriction_policy=policy),
+        general_required_courses=[blocked_required],
+        fallback_elective_courses=[],
+        session_service=session_service,
+    )
+
+    prepared = service.prepare_default_for_session(session.session_id)
+    saved = store.get(session.session_id)
+
+    assert prepared is True
+    assert saved.elective_catalog_id == f"{session.session_id}:general"
+    assert saved.general_required_candidates == [blocked_required]
