@@ -616,17 +616,17 @@ python -m pytest backend\tests\live_llm\test_live_llm_smoke.py -m live_llm -v -s
 
 ### 5. 소개 및 시연영상
 
-[<img width="700px" alt="소개 및 시연영상" src="https://github.com/pnuswedu/SW-Hackathon-2024/assets/34933690/162132cd-9af5-4154-9b9a-41c96cf5e8fd" />](https://www.youtube.com/watch?v=EfEgTrm5_u4)
+[<img width="700px" alt="소개 및 시연영상" src="https://github.com/pnuswedu/SW-Hackathon-2024/assets/34933690/162132cd-9af5-4154-9b9a-41c96cf5e8fd" />]([(https://youtu.be/Yo1ln3_Yogs?si=3zfgLI3WK5Ac6fCl)])
 
 <br/>
 
 ### 6. 팀 소개
 
-|                                                                   이학영                                                                    |                                                                   김승주                                                                    |                                                                   MEMBER3                                                                    |
+|                                                                   이학영                                                                    |                                                                   김승주                                                                    |                                                                   김예솔                                                                    |
 | :------------------------------------------------------------------------------------------------------------------------------------------: | :------------------------------------------------------------------------------------------------------------------------------------------: | :------------------------------------------------------------------------------------------------------------------------------------------: |
 | <img width="100px" alt="MEMBER1" src="https://github.com/pnuswedu/SW-Hackathon-2024/assets/34933690/f5b5df2a-e174-437d-86b2-a5a23d9ee75d" /> | <img width="100px" alt="MEMBER2" src="https://github.com/pnuswedu/SW-Hackathon-2024/assets/34933690/fe4e8910-4565-4f3f-9bd1-f135e74cb39d" /> | <img width="100px" alt="MEMBER3" src="https://github.com/pnuswedu/SW-Hackathon-2024/assets/34933690/675d8471-19b9-4abc-bf8a-be426989b318" /> |
-|                                                             lhy1170@pusan.ac.kr                                                              |                                                              rlatmdwn0717@naver.com                                                              |                                                              member3@naver.com                                                               |
-|                                                               백엔드 개발, 시스템 프롬프트 수정을 위한 스킬 작성                                                                |                                                        프론트엔드 개발 및 팀장보조                                                          |                                                          DB 설계 <br/> 백앤드 개발                                                           |
+|                                                             lhy1170@pusan.ac.kr                                                              |                                                              rlatmdwn0717@naver.com                                                              |                                                              kimyesole@naver.com                                                               |
+|                                                               백엔드 개발, 시스템 프롬프트 수정을 위한 스킬 작성                                                                |                                                        프론트엔드 개발 및 팀장보조                                                          |                                                          프론트엔드 개발 및 보조                                                           |
 
 <br/>
 
